@@ -1,0 +1,49 @@
+name: retro_solve
+description: A chess repertoire tool built in Flutter.
+version: 1.0.0
+
+publish_to: "none"
+
+environment:
+  sdk: ">=2.17.0 <3.0.0"
+
+dependencies:
+  chess_vectors_flutter: ^1.0.12
+
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.2
+  shared_preferences: ^2.2.3
+  sqlite3: ^3.0.0
+  sqflite_common_ffi: ^2.4.0
+  path: ^1.9.1
+  wakelock_plus: ^1.6.0
+  file_picker: ^3.0.4
+  file_selector: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^1.0.0
+  test: ^1.19.5
+
+flutter:
+
+  uses-material-design: true
+
+  assets:
+    - images/chess_board.png
+    - images/brown_board.png
+    - images/2.0x/brown_board.png
+    - images/3.0x/brown_board.png
+    - images/orange_board.png
+    - images/2.0x/orange_board.png
+    - images/3.0x/orange_board.png
+    - images/green_board.png
+    - images/2.0x/green_board.png
+    - images/3.0x/green_board.png
+    - images/dark_brown_board.png
+    - images/2.0x/dark_brown_board.png
+    - images/3.0x/dark_brown_board.png

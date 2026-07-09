@@ -15,6 +15,35 @@ enum BoardColor {
   green,
 }
 
+extension BoardColorColors on BoardColor {
+  Color get lightSquare {
+    switch (this) {
+      case BoardColor.brown:
+        return const Color(0xFFF0D9B5);
+      case BoardColor.darkBrown:
+        return const Color(0xFFE8D3B9);
+      case BoardColor.orange:
+        return const Color(0xFFFFDFB0);
+      case BoardColor.green:
+        return const Color(0xFFE2E4C0);
+    }
+  }
+
+  Color get darkSquare {
+    switch (this) {
+      case BoardColor.brown:
+        return const Color(0xFFB58863);
+      case BoardColor.darkBrown:
+        return const Color(0xFF8B5A2B);
+      case BoardColor.orange:
+        return const Color(0xFFD2691E);
+      case BoardColor.green:
+        return const Color(0xFF578A34);
+    }
+  }
+}
+
+
 const _files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 
 class ChessBoard extends StatefulWidget {
@@ -63,10 +92,6 @@ class _ChessBoardState extends State<ChessBoard> {
           height: widget.size,
           child: Stack(
             children: [
-              AspectRatio(
-                child: _getBoardImage(widget.boardColor),
-                aspectRatio: 1.0,
-              ),
               AspectRatio(
                 aspectRatio: 1.0,
                 child: GridView.builder(
@@ -139,7 +164,13 @@ class _ChessBoardState extends State<ChessBoard> {
                       }
                     });
 
-                    return dragTarget;
+                    final isLightSquare = (row + column) % 2 == 0;
+                    final squareColor = isLightSquare ? widget.boardColor.lightSquare : widget.boardColor.darkSquare;
+
+                    return Container(
+                      color: squareColor,
+                      child: dragTarget,
+                    );
                   },
                   itemCount: 64,
                   shrinkWrap: true,
@@ -161,32 +192,6 @@ class _ChessBoardState extends State<ChessBoard> {
         );
       },
     );
-  }
-
-  /// Returns the board image
-  Image _getBoardImage(BoardColor color) {
-    switch (color) {
-      case BoardColor.brown:
-        return Image.asset(
-          "images/brown_board.png",
-          fit: BoxFit.cover,
-        );
-      case BoardColor.darkBrown:
-        return Image.asset(
-          "images/dark_brown_board.png",
-          fit: BoxFit.cover,
-        );
-      case BoardColor.green:
-        return Image.asset(
-          "images/green_board.png",
-          fit: BoxFit.cover,
-        );
-      case BoardColor.orange:
-        return Image.asset(
-          "images/orange_board.png",
-          fit: BoxFit.cover,
-        );
-    }
   }
 
   /// Show dialog when pawn reaches last square

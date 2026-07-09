@@ -305,46 +305,54 @@ class BoardPiece extends StatelessWidget {
       final opponentColor = square.color == white ? black : white;
       final remainingChecks = game.checksCount[opponentColor];
       
-      imageToDisplay = Stack(
-        fit: StackFit.passthrough,
-        clipBehavior: Clip.none,
-        children: [
-          imageToDisplay,
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: _getBadgeColor(remainingChecks),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 1.5),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 2,
-                    offset: Offset(0, 1),
+      final kingImage = imageToDisplay;
+      imageToDisplay = LayoutBuilder(
+        builder: (context, constraints) {
+          final double squareSize = constraints.hasBoundedWidth ? constraints.maxWidth : 50.0;
+          final badgeSize = (squareSize * 0.50).clamp(16.0, 48.0);
+          final fontSize = badgeSize * 0.55;
+          final borderWidth = (badgeSize * 0.08).clamp(1.0, 3.0);
+
+          return Stack(
+            fit: StackFit.passthrough,
+            clipBehavior: Clip.none,
+            children: [
+              kingImage,
+              Positioned(
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  padding: EdgeInsets.all(badgeSize * 0.15),
+                  decoration: BoxDecoration(
+                    color: _getBadgeColor(remainingChecks),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: borderWidth),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 2,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              constraints: const BoxConstraints(
-                minWidth: 18,
-                minHeight: 18,
-              ),
-              child: Center(
-                child: Text(
-                  '$remainingChecks',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    height: 1.0,
+                  width: badgeSize,
+                  height: badgeSize,
+                  child: Center(
+                    child: Text(
+                      '$remainingChecks',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.bold,
+                        height: 1.0,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       );
     }
 

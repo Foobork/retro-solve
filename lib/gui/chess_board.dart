@@ -307,7 +307,7 @@ class BoardPiece extends StatelessWidget {
           imageToDisplay,
           Positioned(
             right: 0,
-            top: 0,
+            bottom: 0,
             child: Container(
               padding: const EdgeInsets.all(3),
               decoration: BoxDecoration(

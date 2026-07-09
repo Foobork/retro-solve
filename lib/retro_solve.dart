@@ -310,6 +310,10 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _variant = widget.initialVariant;
+    _controller.game.isThreeCheck = (_variant == DatasetVariant.threeCheck);
+    if (_controller.game.isThreeCheck) {
+      _controller.game.reset();
+    }
     _engineAvailable = widget.engineService.isEngineAvailable;
     _evalSub = widget.engineService.evaluationStream.listen((evals) {
       if (!mounted || _isBatchEvaluating) return;
@@ -376,6 +380,7 @@ class _HomePageState extends State<HomePage> {
     });
     await widget.engineService.setVariant(_variant);
     await widget.engineService.newGame();
+    _controller.game.isThreeCheck = (_variant == DatasetVariant.threeCheck);
     _controller.resetBoard();
 
     // Let the loading overlay paint before we block.
@@ -385,11 +390,13 @@ class _HomePageState extends State<HomePage> {
     if (!file.existsSync()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Missing dataset file: ${_variant.dataPath}')),
+          SnackBar(
+            content: Text(
+              'Dataset file not found; initializing empty database for ${_variant.label}.',
+            ),
+          ),
         );
       }
-      setState(() => _isLoadingVariant = false);
-      return;
     }
 
     resetGraph();
@@ -427,7 +434,15 @@ class _HomePageState extends State<HomePage> {
   void _update() {
     _knownMovesToSan();
     _bfen = _controller.game.bfen;
-    _turn = _controller.game.turn == white ? "White to move" : "Black to move";
+    if (_controller.game.isThreeCheck) {
+      final wChecks = _controller.game.checksCount[white];
+      final bChecks = _controller.game.checksCount[black];
+      _turn = _controller.game.turn == white
+          ? "White to move ($wChecks+$bChecks)"
+          : "Black to move ($wChecks+$bChecks)";
+    } else {
+      _turn = _controller.game.turn == white ? "White to move" : "Black to move";
+    }
     Clipboard.setData(ClipboardData(text: _bfen));
     final vertex = graph.v[_bfen];
     if (vertex != null) {

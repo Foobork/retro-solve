@@ -123,6 +123,8 @@ String uciVariantForDataset(DatasetVariant variant) {
       return 'kingofthehill';
     case DatasetVariant.standard:
       return 'chess';
+    case DatasetVariant.threeCheck:
+      return '3check';
   }
 }
 
@@ -379,7 +381,15 @@ class FairyStockfishService {
     candidates.add(exeDir);
 
     final seen = <String>{};
-    final regex = RegExp(r'^kingofthehill.*\.nnue$', caseSensitive: false);
+    
+    RegExp regex;
+    if (_variant == DatasetVariant.koth) {
+      regex = RegExp(r'^kingofthehill.*\.nnue$', caseSensitive: false);
+    } else if (_variant == DatasetVariant.threeCheck) {
+      regex = RegExp(r'^3check.*\.nnue$', caseSensitive: false);
+    } else {
+      return null;
+    }
 
     for (final dir in candidates) {
       final dirPath = dir.path;

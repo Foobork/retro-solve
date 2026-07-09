@@ -167,6 +167,9 @@ class Chess {
   List<GameState> history = [];
   Map header = {};
 
+  bool isThreeCheck = false;
+  ColorMap<int> checksCount = ColorMap(3);
+
   /// By default start with the standard chess starting position
   Chess() {
     load(defaultPosition);
@@ -188,7 +191,9 @@ class Chess {
       ..halfMoves = halfMoves
       ..moveNumber = moveNumber
       ..history = List<GameState>.from(history)
-      ..header = Map.from(header);
+      ..header = Map.from(header)
+      ..isThreeCheck = isThreeCheck
+      ..checksCount = ColorMap<int>.clone(checksCount);
   }
 
   /// Reset all of the instance variables
@@ -202,12 +207,18 @@ class Chess {
     moveNumber = 1;
     history = [];
     header = {};
+    isThreeCheck = false;
+    checksCount = ColorMap(3);
     updateSetup(generateFen());
   }
 
   /// Go back to the chess starting position
   void reset() {
-    load(defaultPosition);
+    if (isThreeCheck) {
+      load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3+3 0 1');
+    } else {
+      load(defaultPosition);
+    }
   }
 
   /// Load a position from a FEN String
@@ -222,7 +233,23 @@ class Chess {
       return false;
     }
 
+    final wasThreeCheck = isThreeCheck;
     clear();
+
+    bool holdsCheckCount = tokens.length == 7 && RegExp(r'^\d+\+\d+$').hasMatch(tokens[4]);
+    if (holdsCheckCount) {
+      isThreeCheck = true;
+      final checks = tokens[4].split('+');
+      checksCount[white] = int.parse(checks[0]);
+      checksCount[black] = int.parse(checks[1]);
+    } else {
+      isThreeCheck = wasThreeCheck;
+      checksCount[white] = 3;
+      checksCount[black] = 3;
+    }
+
+    int halfMoveIndex = holdsCheckCount ? 5 : 4;
+    int fullMoveIndex = holdsCheckCount ? 6 : 5;
 
     for (var i = 0; i < position.length; i++) {
       final piece = position[i];
@@ -260,8 +287,8 @@ class Chess {
     }
 
     epSquare = (tokens[3] == '-') ? null : squares[tokens[3]];
-    halfMoves = int.parse(tokens[4]);
-    moveNumber = int.parse(tokens[5]);
+    halfMoves = int.parse(tokens[halfMoveIndex]);
+    moveNumber = int.parse(tokens[fullMoveIndex]);
 
     updateSetup(generateFen());
 
@@ -285,14 +312,18 @@ class Chess {
       10: '1st field (piece positions) is invalid [row too large].',
     };
 
-    /* 1st criterion: 6 space-separated fields? */
+    /* 1st criterion: 6 or 7 space-separated fields? */
     List tokens = fen.split(RegExp(r'\s+'));
-    if (tokens.length != 6) {
+    bool holdsCheckCount = tokens.length == 7 && RegExp(r'^\d+\+\d+$').hasMatch(tokens[4]);
+    if (tokens.length != 6 && !holdsCheckCount) {
       return {'valid': false, 'error_number': 1, 'error': errors[1]};
     }
 
+    int halfMoveIndex = holdsCheckCount ? 5 : 4;
+    int fullMoveIndex = holdsCheckCount ? 6 : 5;
+
     /* 2nd criterion: move number field is a integer value > 0? */
-    var temp = int.tryParse(tokens[5]);
+    var temp = int.tryParse(tokens[fullMoveIndex]);
     if (temp != null) {
       if (temp <= 0) {
         return {'valid': false, 'error_number': 2, 'error': errors[2]};
@@ -302,7 +333,7 @@ class Chess {
     }
 
     /* 3rd criterion: half move counter is an integer >= 0? */
-    temp = int.tryParse(tokens[4]);
+    temp = int.tryParse(tokens[halfMoveIndex]);
     if (temp != null) {
       if (temp < 0) {
         return {'valid': false, 'error_number': 3, 'error': errors[3]};
@@ -422,7 +453,12 @@ class Chess {
     final epflags = (epSquare == null) ? '-' : algebraic(epSquare!);
     final turnStr = (turn == white) ? 'w' : 'b';
 
-    return [fen, turnStr, cflags, epflags].join(' ');
+    final base = [fen, turnStr, cflags, epflags].join(' ');
+    if (isThreeCheck) {
+      final checksStr = '${checksCount[white]}+${checksCount[black]}';
+      return '$base $checksStr';
+    }
+    return base;
   }
 
   /// Returns a FEN String representing the current position
@@ -516,6 +552,10 @@ class Chess {
   }
 
   List<Move> generateMoves([Map? options]) {
+    if (isThreeCheckGameOver) {
+      return [];
+    }
+
     void addMove(List<Piece?> board, List<Move> moves, from, to, flags) {
       /* if pawn promotion */
       if (board[from]!.type == pawn && (rank(to) == rank8 || rank(to) == rank1)) {
@@ -855,8 +895,16 @@ class Chess {
   }
 
   void push(Move move) {
-    history
-        .add(GameState(move, ColorMap.clone(kings), turn, ColorMap.clone(castling), epSquare, halfMoves, moveNumber));
+    history.add(GameState(
+      move,
+      ColorMap.clone(kings),
+      turn,
+      ColorMap.clone(castling),
+      epSquare,
+      halfMoves,
+      moveNumber,
+      ColorMap.clone(checksCount),
+    ));
   }
 
   void makeMove(Move move) {
@@ -947,6 +995,11 @@ class Chess {
       moveNumber++;
     }
     turn = swapColor(turn);
+
+    if (isThreeCheck && kingAttacked(turn)) {
+      final attacker = swapColor(turn);
+      checksCount[attacker] = (checksCount[attacker] - 1).clamp(0, 3);
+    }
   }
 
   /// Undoes a move and returns it, or null if move history is empty
@@ -963,6 +1016,7 @@ class Chess {
     epSquare = old.epSquare;
     halfMoves = old.halfMoves;
     moveNumber = old.moveNumber;
+    checksCount = old.checksCount;
 
     final us = turn;
     final them = swapColor(turn);
@@ -1199,12 +1253,14 @@ class Chess {
     return moves;
   }
 
+  bool get isThreeCheckGameOver => isThreeCheck && (checksCount[white] <= 0 || checksCount[black] <= 0);
+
   bool get inDraw {
     return halfMoves >= 100 || inStalemate || insufficientMaterial || inThreefoldRepetition;
   }
 
   bool get gameOver {
-    return inDraw || inCheckmate;
+    return inDraw || inCheckmate || isThreeCheckGameOver;
   }
 
   String get fen {
@@ -1651,5 +1707,6 @@ class GameState {
   final int? epSquare;
   final int halfMoves;
   final int moveNumber;
-  const GameState(this.move, this.kings, this.turn, this.castling, this.epSquare, this.halfMoves, this.moveNumber);
+  final ColorMap<int> checksCount;
+  const GameState(this.move, this.kings, this.turn, this.castling, this.epSquare, this.halfMoves, this.moveNumber, this.checksCount);
 }

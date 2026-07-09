@@ -88,7 +88,10 @@ class _ChessBoardState extends State<ChessBoard> {
                     var draggable = game.get(squareName) != null
                         ? Draggable<PieceMoveData>(
                             child: piece,
-                            feedback: piece,
+                            feedback: Material(
+                              color: Colors.transparent,
+                              child: piece,
+                            ),
                             childWhenDragging: const SizedBox(),
                             data: PieceMoveData(
                               squareName: squareName,
@@ -293,7 +296,67 @@ class BoardPiece extends StatelessWidget {
         imageToDisplay = WhitePawn();
     }
 
+    if (game.isThreeCheck && square != null && square.type == PieceType.king) {
+      final opponentColor = square.color == white ? black : white;
+      final remainingChecks = game.checksCount[opponentColor];
+      
+      imageToDisplay = Stack(
+        fit: StackFit.passthrough,
+        clipBehavior: Clip.none,
+        children: [
+          imageToDisplay,
+          Positioned(
+            right: 0,
+            top: 0,
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                color: _getBadgeColor(remainingChecks),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 1.5),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 2,
+                    offset: Offset(0, 1),
+                  ),
+                ],
+              ),
+              constraints: const BoxConstraints(
+                minWidth: 18,
+                minHeight: 18,
+              ),
+              child: Center(
+                child: Text(
+                  '$remainingChecks',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    height: 1.0,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     return imageToDisplay;
+  }
+
+  Color _getBadgeColor(int remaining) {
+    switch (remaining) {
+      case 3:
+        return Colors.green.shade600;
+      case 2:
+        return Colors.amber.shade700;
+      case 1:
+        return Colors.red.shade700;
+      default:
+        return Colors.grey.shade600;
+    }
   }
 }
 

@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 enum DatasetVariant {
   standard,
   koth,
+  threeCheck,
 }
 
 extension DatasetVariantX on DatasetVariant {
@@ -12,6 +13,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'Standard';
       case DatasetVariant.koth:
         return 'KOTH';
+      case DatasetVariant.threeCheck:
+        return 'Three-Check';
     }
   }
 
@@ -21,6 +24,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'data/Standard.txt';
       case DatasetVariant.koth:
         return 'data/KOTH.txt';
+      case DatasetVariant.threeCheck:
+        return 'data/ThreeCheck.txt';
     }
   }
 

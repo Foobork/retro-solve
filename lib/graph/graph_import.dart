@@ -62,6 +62,12 @@ Future<void> importGraph(String filename) async {
     }
 
     // Fallback to TXT
+    if (!File(filename).existsSync()) {
+      print("Dataset file $filename not found. Initializing empty database at $dbPath.");
+      await DatabaseService.instance.init(dbPath);
+      print("importGraph done (empty DB created)");
+      return;
+    }
     _importFromTxt(filename);
 
     // Initial migration to DB

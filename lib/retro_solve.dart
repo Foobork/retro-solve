@@ -223,9 +223,7 @@ class _HomePageState extends State<HomePage> {
     var rows = _knownMoves.map((MoveInfo info) {
       String evalStr = "";
       if (info.eval != null) {
-        evalStr = info.eval! > 0
-            ? '+${info.eval!.toStringAsFixed(2)}'
-            : info.eval!.toStringAsFixed(2);
+        evalStr = _formatScore(info.eval!);
       }
       return _buildMoveRow(info.move, evalStr);
     }).toList();
@@ -448,8 +446,9 @@ class _HomePageState extends State<HomePage> {
     if (vertex != null) {
       final assigned = vertex.assigned;
       final computed = vertex.computed;
-      _eval = assigned?.toString() ??
-          (computed != null ? "(${computed.toStringAsFixed(2)})" : "");
+      _eval = assigned != null
+          ? _formatScore(assigned)
+          : (computed != null ? _formatScore(computed, wrapInParentheses: true) : "");
     } else {
       _eval = "";
     }
@@ -934,7 +933,7 @@ class _HomePageState extends State<HomePage> {
 
   _updateEval(String newEval) {
     String bfen = _controller.game.bfen;
-    graph.assign(bfen, double.tryParse(newEval));
+    graph.assign(bfen, _parseScore(newEval));
     graph.v[bfen]?.inDatabase = true;
     graph.solveBfen(bfen);
     // _export(); // Incremental via onNodeUpdated
@@ -974,6 +973,45 @@ class _HomePageState extends State<HomePage> {
       return eval.centipawns! / 100.0;
     }
     return null;
+  }
+
+  String _formatScore(double score, {bool wrapInParentheses = false}) {
+    const double mateThreshold = 900.0;
+    String formatted;
+    if (score.abs() >= mateThreshold) {
+      if (score > 0) {
+        final plies = (1000.0 - score).round();
+        final moves = (plies + 1) ~/ 2;
+        formatted = '+M$moves';
+      } else {
+        final plies = (score + 1000.0).round();
+        final moves = (plies + 1) ~/ 2;
+        formatted = '-M$moves';
+      }
+    } else {
+      formatted = score > 0 ? '+${score.toStringAsFixed(2)}' : score.toStringAsFixed(2);
+    }
+    return wrapInParentheses ? '($formatted)' : formatted;
+  }
+
+  double? _parseScore(String text) {
+    text = text.trim();
+    if (text.isEmpty) return null;
+    
+    if (text.startsWith('(') && text.endsWith(')')) {
+      text = text.substring(1, text.length - 1).trim();
+    }
+    
+    final mateRegex = RegExp(r'^([+-]?)M(\d+)$', caseSensitive: false);
+    final match = mateRegex.firstMatch(text);
+    if (match != null) {
+      final sign = match.group(1) == '-' ? -1 : 1;
+      final moves = int.parse(match.group(2)!);
+      final plies = moves * 2;
+      return sign > 0 ? 1000.0 - plies : -1000.0 + plies;
+    }
+    
+    return double.tryParse(text);
   }
 }
 

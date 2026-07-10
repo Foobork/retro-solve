@@ -111,19 +111,21 @@ class _ChessBoardState extends State<ChessBoard> {
                     );
 
                     var draggable = game.get(squareName) != null
-                        ? Draggable<PieceMoveData>(
-                            child: piece,
-                            feedback: Material(
-                              color: Colors.transparent,
-                              child: piece,
-                            ),
-                            childWhenDragging: const SizedBox(),
-                            data: PieceMoveData(
-                              squareName: squareName,
-                              pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
-                              pieceColor: pieceOnSquare?.color ?? white,
-                            ),
-                          )
+                        ? (widget.enableUserMoves
+                            ? Draggable<PieceMoveData>(
+                                child: piece,
+                                feedback: Material(
+                                  color: Colors.transparent,
+                                  child: piece,
+                                ),
+                                childWhenDragging: const SizedBox(),
+                                data: PieceMoveData(
+                                  squareName: squareName,
+                                  pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
+                                  pieceColor: pieceOnSquare?.color ?? white,
+                                ),
+                              )
+                            : piece)
                         : Container();
 
                     var dragTarget = DragTarget<PieceMoveData>(builder: (context, list, _) {

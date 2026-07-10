@@ -70,6 +70,7 @@ class _HomePageState extends State<HomePage> {
       controller: _controller,
       boardColor: BoardColor.brown,
       boardOrientation: _orientation,
+      enableUserMoves: !_isExploring,
     );
     var turn = Text(_turn, style: _textStyle);
     var appBar = AppBar(
@@ -197,7 +198,9 @@ class _HomePageState extends State<HomePage> {
                 minimumSize: const Size(0, 0),
                 alignment: Alignment.centerLeft,
               ),
-              onPressed: () => _controller.makeMoveWithNormalNotation(move),
+              onPressed: _isExploring
+                  ? null
+                  : () => _controller.makeMoveWithNormalNotation(move),
               child: Text(move,
                   style: TextStyle(
                       fontSize: 20, fontWeight: FontWeight.bold, color: color)),

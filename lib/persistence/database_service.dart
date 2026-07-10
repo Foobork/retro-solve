@@ -19,6 +19,7 @@ class _EdgeUpdate {
 class DatabaseService {
   static DatabaseService? _instance;
   Database? _db;
+  static bool _ffiInitialized = false;
 
   final Map<String, _NodeUpdate> _updateQueue = {};
   final List<_EdgeUpdate> _edgeQueue = [];
@@ -40,8 +41,11 @@ class DatabaseService {
       _db = null;
     }
     if (Platform.isWindows || Platform.isLinux) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
+      if (!_ffiInitialized) {
+        sqfliteFfiInit();
+        databaseFactory = databaseFactoryFfi;
+        _ffiInitialized = true;
+      }
     }
 
     _db = await openDatabase(

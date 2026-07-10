@@ -385,7 +385,9 @@ class _HomePageState extends State<HomePage> {
     await Future<void>.delayed(const Duration(milliseconds: 16));
 
     final file = File(_variant.dataPath);
-    if (!file.existsSync()) {
+    final dbPath = _variant.dataPath.replaceAll('.txt', '.db');
+    final dbFile = File(dbPath);
+    if (!file.existsSync() && !dbFile.existsSync()) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

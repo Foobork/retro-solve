@@ -226,7 +226,7 @@ class _HomePageState extends State<HomePage> {
     var rows = _knownMoves.map((MoveInfo info) {
       String evalStr = "";
       if (info.eval != null) {
-        evalStr = _formatScore(info.eval!);
+        evalStr = _formatScore(info.eval!, isMoveScore: true);
       }
       return _buildMoveRow(info.move, evalStr);
     }).toList();
@@ -980,16 +980,24 @@ class _HomePageState extends State<HomePage> {
     return null;
   }
 
-  String _formatScore(double score, {bool wrapInParentheses = false}) {
+  String _formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) {
     const double mateThreshold = 900.0;
     String formatted;
     if (score.abs() >= mateThreshold) {
-      if (score > 0) {
-        final plies = (1000.0 - score).round();
+      double adjustedScore = score;
+      if (isMoveScore) {
+        if (score > 0) {
+          adjustedScore = score - 1.0;
+        } else {
+          adjustedScore = score + 1.0;
+        }
+      }
+      if (adjustedScore > 0) {
+        final plies = (1000.0 - adjustedScore).round();
         final moves = (plies + 1) ~/ 2;
         formatted = '+M$moves';
       } else {
-        final plies = (score + 1000.0).round();
+        final plies = (adjustedScore + 1000.0).round();
         final moves = (plies + 1) ~/ 2;
         formatted = '-M$moves';
       }

@@ -248,7 +248,13 @@ class FairyStockfishService {
         _writeLine('setoption name EvalFile value $evalFilePath');
         print('[engine] Using EvalFile: $evalFilePath');
       } else {
-        print('[engine] No kingofthehill*.nnue EvalFile found.');
+        if (_variant == DatasetVariant.koth) {
+          print('[engine] No kingofthehill*.nnue EvalFile found.');
+        } else if (_variant == DatasetVariant.threeCheck) {
+          print('[engine] No 3check*.nnue EvalFile found.');
+        } else if (_variant == DatasetVariant.crazyhouse) {
+          print('[engine] No crazyhouse*.nnue EvalFile found.');
+        }
       }
       
       // Optimize search settings
@@ -391,6 +397,8 @@ class FairyStockfishService {
       regex = RegExp(r'^kingofthehill.*\.nnue$', caseSensitive: false);
     } else if (_variant == DatasetVariant.threeCheck) {
       regex = RegExp(r'^3check.*\.nnue$', caseSensitive: false);
+    } else if (_variant == DatasetVariant.crazyhouse) {
+      regex = RegExp(r'^crazyhouse.*\.nnue$', caseSensitive: false);
     } else {
       return null;
     }

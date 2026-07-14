@@ -312,9 +312,7 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     _variant = widget.initialVariant;
     _controller.setGame(_createGameForVariant(_variant));
-    if (_controller.game.isThreeCheck) {
-      _controller.game.reset();
-    }
+    _controller.game.reset();
     _engineAvailable = widget.engineService.isEngineAvailable;
     _evalSub = widget.engineService.evaluationStream.listen((evals) {
       if (!mounted || _isBatchEvaluating) return;

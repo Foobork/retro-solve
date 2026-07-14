@@ -147,6 +147,7 @@ class FairyStockfishService {
     _variant = variant;
     print('[engine] Configured variant: ${uciVariantForDataset(_variant)}');
     if (!_isStarted || _process == null) return;
+    _writeLine('stop');
     _writeLine(
         'setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
     await _sendAndWaitFor('isready', 'readyok');
@@ -154,6 +155,7 @@ class FairyStockfishService {
 
   Future<void> newGame() async {
     if (!_isStarted || _process == null) return;
+    _writeLine('stop');
     _writeLine('ucinewgame');
     await _sendAndWaitFor('isready', 'readyok');
   }

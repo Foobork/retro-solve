@@ -2,6 +2,9 @@
 
 library chess;
 
+part 'three_check_chess.dart';
+part 'koth_chess.dart';
+
 /*  Copyright (c) 2014, David Kopec (my first name at oaksnow dot com)
  *  Released under the MIT license
  *  https://github.com/davecom/chess.dart/blob/master/LICENSE
@@ -1686,107 +1689,3 @@ class GameState {
   const GameState(this.move, this.kings, this.turn, this.castling, this.epSquare, this.halfMoves, this.moveNumber, this.checksCount);
 }
 
-class ThreeCheckChess extends Chess {
-  @override
-  bool get isThreeCheck => true;
-
-  @override
-  bool get isThreeCheckGameOver => checksCount[white] <= 0 || checksCount[black] <= 0;
-
-  @override
-  bool load(String fen) {
-    final success = super.load(fen);
-    if (!success) return false;
-
-    List tokens = fen.split(RegExp(r'\s+'));
-    bool holdsCheckCount = tokens.length == 7 && RegExp(r'^\d+\+\d+$').hasMatch(tokens[4]);
-    if (holdsCheckCount) {
-      final checks = tokens[4].split('+');
-      checksCount[white] = int.parse(checks[0]);
-      checksCount[black] = int.parse(checks[1]);
-    } else {
-      checksCount[white] = 3;
-      checksCount[black] = 3;
-    }
-    return true;
-  }
-
-  @override
-  String generateBfen() {
-    final base = super.generateBfen();
-    final checksStr = '${checksCount[white]}+${checksCount[black]}';
-    return '$base $checksStr';
-  }
-
-  @override
-  List<Move> generateMoves([Map? options]) {
-    if (isThreeCheckGameOver) {
-      return [];
-    }
-    return super.generateMoves(options);
-  }
-
-  @override
-  void makeMove(Move move) {
-    super.makeMove(move);
-    if (kingAttacked(turn)) {
-      final attacker = Chess.swapColor(turn);
-      checksCount[attacker] = (checksCount[attacker] - 1).clamp(0, 3);
-    }
-  }
-
-  @override
-  void clear() {
-    super.clear();
-    checksCount = ColorMap(3);
-  }
-
-  @override
-  ThreeCheckChess copy() {
-    return ThreeCheckChess()
-      ..board = List<Piece?>.from(board)
-      ..kings = ColorMap<int>.clone(kings)
-      ..turn = turn
-      ..castling = ColorMap<int>.clone(castling)
-      ..epSquare = epSquare
-      ..halfMoves = halfMoves
-      ..moveNumber = moveNumber
-      ..history = List<GameState>.from(history)
-      ..header = Map.from(header)
-      ..checksCount = ColorMap<int>.clone(checksCount);
-  }
-}
-
-class KothChess extends Chess {
-  bool get isKothGameOver {
-    final wKing = kings[white];
-    final bKing = kings[black];
-    return wKing == 51 || wKing == 52 || wKing == 67 || wKing == 68 ||
-           bKing == 51 || bKing == 52 || bKing == 67 || bKing == 68;
-  }
-
-  @override
-  bool get gameOver => super.gameOver || isKothGameOver;
-
-  @override
-  List<Move> generateMoves([Map? options]) {
-    if (isKothGameOver) {
-      return [];
-    }
-    return super.generateMoves(options);
-  }
-
-  @override
-  KothChess copy() {
-    return KothChess()
-      ..board = List<Piece?>.from(board)
-      ..kings = ColorMap<int>.clone(kings)
-      ..turn = turn
-      ..castling = ColorMap<int>.clone(castling)
-      ..epSquare = epSquare
-      ..halfMoves = halfMoves
-      ..moveNumber = moveNumber
-      ..history = List<GameState>.from(history)
-      ..header = Map.from(header);
-  }
-}

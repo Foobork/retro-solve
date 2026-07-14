@@ -5,6 +5,7 @@ library chess;
 part 'three_check_chess.dart';
 part 'koth_chess.dart';
 part 'crazyhouse_chess.dart';
+part 'antichess_chess.dart';
 
 /*  Copyright (c) 2014, David Kopec (my first name at oaksnow dot com)
  *  Released under the MIT license
@@ -176,6 +177,7 @@ class Chess {
 
   bool get isThreeCheck => false;
   bool get isCrazyhouse => false;
+  bool get isAntichess => false;
   ColorMap<int> checksCount = ColorMap(3);
 
   /// By default start with the standard chess starting position

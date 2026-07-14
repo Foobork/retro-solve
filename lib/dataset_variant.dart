@@ -5,6 +5,7 @@ enum DatasetVariant {
   koth,
   threeCheck,
   crazyhouse,
+  antichess,
 }
 
 extension DatasetVariantX on DatasetVariant {
@@ -18,6 +19,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'Three-Check';
       case DatasetVariant.crazyhouse:
         return 'Crazyhouse';
+      case DatasetVariant.antichess:
+        return 'Antichess';
     }
   }
 
@@ -31,6 +34,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'data/ThreeCheck.txt';
       case DatasetVariant.crazyhouse:
         return 'data/Crazyhouse.txt';
+      case DatasetVariant.antichess:
+        return 'data/Antichess.txt';
     }
   }
 
@@ -58,4 +63,3 @@ class DatasetVariantStore {
     await prefs.setString(_key, variant.preferenceValue);
   }
 }
-

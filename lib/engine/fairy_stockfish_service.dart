@@ -127,6 +127,8 @@ String uciVariantForDataset(DatasetVariant variant) {
       return '3check';
     case DatasetVariant.crazyhouse:
       return 'crazyhouse';
+    case DatasetVariant.antichess:
+      return 'antichess';
   }
 }
 
@@ -254,6 +256,8 @@ class FairyStockfishService {
           print('[engine] No 3check*.nnue EvalFile found.');
         } else if (_variant == DatasetVariant.crazyhouse) {
           print('[engine] No crazyhouse*.nnue EvalFile found.');
+        } else if (_variant == DatasetVariant.antichess) {
+          print('[engine] No antichess*.nnue EvalFile found.');
         }
       }
       
@@ -399,6 +403,8 @@ class FairyStockfishService {
       regex = RegExp(r'^3check.*\.nnue$', caseSensitive: false);
     } else if (_variant == DatasetVariant.crazyhouse) {
       regex = RegExp(r'^crazyhouse.*\.nnue$', caseSensitive: false);
+    } else if (_variant == DatasetVariant.antichess) {
+      regex = RegExp(r'^antichess.*\.nnue$', caseSensitive: false);
     } else {
       return null;
     }

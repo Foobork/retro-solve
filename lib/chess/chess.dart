@@ -167,7 +167,7 @@ class Chess {
   List<GameState> history = [];
   Map header = {};
 
-  bool isThreeCheck = false;
+  bool get isThreeCheck => false;
   ColorMap<int> checksCount = ColorMap(3);
 
   /// By default start with the standard chess starting position
@@ -192,7 +192,6 @@ class Chess {
       ..moveNumber = moveNumber
       ..history = List<GameState>.from(history)
       ..header = Map.from(header)
-      ..isThreeCheck = isThreeCheck
       ..checksCount = ColorMap<int>.clone(checksCount);
   }
 
@@ -207,7 +206,6 @@ class Chess {
     moveNumber = 1;
     history = [];
     header = {};
-    isThreeCheck = false;
     checksCount = ColorMap(3);
     updateSetup(generateFen());
   }
@@ -233,20 +231,8 @@ class Chess {
       return false;
     }
 
-    final wasThreeCheck = isThreeCheck;
     clear();
-
     bool holdsCheckCount = tokens.length == 7 && RegExp(r'^\d+\+\d+$').hasMatch(tokens[4]);
-    if (holdsCheckCount) {
-      isThreeCheck = true;
-      final checks = tokens[4].split('+');
-      checksCount[white] = int.parse(checks[0]);
-      checksCount[black] = int.parse(checks[1]);
-    } else {
-      isThreeCheck = wasThreeCheck;
-      checksCount[white] = 3;
-      checksCount[black] = 3;
-    }
 
     int halfMoveIndex = holdsCheckCount ? 5 : 4;
     int fullMoveIndex = holdsCheckCount ? 6 : 5;
@@ -453,12 +439,7 @@ class Chess {
     final epflags = (epSquare == null) ? '-' : algebraic(epSquare!);
     final turnStr = (turn == white) ? 'w' : 'b';
 
-    final base = [fen, turnStr, cflags, epflags].join(' ');
-    if (isThreeCheck) {
-      final checksStr = '${checksCount[white]}+${checksCount[black]}';
-      return '$base $checksStr';
-    }
-    return base;
+    return [fen, turnStr, cflags, epflags].join(' ');
   }
 
   /// Returns a FEN String representing the current position
@@ -552,9 +533,6 @@ class Chess {
   }
 
   List<Move> generateMoves([Map? options]) {
-    if (isThreeCheckGameOver) {
-      return [];
-    }
 
     void addMove(List<Piece?> board, List<Move> moves, from, to, flags) {
       /* if pawn promotion */
@@ -996,10 +974,7 @@ class Chess {
     }
     turn = swapColor(turn);
 
-    if (isThreeCheck && kingAttacked(turn)) {
-      final attacker = swapColor(turn);
-      checksCount[attacker] = (checksCount[attacker] - 1).clamp(0, 3);
-    }
+    // (ThreeCheck logic moved to subclass override)
   }
 
   /// Undoes a move and returns it, or null if move history is empty
@@ -1253,7 +1228,7 @@ class Chess {
     return moves;
   }
 
-  bool get isThreeCheckGameOver => isThreeCheck && (checksCount[white] <= 0 || checksCount[black] <= 0);
+  bool get isThreeCheckGameOver => false;
 
   bool get inDraw {
     return halfMoves >= 100 || inStalemate || insufficientMaterial || inThreefoldRepetition;
@@ -1709,4 +1684,75 @@ class GameState {
   final int moveNumber;
   final ColorMap<int> checksCount;
   const GameState(this.move, this.kings, this.turn, this.castling, this.epSquare, this.halfMoves, this.moveNumber, this.checksCount);
+}
+
+class ThreeCheckChess extends Chess {
+  @override
+  bool get isThreeCheck => true;
+
+  @override
+  bool get isThreeCheckGameOver => checksCount[white] <= 0 || checksCount[black] <= 0;
+
+  @override
+  bool load(String fen) {
+    final success = super.load(fen);
+    if (!success) return false;
+
+    List tokens = fen.split(RegExp(r'\s+'));
+    bool holdsCheckCount = tokens.length == 7 && RegExp(r'^\d+\+\d+$').hasMatch(tokens[4]);
+    if (holdsCheckCount) {
+      final checks = tokens[4].split('+');
+      checksCount[white] = int.parse(checks[0]);
+      checksCount[black] = int.parse(checks[1]);
+    } else {
+      checksCount[white] = 3;
+      checksCount[black] = 3;
+    }
+    return true;
+  }
+
+  @override
+  String generateBfen() {
+    final base = super.generateBfen();
+    final checksStr = '${checksCount[white]}+${checksCount[black]}';
+    return '$base $checksStr';
+  }
+
+  @override
+  List<Move> generateMoves([Map? options]) {
+    if (isThreeCheckGameOver) {
+      return [];
+    }
+    return super.generateMoves(options);
+  }
+
+  @override
+  void makeMove(Move move) {
+    super.makeMove(move);
+    if (kingAttacked(turn)) {
+      final attacker = Chess.swapColor(turn);
+      checksCount[attacker] = (checksCount[attacker] - 1).clamp(0, 3);
+    }
+  }
+
+  @override
+  void clear() {
+    super.clear();
+    checksCount = ColorMap(3);
+  }
+
+  @override
+  ThreeCheckChess copy() {
+    return ThreeCheckChess()
+      ..board = List<Piece?>.from(board)
+      ..kings = ColorMap<int>.clone(kings)
+      ..turn = turn
+      ..castling = ColorMap<int>.clone(castling)
+      ..epSquare = epSquare
+      ..halfMoves = halfMoves
+      ..moveNumber = moveNumber
+      ..history = List<GameState>.from(history)
+      ..header = Map.from(header)
+      ..checksCount = ColorMap<int>.clone(checksCount);
+  }
 }

@@ -15,6 +15,11 @@ class ChessBoardController extends ValueNotifier<Chess> {
 
   ChessBoardController._(this.game) : super(game);
 
+  void setGame(Chess newGame) {
+    game = newGame;
+    value = newGame;
+  }
+
   /// Makes move on the board
   void makeMove({required String from, required String to}) {
     game.move({"from": from, "to": to});

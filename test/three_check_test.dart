@@ -4,7 +4,7 @@ import 'package:retro_solve/chess/chess.dart';
 void main() {
   group('Three-Check Chess Variant Tests', () {
     test('FEN validation and loading for 3check', () {
-      final game = Chess();
+      final game = ThreeCheckChess();
       // Starting position with 3check FEN (7 fields)
       const startingFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3+3 0 1';
       expect(Chess.validateFen(startingFen)['valid'], isTrue);
@@ -32,7 +32,7 @@ void main() {
     });
 
     test('Checks remaining count decrements on check', () {
-      final game = Chess();
+      final game = ThreeCheckChess();
       // Start a 3check game
       game.load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3+3 0 1');
       
@@ -52,7 +52,7 @@ void main() {
     });
 
     test('Undo correctly restores check count', () {
-      final game = Chess();
+      final game = ThreeCheckChess();
       game.load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3+3 0 1');
       
       game.move('e4');
@@ -66,7 +66,7 @@ void main() {
     });
 
     test('Game over after three checks', () {
-      final game = Chess();
+      final game = ThreeCheckChess();
       // Load a position where White has only 1 check remaining to deliver
       // rnbqkbnr/pppp1ppp/8/7Q/4P3/8/PPPP1PPP/RNB1KBNR w KQkq - 1+3 0 3
       game.load('rnbqkbnr/pppp1ppp/8/7Q/4P3/8/PPPP1PPP/RNB1KBNR w KQkq - 1+3 0 3');

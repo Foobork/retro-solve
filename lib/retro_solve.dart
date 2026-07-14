@@ -311,7 +311,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _variant = widget.initialVariant;
-    _controller.game.isThreeCheck = (_variant == DatasetVariant.threeCheck);
+    _controller.setGame(_createGameForVariant(_variant));
     if (_controller.game.isThreeCheck) {
       _controller.game.reset();
     }
@@ -381,7 +381,7 @@ class _HomePageState extends State<HomePage> {
     });
     await widget.engineService.setVariant(_variant);
     await widget.engineService.newGame();
-    _controller.game.isThreeCheck = (_variant == DatasetVariant.threeCheck);
+    _controller.setGame(_createGameForVariant(_variant));
     _controller.resetBoard();
 
     // Let the loading overlay paint before we block.
@@ -1025,6 +1025,17 @@ class _HomePageState extends State<HomePage> {
     }
     
     return double.tryParse(text);
+  }
+
+  Chess _createGameForVariant(DatasetVariant variant) {
+    switch (variant) {
+      case DatasetVariant.threeCheck:
+        return ThreeCheckChess();
+      case DatasetVariant.standard:
+      case DatasetVariant.koth:
+      default:
+        return Chess();
+    }
   }
 }
 

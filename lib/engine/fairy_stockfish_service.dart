@@ -125,6 +125,8 @@ String uciVariantForDataset(DatasetVariant variant) {
       return 'chess';
     case DatasetVariant.threeCheck:
       return '3check';
+    case DatasetVariant.crazyhouse:
+      return 'crazyhouse';
   }
 }
 

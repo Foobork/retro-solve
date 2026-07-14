@@ -4,6 +4,7 @@ library chess;
 
 part 'three_check_chess.dart';
 part 'koth_chess.dart';
+part 'crazyhouse_chess.dart';
 
 /*  Copyright (c) 2014, David Kopec (my first name at oaksnow dot com)
  *  Released under the MIT license
@@ -101,7 +102,8 @@ class Chess {
     'EP_CAPTURE': 'e',
     'PROMOTION': 'p',
     'KSIDE_CASTLE': 'k',
-    'QSIDE_CASTLE': 'q'
+    'QSIDE_CASTLE': 'q',
+    'DROP': 'd'
   };
 
   static const Map<String, int> bits = {
@@ -111,7 +113,8 @@ class Chess {
     'EP_CAPTURE': bitsEpCapture,
     'PROMOTION': bitsPromotion,
     'KSIDE_CASTLE': bitsKsideCastle,
-    'QSIDE_CASTLE': bitsQsideCastle
+    'QSIDE_CASTLE': bitsQsideCastle,
+    'DROP': bitsDrop
   };
 
   static const int bitsNormal = 1;
@@ -121,6 +124,7 @@ class Chess {
   static const int bitsPromotion = 16;
   static const int bitsKsideCastle = 32;
   static const int bitsQsideCastle = 64;
+  static const int bitsDrop = 128;
 
   static const int rank1 = 7;
   static const int rank2 = 6;
@@ -171,6 +175,7 @@ class Chess {
   Map header = {};
 
   bool get isThreeCheck => false;
+  bool get isCrazyhouse => false;
   ColorMap<int> checksCount = ColorMap(3);
 
   /// By default start with the standard chess starting position
@@ -303,6 +308,12 @@ class Chess {
 
     /* 1st criterion: 6 or 7 space-separated fields? */
     List tokens = fen.split(RegExp(r'\s+'));
+    String boardPart = tokens[0];
+    int bracketIndex = boardPart.indexOf('[');
+    if (bracketIndex != -1) {
+      boardPart = boardPart.substring(0, bracketIndex);
+      tokens[0] = boardPart;
+    }
     bool holdsCheckCount = tokens.length == 7 && RegExp(r'^\d+\+\d+$').hasMatch(tokens[4]);
     if (tokens.length != 6 && !holdsCheckCount) {
       return {'valid': false, 'error_number': 1, 'error': errors[1]};
@@ -693,7 +704,9 @@ class Chess {
   String moveToSan(Move move) {
     var output = '';
     final flags = move.flags;
-    if ((flags & bitsKsideCastle) != 0) {
+    if ((flags & bitsDrop) != 0) {
+      output = move.fromAlgebraic + move.toAlgebraic;
+    } else if ((flags & bitsKsideCastle) != 0) {
       output = 'O-O';
     } else if ((flags & bitsQsideCastle) != 0) {
       output = 'O-O-O';
@@ -1669,6 +1682,10 @@ class Move {
   const Move(this.color, this.from, this.to, this.flags, this.piece, this.captured, this.promotion);
 
   String get fromAlgebraic {
+    if ((flags & Chess.bitsDrop) != 0) {
+      final String pieceLetter = piece.name.toUpperCase();
+      return '$pieceLetter@';
+    }
     return Chess.algebraic(from);
   }
 
@@ -1686,6 +1703,8 @@ class GameState {
   final int halfMoves;
   final int moveNumber;
   final ColorMap<int> checksCount;
-  const GameState(this.move, this.kings, this.turn, this.castling, this.epSquare, this.halfMoves, this.moveNumber, this.checksCount);
+  final Map<PlayerColor, Map<PieceType, int>>? pockets;
+  final List<bool>? promoted;
+  const GameState(this.move, this.kings, this.turn, this.castling, this.epSquare, this.halfMoves, this.moveNumber, this.checksCount, [this.pockets, this.promoted]);
 }
 

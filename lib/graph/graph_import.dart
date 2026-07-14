@@ -21,6 +21,8 @@ Future<void> importGraph(String filename) async {
       variant = 'threecheck';
     } else if (filename.toLowerCase().contains('koth')) {
       variant = 'koth';
+    } else if (filename.toLowerCase().contains('crazyhouse')) {
+      variant = 'crazyhouse';
     }
     print("dbPath $dbPath");
     if (File(dbPath).existsSync()) {
@@ -106,6 +108,8 @@ void _importFromTxt(String filename) {
     variant = 'threecheck';
   } else if (filename.toLowerCase().contains('koth')) {
     variant = 'koth';
+  } else if (filename.toLowerCase().contains('crazyhouse')) {
+    variant = 'crazyhouse';
   }
   var regex = RegExp(r"^(.* .* .* .*) (.*) (.*)$");
   var lines = File(filename).readAsLinesSync();
@@ -132,6 +136,8 @@ void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
     game = ThreeCheckChess();
   } else if (variant == 'koth') {
     game = KothChess();
+  } else if (variant == 'crazyhouse') {
+    game = CrazyhouseChess();
   } else {
     game = Chess();
   }

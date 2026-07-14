@@ -4,6 +4,7 @@ enum DatasetVariant {
   standard,
   koth,
   threeCheck,
+  crazyhouse,
 }
 
 extension DatasetVariantX on DatasetVariant {
@@ -15,6 +16,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'KOTH';
       case DatasetVariant.threeCheck:
         return 'Three-Check';
+      case DatasetVariant.crazyhouse:
+        return 'Crazyhouse';
     }
   }
 
@@ -26,6 +29,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'data/KOTH.txt';
       case DatasetVariant.threeCheck:
         return 'data/ThreeCheck.txt';
+      case DatasetVariant.crazyhouse:
+        return 'data/Crazyhouse.txt';
     }
   }
 

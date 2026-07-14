@@ -1033,6 +1033,8 @@ class _HomePageState extends State<HomePage> {
         return ThreeCheckChess();
       case DatasetVariant.koth:
         return KothChess();
+      case DatasetVariant.crazyhouse:
+        return CrazyhouseChess();
       case DatasetVariant.standard:
       default:
         return Chess();

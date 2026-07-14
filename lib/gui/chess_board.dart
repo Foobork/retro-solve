@@ -87,113 +87,246 @@ class _ChessBoardState extends State<ChessBoard> {
     return ValueListenableBuilder<Chess>(
       valueListenable: widget.controller,
       builder: (context, game, _) {
-        return SizedBox(
-          width: widget.size,
-          height: widget.size,
-          child: Stack(
-            children: [
-              AspectRatio(
-                aspectRatio: 1.0,
-                child: GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 8),
-                  itemBuilder: (context, index) {
-                    var row = index ~/ 8;
-                    var column = index % 8;
-                    var boardRank = widget.boardOrientation == black ? '${row + 1}' : '${(7 - row) + 1}';
-                    var boardFile = widget.boardOrientation == white ? _files[column] : _files[7 - column];
+        final boardWidget = Stack(
+          children: [
+            AspectRatio(
+              aspectRatio: 1.0,
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 8),
+                itemBuilder: (context, index) {
+                  var row = index ~/ 8;
+                  var column = index % 8;
+                  var boardRank = widget.boardOrientation == black ? '${row + 1}' : '${(7 - row) + 1}';
+                  var boardFile = widget.boardOrientation == white ? _files[column] : _files[7 - column];
 
-                    var squareName = '$boardFile$boardRank';
-                    var pieceOnSquare = game.get(squareName);
+                  var squareName = '$boardFile$boardRank';
+                  var pieceOnSquare = game.get(squareName);
 
-                    var piece = BoardPiece(
-                      squareName: squareName,
-                      game: game,
-                    );
+                  var piece = BoardPiece(
+                    squareName: squareName,
+                    game: game,
+                  );
 
-                    var draggable = game.get(squareName) != null
-                        ? (widget.enableUserMoves
-                            ? Draggable<PieceMoveData>(
+                  var draggable = game.get(squareName) != null
+                      ? (widget.enableUserMoves
+                          ? Draggable<PieceMoveData>(
+                              child: piece,
+                              feedback: Material(
+                                color: Colors.transparent,
                                 child: piece,
-                                feedback: Material(
-                                  color: Colors.transparent,
-                                  child: piece,
-                                ),
-                                childWhenDragging: const SizedBox(),
-                                data: PieceMoveData(
-                                  squareName: squareName,
-                                  pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
-                                  pieceColor: pieceOnSquare?.color ?? white,
-                                ),
-                              )
-                            : piece)
-                        : Container();
+                              ),
+                              childWhenDragging: const SizedBox(),
+                              data: PieceMoveData(
+                                squareName: squareName,
+                                pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
+                                pieceColor: pieceOnSquare?.color ?? white,
+                              ),
+                            )
+                          : piece)
+                      : Container();
 
-                    var dragTarget = DragTarget<PieceMoveData>(builder: (context, list, _) {
-                      return draggable;
-                    }, onWillAcceptWithDetails: (pieceMoveData) {
-                      return widget.enableUserMoves ? true : false;
-                    }, onAcceptWithDetails: (DragTargetDetails<PieceMoveData> dragTargetDetails) async {
-                      PieceMoveData pieceMoveData = dragTargetDetails.data;
-                      // A way to check if move occurred.
-                      PlayerColor moveColor = game.turn;
+                  var dragTarget = DragTarget<PieceMoveData>(builder: (context, list, _) {
+                    return draggable;
+                  }, onWillAcceptWithDetails: (pieceMoveData) {
+                    return widget.enableUserMoves ? true : false;
+                  }, onAcceptWithDetails: (DragTargetDetails<PieceMoveData> dragTargetDetails) async {
+                    PieceMoveData pieceMoveData = dragTargetDetails.data;
+                    // A way to check if move occurred.
+                    PlayerColor moveColor = game.turn;
 
-                      if (pieceMoveData.pieceType == "P" &&
-                          ((pieceMoveData.squareName[1] == "7" &&
-                                  squareName[1] == "8" &&
-                                  pieceMoveData.pieceColor == white) ||
-                              (pieceMoveData.squareName[1] == "2" &&
-                                  squareName[1] == "1" &&
-                                  pieceMoveData.pieceColor == black))) {
-                        var val = await _promotionDialog(context);
+                    if (pieceMoveData.pieceType == "P" &&
+                        !pieceMoveData.squareName.startsWith('@') &&
+                        ((pieceMoveData.squareName[1] == "7" &&
+                                squareName[1] == "8" &&
+                                pieceMoveData.pieceColor == white) ||
+                            (pieceMoveData.squareName[1] == "2" &&
+                                squareName[1] == "1" &&
+                                pieceMoveData.pieceColor == black))) {
+                      var val = await _promotionDialog(context);
 
-                        if (val != null) {
-                          widget.controller.makeMoveWithPromotion(
-                            from: pieceMoveData.squareName,
-                            to: squareName,
-                            pieceToPromoteTo: val,
-                          );
-                        } else {
-                          return;
-                        }
-                      } else {
-                        widget.controller.makeMove(
+                      if (val != null) {
+                        widget.controller.makeMoveWithPromotion(
                           from: pieceMoveData.squareName,
                           to: squareName,
+                          pieceToPromoteTo: val,
                         );
+                      } else {
+                        return;
                       }
-                      if (game.turn != moveColor) {
-                        widget.onMove?.call();
-                      }
-                    });
+                    } else {
+                      widget.controller.makeMove(
+                        from: pieceMoveData.squareName,
+                        to: squareName,
+                      );
+                    }
+                    if (game.turn != moveColor) {
+                      widget.onMove?.call();
+                    }
+                  });
 
-                    final isLightSquare = (row + column) % 2 == 0;
-                    final squareColor = isLightSquare ? widget.boardColor.lightSquare : widget.boardColor.darkSquare;
+                  final isLightSquare = (row + column) % 2 == 0;
+                  final squareColor = isLightSquare ? widget.boardColor.lightSquare : widget.boardColor.darkSquare;
 
-                    return Container(
-                      color: squareColor,
-                      child: dragTarget,
-                    );
-                  },
-                  itemCount: 64,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
+                  return Container(
+                    color: squareColor,
+                    child: dragTarget,
+                  );
+                },
+                itemCount: 64,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+              ),
+            ),
+            if (widget.arrows.isNotEmpty)
+              IgnorePointer(
+                child: AspectRatio(
+                  aspectRatio: 1.0,
+                  child: CustomPaint(
+                    child: Container(),
+                    painter: _ArrowPainter(widget.arrows, widget.boardOrientation),
+                  ),
                 ),
               ),
-              if (widget.arrows.isNotEmpty)
-                IgnorePointer(
-                  child: AspectRatio(
-                    aspectRatio: 1.0,
-                    child: CustomPaint(
-                      child: Container(),
-                      painter: _ArrowPainter(widget.arrows, widget.boardOrientation),
+          ],
+        );
+
+        if (game is CrazyhouseChess) {
+          final topColor = widget.boardOrientation == white ? black : white;
+          final bottomColor = widget.boardOrientation == white ? white : black;
+
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildPocket(game, topColor),
+              const SizedBox(height: 4.0),
+              Expanded(child: boardWidget),
+              const SizedBox(height: 4.0),
+              _buildPocket(game, bottomColor),
+            ],
+          );
+        } else {
+          return SizedBox(
+            width: widget.size,
+            height: widget.size,
+            child: boardWidget,
+          );
+        }
+      },
+    );
+  }
+
+  Widget _buildPocket(CrazyhouseChess game, PlayerColor color) {
+    final pocket = game.pockets[color]!;
+    final types = [PieceType.queen, PieceType.rook, PieceType.bishop, PieceType.knight, PieceType.pawn];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      color: Colors.grey.shade100,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: types.map((type) {
+          final count = pocket[type] ?? 0;
+          final hasPieces = count > 0;
+          final letter = type.name.toUpperCase();
+          final dropCode = '$letter@';
+
+          Widget pieceWidget = SizedBox(
+            width: 40,
+            height: 40,
+            child: Opacity(
+              opacity: hasPieces ? 1.0 : 0.25,
+              child: _getPieceVector(type, color),
+            ),
+          );
+
+          Widget pieceWithBadge = Stack(
+            clipBehavior: Clip.none,
+            children: [
+              pieceWidget,
+              if (hasPieces)
+                Positioned(
+                  right: -4,
+                  bottom: -4,
+                  child: Container(
+                    padding: const EdgeInsets.all(2.0),
+                    decoration: const BoxDecoration(
+                      color: Colors.deepPurple,
+                      shape: BoxShape.circle,
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      '$count',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
                 ),
             ],
-          ),
-        );
-      },
+          );
+
+          if (hasPieces && widget.enableUserMoves) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: Draggable<PieceMoveData>(
+                feedback: Material(
+                  color: Colors.transparent,
+                  child: SizedBox(
+                    width: 50,
+                    height: 50,
+                    child: _getPieceVector(type, color),
+                  ),
+                ),
+                childWhenDragging: Opacity(
+                  opacity: 0.3,
+                  child: pieceWithBadge,
+                ),
+                data: PieceMoveData(
+                  squareName: dropCode,
+                  pieceType: letter,
+                  pieceColor: color,
+                ),
+                child: pieceWithBadge,
+              ),
+            );
+          } else {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: pieceWithBadge,
+            );
+          }
+        }).toList(),
+      ),
     );
+  }
+
+  Widget _getPieceVector(PieceType type, PlayerColor color) {
+    if (color == white) {
+      switch (type) {
+        case PieceType.pawn: return WhitePawn();
+        case PieceType.knight: return WhiteKnight();
+        case PieceType.bishop: return WhiteBishop();
+        case PieceType.rook: return WhiteRook();
+        case PieceType.queen: return WhiteQueen();
+        case PieceType.king: return WhiteKing();
+      }
+    } else {
+      switch (type) {
+        case PieceType.pawn: return BlackPawn();
+        case PieceType.knight: return BlackKnight();
+        case PieceType.bishop: return BlackBishop();
+        case PieceType.rook: return BlackRook();
+        case PieceType.queen: return BlackQueen();
+        case PieceType.king: return BlackKing();
+      }
+    }
+    return const SizedBox();
   }
 
   /// Show dialog when pawn reaches last square

@@ -16,7 +16,12 @@ Future<void> importGraph(String filename) async {
   try {
     final absolutePath = File(filename).absolute.path;
     final dbPath = absolutePath.replaceAll('.txt', '.db');
-    final isThreeCheck = filename.toLowerCase().contains('threecheck');
+    String variant = 'standard';
+    if (filename.toLowerCase().contains('threecheck')) {
+      variant = 'threecheck';
+    } else if (filename.toLowerCase().contains('koth')) {
+      variant = 'koth';
+    }
     print("dbPath $dbPath");
     if (File(dbPath).existsSync()) {
       print("Loading from database $dbPath");
@@ -41,7 +46,7 @@ Future<void> importGraph(String filename) async {
             print("Edges generated: $count / ${bfens.length} (${DatabaseService.instance.getEdgeQueueLength()} pending)");
             await Future.delayed(const Duration(milliseconds: 100));
           }
-          _addEdgesForBfen(bfen, isThreeCheck: isThreeCheck);
+          _addEdgesForBfen(bfen, variant: variant);
           count++;
         }
         // Give final flushes a chance to drain
@@ -96,7 +101,12 @@ Future<void> importGraph(String filename) async {
 }
 
 void _importFromTxt(String filename) {
-  final isThreeCheck = filename.toLowerCase().contains('threecheck');
+  String variant = 'standard';
+  if (filename.toLowerCase().contains('threecheck')) {
+    variant = 'threecheck';
+  } else if (filename.toLowerCase().contains('koth')) {
+    variant = 'koth';
+  }
   var regex = RegExp(r"^(.* .* .* .*) (.*) (.*)$");
   var lines = File(filename).readAsLinesSync();
   int lineNumber = 1;
@@ -109,15 +119,22 @@ void _importFromTxt(String filename) {
     var assigned = parseEvalString(match.group(2));
     var computed = parseEvalString(match.group(3));
     graph.addFullVertex(bfen, assigned, computed);
-    _addEdgesForBfen(bfen, isThreeCheck: isThreeCheck);
+    _addEdgesForBfen(bfen, variant: variant);
     lineNumber++;
   }
 }
 
 
 
-void _addEdgesForBfen(String bfen, {bool isThreeCheck = false}) {
-  var game = isThreeCheck ? ThreeCheckChess() : Chess();
+void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
+  Chess game;
+  if (variant == 'threecheck') {
+    game = ThreeCheckChess();
+  } else if (variant == 'koth') {
+    game = KothChess();
+  } else {
+    game = Chess();
+  }
   // Ensure we have a valid FEN for chess library (append halfmove/fullmove if missing)
   final parts = bfen.split(' ');
   final fullFen = parts.length >= 4 ? "$bfen 0 1" : bfen;

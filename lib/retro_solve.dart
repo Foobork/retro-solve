@@ -1031,8 +1031,9 @@ class _HomePageState extends State<HomePage> {
     switch (variant) {
       case DatasetVariant.threeCheck:
         return ThreeCheckChess();
-      case DatasetVariant.standard:
       case DatasetVariant.koth:
+        return KothChess();
+      case DatasetVariant.standard:
       default:
         return Chess();
     }

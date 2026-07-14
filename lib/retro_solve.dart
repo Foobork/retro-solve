@@ -80,7 +80,7 @@ class _HomePageState extends State<HomePage> {
           child: DropdownButton<DatasetVariant>(
             value: _variant,
             dropdownColor: Colors.deepPurple.shade50,
-            onChanged: _isLoadingVariant ? null : (v) => _setVariant(v),
+            onChanged: (_isLoadingVariant || _isExploring) ? null : (v) => _setVariant(v),
             items: DatasetVariant.values
                 .map(
                   (v) => DropdownMenuItem(

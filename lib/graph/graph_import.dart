@@ -25,6 +25,8 @@ Future<void> importGraph(String filename) async {
       variant = 'crazyhouse';
     } else if (filename.toLowerCase().contains('antichess')) {
       variant = 'antichess';
+    } else if (filename.toLowerCase().contains('atomic')) {
+      variant = 'atomic';
     }
     print("dbPath $dbPath");
     if (File(dbPath).existsSync()) {
@@ -114,6 +116,8 @@ void _importFromTxt(String filename) {
     variant = 'crazyhouse';
   } else if (filename.toLowerCase().contains('antichess')) {
     variant = 'antichess';
+  } else if (filename.toLowerCase().contains('atomic')) {
+    variant = 'atomic';
   }
   var regex = RegExp(r"^(.* .* .* .*) (.*) (.*)$");
   var lines = File(filename).readAsLinesSync();
@@ -144,6 +148,8 @@ void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
     game = CrazyhouseChess();
   } else if (variant == 'antichess') {
     game = AntichessChess();
+  } else if (variant == 'atomic') {
+    game = AtomicChess();
   } else {
     game = Chess();
   }

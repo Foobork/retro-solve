@@ -922,10 +922,10 @@ class _HomePageState extends State<HomePage> {
         SizedBox(
           width: 200,
           child: InputDecorator(
-            decoration: const InputDecoration(
-              labelText: 'Engine',
-              border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.all(12),
+            decoration: InputDecoration(
+              labelText: widget.engineService.isNNUE ? 'Engine (NNUE)' : 'Engine (Classical)',
+              border: const OutlineInputBorder(),
+              contentPadding: const EdgeInsets.all(12),
             ),
             child: content,
           ),
@@ -1035,6 +1035,8 @@ class _HomePageState extends State<HomePage> {
         return CrazyhouseChess();
       case DatasetVariant.antichess:
         return AntichessChess();
+      case DatasetVariant.atomic:
+        return AtomicChess();
       case DatasetVariant.standard:
       default:
         return Chess();

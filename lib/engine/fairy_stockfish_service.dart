@@ -129,6 +129,8 @@ String uciVariantForDataset(DatasetVariant variant) {
       return 'crazyhouse';
     case DatasetVariant.antichess:
       return 'antichess';
+    case DatasetVariant.atomic:
+      return 'atomic';
   }
 }
 
@@ -144,15 +146,17 @@ class FairyStockfishService {
 
   DatasetVariant get variant => _variant;
 
+  bool get isNNUE {
+    if (!_useNNUE) return false;
+    if (_variant == DatasetVariant.standard) return true;
+    return _resolveEvalFilePath() != null;
+  }
+
   Future<void> setVariant(DatasetVariant variant) async {
     if (_variant == variant) return;
     _variant = variant;
     print('[engine] Configured variant: ${uciVariantForDataset(_variant)}');
-    if (!_isStarted || _process == null) return;
-    _writeLine('stop');
-    _writeLine(
-        'setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
-    await _sendAndWaitFor('isready', 'readyok');
+    await _restart();
   }
 
   Future<void> newGame() async {
@@ -182,6 +186,8 @@ class FairyStockfishService {
 
   Future<void> _evalQueue = Future<void>.value();
   bool _isStarted = false;
+  bool _useNNUE = true;
+  bool _isDisposed = false;
 
   /// True while we are waiting for readyok after a stop+isready sequence.
   /// Evaluations received during this window belong to the previous position
@@ -189,6 +195,7 @@ class FairyStockfishService {
   bool _waitingForReadyOk = false;
 
   Future<void> start() async {
+    _isDisposed = false;
     if (_isStarted) return;
     if (!Platform.isWindows) return;
 
@@ -237,15 +244,34 @@ class FairyStockfishService {
         .transform(const LineSplitter())
         .listen((line) => print('[engine][err] $line'));
 
-    _process!.exitCode.then((code) {
+    final currentProcess = _process!;
+    currentProcess.exitCode.then((code) async {
       print('[engine] Process exited with code $code');
+      if (_process != currentProcess) {
+        return;
+      }
       _isStarted = false;
       _process = null;
+
+      if (!_isDisposed) {
+        if (_useNNUE) {
+          print('[engine] Engine exited unexpectedly. Retrying with NNUE disabled...');
+          _useNNUE = false;
+          await start();
+        } else {
+          print('[engine] Engine exited unexpectedly even without NNUE. Giving up.');
+        }
+      }
     });
 
     try {
       await _sendAndWaitFor('uci', 'uciok');
-      final evalFilePath = _resolveEvalFilePath();
+
+      if (!_useNNUE) {
+        _writeLine('setoption name Use NNUE value false');
+      }
+
+      final evalFilePath = _useNNUE ? _resolveEvalFilePath() : null;
       if (evalFilePath != null) {
         _writeLine('setoption name EvalFile value $evalFilePath');
         print('[engine] Using EvalFile: $evalFilePath');
@@ -258,6 +284,8 @@ class FairyStockfishService {
           print('[engine] No crazyhouse*.nnue EvalFile found.');
         } else if (_variant == DatasetVariant.antichess) {
           print('[engine] No antichess*.nnue EvalFile found.');
+        } else if (_variant == DatasetVariant.atomic) {
+          print('[engine] No atomic*.nnue EvalFile found.');
         }
       }
       
@@ -271,9 +299,21 @@ class FairyStockfishService {
       _isStarted = true;
       print('[engine] Ready: $binaryPath');
       print('[engine] Using variant: ${uciVariantForDataset(_variant)}');
+
+      // Automatically resume search if there is an active FEN
+      if (_activeFen.isNotEmpty) {
+        print('[engine] Resuming search for active FEN: $_activeFen');
+        startSearch(_activeFen);
+      }
     } catch (e) {
       print('[engine] Handshake failed: $e');
       await dispose();
+
+      if (_useNNUE) {
+        print('[engine] Retrying startup with NNUE disabled...');
+        _useNNUE = false;
+        await start();
+      }
     }
   }
 
@@ -321,6 +361,7 @@ class FairyStockfishService {
   }
 
   Future<void> dispose() async {
+    _isDisposed = true;
     try {
       if (_process != null) {
         _writeLine('quit');
@@ -334,6 +375,7 @@ class FairyStockfishService {
     _stderrSubscription = null;
     _process = null;
     _isStarted = false;
+    _useNNUE = true;
   }
 
   // The previous _runEvaluation was removed as we are streaming natively now.
@@ -405,6 +447,8 @@ class FairyStockfishService {
       regex = RegExp(r'^crazyhouse.*\.nnue$', caseSensitive: false);
     } else if (_variant == DatasetVariant.antichess) {
       regex = RegExp(r'^antichess.*\.nnue$', caseSensitive: false);
+    } else if (_variant == DatasetVariant.atomic) {
+      regex = RegExp(r'^atomic.*\.nnue$', caseSensitive: false);
     } else {
       return null;
     }

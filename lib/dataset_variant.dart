@@ -6,6 +6,7 @@ enum DatasetVariant {
   threeCheck,
   crazyhouse,
   antichess,
+  atomic,
 }
 
 extension DatasetVariantX on DatasetVariant {
@@ -21,6 +22,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'Crazyhouse';
       case DatasetVariant.antichess:
         return 'Antichess';
+      case DatasetVariant.atomic:
+        return 'Atomic';
     }
   }
 
@@ -36,6 +39,8 @@ extension DatasetVariantX on DatasetVariant {
         return 'data/Crazyhouse.txt';
       case DatasetVariant.antichess:
         return 'data/Antichess.txt';
+      case DatasetVariant.atomic:
+        return 'data/Atomic.txt';
     }
   }
 

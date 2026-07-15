@@ -16,8 +16,15 @@ Unlike standard PGN viewers that treat repertoires as sequential lines, this too
 ## Setup
 
 Place the required binaries in your base directory alongside your `data/KOTH.txt` file:
-- `fairy-stockfish_x86-64-modern.exe`
+- `fairy-stockfish_x86-64-modern.exe` (To get the latest development version:
+  1. Go to [Fairy-Stockfish GitHub Actions](https://github.com/fairy-stockfish/Fairy-Stockfish/actions/workflows/release.yml)
+  2. Make sure you are logged into GitHub
+  3. Select the most recent run against the `master` branch
+  4. Select **Artifacts** (scroll down if necessary)
+  5. Download and unzip the appropriate archive
+  6. Choose the appropriate `.exe` and copy it to the project base directory)
 - `kingofthehill-*.nnue`
+
 
 **Run:**
 ```bash

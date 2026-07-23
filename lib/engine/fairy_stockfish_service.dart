@@ -131,6 +131,10 @@ String uciVariantForDataset(DatasetVariant variant) {
       return 'antichess';
     case DatasetVariant.atomic:
       return 'atomic';
+    case DatasetVariant.horde:
+      return 'horde';
+    case DatasetVariant.racingKings:
+      return 'racingkings';
   }
 }
 
@@ -286,6 +290,10 @@ class FairyStockfishService {
           print('[engine] No antichess*.nnue EvalFile found.');
         } else if (_variant == DatasetVariant.atomic) {
           print('[engine] No atomic*.nnue EvalFile found.');
+        } else if (_variant == DatasetVariant.horde) {
+          print('[engine] No horde*.nnue EvalFile found.');
+        } else if (_variant == DatasetVariant.racingKings) {
+          print('[engine] No racingkings*.nnue EvalFile found.');
         }
       }
       
@@ -449,6 +457,10 @@ class FairyStockfishService {
       regex = RegExp(r'^antichess.*\.nnue$', caseSensitive: false);
     } else if (_variant == DatasetVariant.atomic) {
       regex = RegExp(r'^atomic.*\.nnue$', caseSensitive: false);
+    } else if (_variant == DatasetVariant.horde) {
+      regex = RegExp(r'^horde.*\.nnue$', caseSensitive: false);
+    } else if (_variant == DatasetVariant.racingKings) {
+      regex = RegExp(r'^racingkings.*\.nnue$', caseSensitive: false);
     } else {
       return null;
     }

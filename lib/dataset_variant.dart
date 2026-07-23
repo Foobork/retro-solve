@@ -7,6 +7,8 @@ enum DatasetVariant {
   crazyhouse,
   antichess,
   atomic,
+  horde,
+  racingKings,
 }
 
 extension DatasetVariantX on DatasetVariant {
@@ -24,6 +26,10 @@ extension DatasetVariantX on DatasetVariant {
         return 'Antichess';
       case DatasetVariant.atomic:
         return 'Atomic';
+      case DatasetVariant.horde:
+        return 'Horde';
+      case DatasetVariant.racingKings:
+        return 'Racing Kings';
     }
   }
 
@@ -41,6 +47,10 @@ extension DatasetVariantX on DatasetVariant {
         return 'data/Antichess.txt';
       case DatasetVariant.atomic:
         return 'data/Atomic.txt';
+      case DatasetVariant.horde:
+        return 'data/Horde.txt';
+      case DatasetVariant.racingKings:
+        return 'data/RacingKings.txt';
     }
   }
 

@@ -35,6 +35,7 @@ class Graph {
     if (pos == null) return;
     pos.assigned = eval;
     pos.computed = null;
+    pos.inDatabase = true;
     onNodeUpdated?.call(bfen, pos.assigned, pos.computed);
   }
 

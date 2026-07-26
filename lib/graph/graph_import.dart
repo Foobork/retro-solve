@@ -171,11 +171,25 @@ void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
   
   try {
     game.load(fullFen);
-    List<Move> moves = game.generateMoves();
     String a = game.bfen;
+    if (game.gameOver) {
+      final score = game.terminalEvaluation;
+      if (score != null) {
+        graph.assign(a, score);
+      }
+      return;
+    }
+
+    List<Move> moves = game.generateMoves();
     for (var move in moves) {
       game.makeMove(move);
       String b = game.bfen;
+      if (game.gameOver) {
+        final score = game.terminalEvaluation;
+        if (score != null && graph.v[b]?.assigned == null) {
+          graph.assign(b, score);
+        }
+      }
       game.undo();
       graph.addLink(a, b);
     }

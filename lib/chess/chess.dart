@@ -786,7 +786,7 @@ class Chess {
 
         var blocked = false;
         while (j != square) {
-          if (board[j] != null) {
+          if ((j & 0x88) != 0 || board[j] != null) {
             blocked = true;
             break;
           }
@@ -1260,6 +1260,31 @@ class Chess {
 
   bool get gameOver {
     return inDraw || inCheckmate || isThreeCheckGameOver;
+  }
+
+  double? get terminalEvaluation {
+    if (!gameOver) return null;
+    if (inDraw) return 0.0;
+
+    if (isRacingKings) {
+      if (Chess.rank(kings[black]) == Chess.rank8) {
+        return -1000.0;
+      }
+      if (Chess.rank(kings[white]) == Chess.rank8 && turn == white) {
+        return 1000.0;
+      }
+    }
+
+    if (isThreeCheck) {
+      if (checksCount[white] <= 0) return 1000.0;
+      if (checksCount[black] <= 0) return -1000.0;
+    }
+
+    if (inCheckmate) {
+      return turn == white ? -1000.0 : 1000.0;
+    }
+
+    return 0.0;
   }
 
   String get fen {

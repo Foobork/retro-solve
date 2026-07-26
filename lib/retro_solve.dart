@@ -421,13 +421,37 @@ class _HomePageState extends State<HomePage> {
 
   void _chessBoardListener() {
     var game = _controller.game.copy();
-    List<Move> moves = game.generateMoves();
     String a = game.bfen;
+    bool assignedAny = false;
+    if (game.gameOver) {
+      final score = game.terminalEvaluation;
+      if (score != null && graph.v[a]?.assigned == null) {
+        graph.assign(a, score);
+        assignedAny = true;
+      }
+      if (assignedAny) {
+        graph.solveBfen(a);
+      }
+      setState(_update);
+      return;
+    }
+
+    List<Move> moves = game.generateMoves();
     for (var move in moves) {
       game.makeMove(move);
       String b = game.bfen;
+      if (game.gameOver) {
+        final score = game.terminalEvaluation;
+        if (score != null && graph.v[b]?.assigned == null) {
+          graph.assign(b, score);
+          assignedAny = true;
+        }
+      }
       game.undo();
       graph.addLink(a, b);
+    }
+    if (assignedAny) {
+      graph.solveBfen(a);
     }
     setState(_update);
   }
@@ -504,8 +528,8 @@ class _HomePageState extends State<HomePage> {
     scratch.makeMove(move);
     var vertex = graph.v[scratch.bfen];
     if (vertex == null) return;
-    if (vertex.links.isEmpty && !vertex.inDatabase) return;
-    _knownMoves.add(MoveInfo(game.moveToSan(move), vertex.computed));
+    if (vertex.links.isEmpty && !vertex.inDatabase && vertex.assigned == null && vertex.computed == null) return;
+    _knownMoves.add(MoveInfo(game.moveToSan(move), vertex.computed ?? vertex.assigned));
   }
 
   void _back() {
@@ -604,7 +628,7 @@ class _HomePageState extends State<HomePage> {
       bool hasUnexplored = false;
       for (final e in _engineEvals) {
         String san = _uciToSan(e.candidateMove);
-        if (!knownMoveSans.contains(san) && e.mate != 0) {
+        if (san != '—' && !knownMoveSans.contains(san)) {
           hasUnexplored = true;
           break;
         }
@@ -623,7 +647,7 @@ class _HomePageState extends State<HomePage> {
 
       for (final e in _engineEvals) {
         String san = _uciToSan(e.candidateMove);
-        if (!currentKnownSans.contains(san) && e.mate != 0) {
+        if (san != '—' && !currentKnownSans.contains(san)) {
           nextMoveToExplore = san;
           break;
         }
@@ -890,7 +914,7 @@ class _HomePageState extends State<HomePage> {
         }
 
         final isKnown = knownMoveSans.contains(san);
-        final bool shouldHighlight = !isKnown && e.mate != 0;
+        final bool shouldHighlight = !isKnown && san != '—';
         return _buildMoveRow(san, evalStr,
             color: shouldHighlight ? Colors.blue : null);
       }).toList();

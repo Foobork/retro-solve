@@ -22,12 +22,24 @@ class RacingKingsChess extends Chess {
     return true;
   }
 
+  bool get isRank8Draw =>
+      Chess.rank(kings[white]) == Chess.rank8 &&
+      Chess.rank(kings[black]) == Chess.rank8;
+
+  bool get isRacingKingsGameOver =>
+      Chess.rank(kings[black]) == Chess.rank8 ||
+      (Chess.rank(kings[white]) == Chess.rank8 && turn == white);
+
   @override
   List<Move> generateMoves([Map? options]) {
     final legal = (options != null && options.containsKey('legal')) ? options['legal'] : true;
 
     if (!legal) {
       return super.generateMoves(options);
+    }
+
+    if (isRacingKingsGameOver || isRank8Draw || halfMoves >= 100 || inThreefoldRepetition) {
+      return [];
     }
 
     final pseudoOptions = Map.from(options ?? {})..['legal'] = false;
@@ -52,8 +64,16 @@ class RacingKingsChess extends Chess {
   bool get insufficientMaterial => false;
 
   @override
+  bool get inStalemate {
+    if (isRacingKingsGameOver || isRank8Draw) {
+      return false;
+    }
+    return super.inStalemate;
+  }
+
+  @override
   bool get inDraw {
-    if (Chess.rank(kings[white]) == Chess.rank8 && Chess.rank(kings[black]) == Chess.rank8) {
+    if (isRank8Draw) {
       return true;
     }
     return super.inDraw;
@@ -62,8 +82,7 @@ class RacingKingsChess extends Chess {
   @override
   bool get gameOver {
     if (inDraw) return true;
-    if (Chess.rank(kings[black]) == Chess.rank8) return true;
-    if (Chess.rank(kings[white]) == Chess.rank8 && turn == white) return true;
+    if (isRacingKingsGameOver) return true;
     return generateMoves().isEmpty;
   }
 

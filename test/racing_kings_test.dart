@@ -18,8 +18,8 @@ void main() {
     test('Giving check is illegal in Racing Kings', () {
       final game = RacingKingsChess();
       // Setup position: White Rook on b3, Black King on a2, White King on h1
-      // FEN: 7K/8/8/8/8/1R6/k7/8 w - - 0 1
-      game.load('7K/8/8/8/8/1R6/k7/8 w - - 0 1');
+      // FEN: 8/8/8/8/8/1R6/k7/7K w - - 0 1
+      game.load('8/8/8/8/8/1R6/k7/7K w - - 0 1');
 
       final moves = game.generateMoves();
       
@@ -55,6 +55,43 @@ void main() {
       game.makeMove(blackKingToC8);
       expect(game.gameOver, isTrue);
       expect(game.inDraw, isTrue);
+      expect(game.terminalEvaluation, equals(0.0));
+      expect(game.generateMoves(), isEmpty, reason: 'Terminal draw state must generate no legal moves');
+    });
+
+    test('Non-equalising move after White reaches 8th rank results in White win', () {
+      final game = RacingKingsChess();
+      // White King on a8 (8th rank), Black King on c7, Black to move.
+      game.load('K7/2k5/8/8/8/8/8/8 b - - 0 1');
+      expect(game.gameOver, isFalse);
+
+      // Black moves King to c6 (not rank 8).
+      final moves = game.generateMoves();
+      final blackKingToC6 = moves.firstWhere((m) => m.fromAlgebraic == 'c7' && m.toAlgebraic == 'c6');
+      game.makeMove(blackKingToC6);
+
+      // Turn is now White, White is on rank 8, Black is on rank 6.
+      // Game is over and White wins!
+      expect(game.gameOver, isTrue);
+      expect(game.inDraw, isFalse);
+      expect(game.terminalEvaluation, equals(1000.0));
+      expect(game.generateMoves(), isEmpty, reason: 'Terminal win state must generate no legal moves');
+    });
+
+    test('Black reaching 8th rank first results in immediate Black win', () {
+      final game = RacingKingsChess();
+      // White King on a7 (7th rank), Black King on c7, Black to move.
+      game.load('8/K1k5/8/8/8/8/8/8 b - - 0 1');
+      expect(game.gameOver, isFalse);
+
+      final moves = game.generateMoves();
+      final blackKingToC8 = moves.firstWhere((m) => m.fromAlgebraic == 'c7' && m.toAlgebraic == 'c8');
+      game.makeMove(blackKingToC8);
+
+      expect(game.gameOver, isTrue);
+      expect(game.inDraw, isFalse);
+      expect(game.terminalEvaluation, equals(-1000.0));
+      expect(game.generateMoves(), isEmpty);
     });
   });
 }

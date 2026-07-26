@@ -93,5 +93,38 @@ void main() {
       expect(game.terminalEvaluation, equals(-1000.0));
       expect(game.generateMoves(), isEmpty);
     });
+
+    test('4-field FEN loading and move SAN generation', () {
+      final game = RacingKingsChess();
+      const fen = '8/8/8/8/8/8/krNnNBRK/qrbn1BRQ b - -';
+      final success = game.load(fen);
+      expect(success, isTrue);
+      expect(game.turn, equals(PlayerColor.black));
+
+      final moves = game.generateMoves();
+      final sans = moves.map((m) => game.moveToSan(m)).toList();
+      expect(sans.contains('Nxf2'), isTrue);
+      expect(sans.contains('Ne4'), isTrue);
+      expect(sans.contains('Rb3'), isTrue);
+
+      // Verify mapping candidate UCI moves to SAN
+      String uciToSan(Chess game, String uci) {
+        final g = game.copy();
+        for (final m in g.generateMoves()) {
+          final mUci = '${m.fromAlgebraic}${m.toAlgebraic}${m.promotion?.name ?? ''}'.toLowerCase();
+          final san = g.moveToSan(m);
+          if (mUci == uci.toLowerCase() || san.toLowerCase() == uci.toLowerCase()) {
+            return san;
+          }
+        }
+        return uci;
+      }
+
+      expect(uciToSan(game, 'd1f2'), equals('Nxf2'));
+      expect(uciToSan(game, 'd2e4'), equals('Ne4'));
+      expect(uciToSan(game, 'b2b3'), equals('Rb3'));
+      expect(uciToSan(game, 'b2c2'), equals('Rxc2'));
+      expect(uciToSan(game, 'a2b3'), equals('Kb3'));
+    });
   });
 }

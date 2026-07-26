@@ -320,9 +320,13 @@ class _HomePageState extends State<HomePage> {
       if (_evalTimer == null || !_evalTimer!.isActive) {
         _evalTimer = Timer(const Duration(milliseconds: 150), () {
           if (!mounted || _pendingEvals == null) return;
+          final currentFen = _controller.game.fen;
           final whiteToMove = _controller.game.turn == white;
           final validEvals = _pendingEvals!
-              .where((e) => e.centipawns != null || e.mate != null)
+              .where((e) =>
+                  (e.centipawns != null || e.mate != null) &&
+                  e.fen != null &&
+                  Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen))
               .map((e) => e.asWhitePerspective(whiteToMove: whiteToMove))
               .toList();
 
@@ -520,15 +524,16 @@ class _HomePageState extends State<HomePage> {
     _knownMoves = [];
     _controller.getPossibleMoves().forEach(_addMoveIfKnown);
     _knownMoves.sort(_compare(_controller.game.turn));
+    print('[KNOWN-MOVES] bfen="${_controller.game.bfen}" count=${_knownMoves.length} moves=${_knownMoves.map((m) => "${m.move} (${m.eval})").toList()}');
   }
 
   void _addMoveIfKnown(Move move) {
-    var game = _controller.game;
+    var game = _controller.game.copy();
     var scratch = game.copy();
     scratch.makeMove(move);
     var vertex = graph.v[scratch.bfen];
     if (vertex == null) return;
-    if (vertex.links.isEmpty && !vertex.inDatabase && vertex.assigned == null && vertex.computed == null) return;
+    if (!vertex.inDatabase && vertex.assigned == null && vertex.computed == null && vertex.links.isEmpty) return;
     _knownMoves.add(MoveInfo(game.moveToSan(move), vertex.computed ?? vertex.assigned));
   }
 
@@ -616,7 +621,7 @@ class _HomePageState extends State<HomePage> {
 
     if (!_isExploring || !mounted) return;
 
-    final knownMoveSans = _knownMoves.map((m) => m.move).toSet();
+    final knownMoveSans = _getKnownMoveSans();
 
     if (!isRoot) {
       if (knownMoveSans.isEmpty) {
@@ -642,7 +647,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     while (_isExploring && mounted) {
-      final currentKnownSans = _knownMoves.map((m) => m.move).toSet();
+      final currentKnownSans = _getKnownMoveSans();
       String? nextMoveToExplore;
 
       for (final e in _engineEvals) {
@@ -861,22 +866,46 @@ class _HomePageState extends State<HomePage> {
     return _textField("Evaluation", _evalController, _updateEval);
   }
 
+  Set<String> _getKnownMoveSans() {
+    final set = <String>{};
+    for (final m in _knownMoves) {
+      set.add(m.move);
+      set.add(_controller.game.normalizeMoveString(m.move));
+    }
+    return set;
+  }
+
   String _uciToSan(String? uci) {
-    if (uci == null || uci.isEmpty) return '—';
-    final moves = _controller.game.generateMoves();
+    if (uci == null || uci.isEmpty) {
+      print('[UCI-TO-SAN] uci is null or empty');
+      return '—';
+    }
+    final cleanUci = uci.trim().replaceAll('-', '').toLowerCase();
+    final game = _controller.game.copy();
+    final moves = game.generateMoves();
     for (final m in moves) {
       final mUci =
-          '${m.fromAlgebraic}${m.toAlgebraic}${m.promotion?.name ?? ''}';
-      if (mUci == uci) {
-        return _controller.game.moveToSan(m);
+          '${m.fromAlgebraic}${m.toAlgebraic}${m.promotion?.name ?? ''}'.toLowerCase();
+      final san = game.moveToSan(m);
+      if (mUci == cleanUci || san.toLowerCase() == cleanUci) {
+        print('[UCI-TO-SAN-MATCH] uci="$uci" -> SAN="$san" (mUci="$mUci")');
+        return san;
       }
     }
+    print('[UCI-TO-SAN-NO-MATCH] uci="$uci" cleanUci="$cleanUci" fen="${game.fen}" turn="${game.turn}" halfMoves=${game.halfMoves} historyLen=${game.history.length} availableMoves=${moves.map((m) => '${m.fromAlgebraic}${m.toAlgebraic}').toList()}');
     return uci;
   }
 
   Widget _engineWidget() {
     Widget content;
-    if (_engineEvalPending || _engineEvals.isEmpty) {
+    final currentFen = _controller.game.fen;
+    final validEngineEvals = _engineEvals
+        .where((e) => e.fen != null && Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen))
+        .toList();
+
+    print('[ENGINE-WIDGET] currentFen="$currentFen" totalEvals=${_engineEvals.length} validEvals=${validEngineEvals.length} candidates=${validEngineEvals.map((e) => "${e.candidateMove} (fen=${e.fen})").toList()}');
+
+    if (_engineEvalPending || validEngineEvals.isEmpty) {
       content = Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -893,9 +922,9 @@ class _HomePageState extends State<HomePage> {
         ],
       );
     } else {
-      final depth = _engineEvals.first.depth;
-      final knownMoveSans = _knownMoves.map((m) => m.move).toSet();
-      final rows = _engineEvals.map((e) {
+      final depth = validEngineEvals.first.depth;
+      final knownMoveSans = _getKnownMoveSans();
+      final rows = validEngineEvals.map((e) {
         String san = _uciToSan(e.candidateMove);
         String evalStr = 'unknown';
         if (e.mate != null) {
@@ -913,7 +942,8 @@ class _HomePageState extends State<HomePage> {
               : pawns.toStringAsFixed(2);
         }
 
-        final isKnown = knownMoveSans.contains(san);
+        final isKnown = knownMoveSans.contains(san) ||
+            knownMoveSans.contains(_controller.game.normalizeMoveString(san));
         final bool shouldHighlight = !isKnown && san != '—';
         return _buildMoveRow(san, evalStr,
             color: shouldHighlight ? Colors.blue : null);

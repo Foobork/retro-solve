@@ -206,7 +206,7 @@ class Chess {
       ..epSquare = epSquare
       ..halfMoves = halfMoves
       ..moveNumber = moveNumber
-      ..history = List<GameState>.from(history)
+      ..history = history.map(GameState.clone).toList()
       ..header = Map.from(header)
       ..checksCount = ColorMap<int>.clone(checksCount);
   }
@@ -235,8 +235,24 @@ class Chess {
     }
   }
 
+  /// Normalizes a FEN string by appending default halfmove (0) and fullmove (1) numbers if omitted (e.g. 4 or 5 field FENs).
+  static String normalizeFen(String fen) {
+    var tokens = fen.trim().split(RegExp(r'\s+'));
+    if (tokens.length == 4) {
+      return '${fen.trim()} 0 1';
+    } else if (tokens.length == 5) {
+      if (RegExp(r'^\d+\+\d+$').hasMatch(tokens[4])) {
+        return '${fen.trim()} 0 1';
+      } else {
+        return '${fen.trim()} 1';
+      }
+    }
+    return fen;
+  }
+
   /// Load a position from a FEN String
   bool load(String fen) {
+    fen = normalizeFen(fen);
     List tokens = fen.split(RegExp(r'\s+'));
     String position = tokens[0];
     var square = 0;
@@ -313,6 +329,8 @@ class Chess {
       9: '1st field (piece positions) is invalid [invalid piece].',
       10: '1st field (piece positions) is invalid [row too large].',
     };
+
+    fen = normalizeFen(fen);
 
     /* 1st criterion: 6 or 7 space-separated fields? */
     List tokens = fen.split(RegExp(r'\s+'));
@@ -1009,13 +1027,13 @@ class Chess {
     final old = history.removeLast();
 
     final move = old.move;
-    kings = old.kings;
+    kings = ColorMap.clone(old.kings);
     turn = old.turn;
-    castling = old.castling;
+    castling = ColorMap.clone(old.castling);
     epSquare = old.epSquare;
     halfMoves = old.halfMoves;
     moveNumber = old.moveNumber;
-    checksCount = old.checksCount;
+    checksCount = ColorMap.clone(old.checksCount);
 
     final us = turn;
     final them = swapColor(turn);
@@ -1551,6 +1569,7 @@ class Chess {
     final moves = generateMoves();
 
     if (move is String) {
+      final cleanMove = move.trim().replaceAll('-', '').toLowerCase();
       /* convert the move string to a move object */
       for (var i = 0; i < moves.length; i++) {
         if (move == moveToSan(moves[i])) {
@@ -1559,20 +1578,36 @@ class Chess {
         }
       }
 
-      for (var i = 0; i < moves.length; i++) {
-        String n = normalizeMoveString(moveToSan(moves[i]));
-        if (move == n) {
-          moveObj = moves[i];
-          break;
+      if (moveObj == null) {
+        for (var i = 0; i < moves.length; i++) {
+          String n = normalizeMoveString(moveToSan(moves[i]));
+          if (move == n) {
+            moveObj = moves[i];
+            break;
+          }
         }
       }
-      // try again with ambiguated move
-      move = ambiguate(move);
-      for (var i = 0; i < moves.length; i++) {
-        String n = normalizeMoveString(moveToSan(moves[i]));
-        if (move == n) {
-          moveObj = moves[i];
-          break;
+
+      if (moveObj == null) {
+        // try again with ambiguated move
+        final amb = ambiguate(move);
+        for (var i = 0; i < moves.length; i++) {
+          String n = normalizeMoveString(moveToSan(moves[i]));
+          if (amb == n) {
+            moveObj = moves[i];
+            break;
+          }
+        }
+      }
+
+      if (moveObj == null) {
+        // try UCI matching
+        for (var i = 0; i < moves.length; i++) {
+          final mUci = '${moves[i].fromAlgebraic}${moves[i].toAlgebraic}${moves[i].promotion?.name ?? ''}'.toLowerCase();
+          if (cleanMove == mUci) {
+            moveObj = moves[i];
+            break;
+          }
         }
       }
     } else if (move is Map) {
@@ -1739,5 +1774,25 @@ class GameState {
   final Map<PlayerColor, Map<PieceType, int>>? pockets;
   final List<bool>? promoted;
   const GameState(this.move, this.kings, this.turn, this.castling, this.epSquare, this.halfMoves, this.moveNumber, this.checksCount, [this.pockets, this.promoted]);
+
+  factory GameState.clone(GameState other) {
+    return GameState(
+      other.move,
+      ColorMap<int>.clone(other.kings),
+      other.turn,
+      ColorMap<int>.clone(other.castling),
+      other.epSquare,
+      other.halfMoves,
+      other.moveNumber,
+      ColorMap<int>.clone(other.checksCount),
+      other.pockets != null
+          ? {
+              white: Map.from(other.pockets![white]!),
+              black: Map.from(other.pockets![black]!),
+            }
+          : null,
+      other.promoted != null ? List.from(other.promoted!) : null,
+    );
+  }
 }
 

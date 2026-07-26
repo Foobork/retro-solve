@@ -231,6 +231,9 @@ class FairyStockfishService {
       if (line.trim() == 'readyok') {
         _waitingForReadyOk = false;
       }
+      if (line.contains('multipv') || line.contains('pv')) {
+        print('[ENGINE-RAW] $line');
+      }
       final parsedInfo = parseUciInfo(line);
       if (!_waitingForReadyOk &&
           parsedInfo != null &&
@@ -239,7 +242,16 @@ class FairyStockfishService {
         while (_currentEvals.length < idx) {
           _currentEvals.add(const EngineEvaluation());
         }
-        _currentEvals[idx - 1] = parsedInfo.copyWithFen(_activeFen);
+        final existing = _currentEvals[idx - 1];
+        _currentEvals[idx - 1] = EngineEvaluation(
+          centipawns: parsedInfo.centipawns ?? existing.centipawns,
+          mate: parsedInfo.mate ?? existing.mate,
+          depth: parsedInfo.depth ?? existing.depth,
+          candidateMove: parsedInfo.candidateMove ?? existing.candidateMove,
+          multipv: parsedInfo.multipv ?? existing.multipv,
+          fen: _activeFen,
+        );
+        print('[ENGINE-EVAL-UPDATED] idx=$idx candidateMove=${_currentEvals[idx - 1].candidateMove} cp=${_currentEvals[idx - 1].centipawns} mate=${_currentEvals[idx - 1].mate} depth=${_currentEvals[idx - 1].depth}');
         _evaluationController.add(List.from(_currentEvals));
       }
     });
@@ -501,14 +513,15 @@ class FairyStockfishService {
     }
 
     try {
+      _activeFen = fen;
       _currentEvals.clear();
+      _evaluationController.add([]);
       _waitingForReadyOk = true;
       _writeLine('stop');
       _writeLine('isready');
       await _waitForLine('readyok');
       // _waitingForReadyOk is cleared by the stdout listener on 'readyok'
       _writeLine('setoption name MultiPV value 5');
-      _activeFen = fen;
       _writeLine('position fen $fen');
       _writeLine('go depth 16');
     } catch (e) {

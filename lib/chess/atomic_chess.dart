@@ -184,7 +184,7 @@ class AtomicChess extends Chess {
       ..epSquare = epSquare
       ..halfMoves = halfMoves
       ..moveNumber = moveNumber
-      ..history = List<GameState>.from(history)
+      ..history = history.map(GameState.clone).toList()
       ..header = Map.from(header)
       ..boardHistory = List<List<Piece?>>.from(boardHistory.map((b) => List<Piece?>.from(b)));
   }

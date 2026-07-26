@@ -73,7 +73,7 @@ Future<void> importGraph(String filename) async {
         graph.onEdgeAdded = oldOnEdgeAdded;
       }
       
-      print("importGraph done (from DB)");
+      print("importGraph done (from DB). Final vertices count: ${graph.v.length}");
       return;
     }
 

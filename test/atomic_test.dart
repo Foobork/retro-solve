@@ -91,6 +91,20 @@ void main() {
       game.makeMove(captureMove);
       expect(game.kings[PlayerColor.black], equals(-1));
       expect(game.gameOver, isTrue);
+      expect(game.terminalEvaluation, equals(1000.0));
+    });
+
+    test('Qxg2+ in r3k3/ppp1p3/2n3p1/1B1p4/3P1P2/8/PPPb2Pq/RNB2K2 b q - explodes White King and evaluates to -1000.0', () {
+      final game = AtomicChess();
+      game.load('r3k3/ppp1p3/2n3p1/1B1p4/3P1P2/8/PPPb2Pq/RNB2K2 b q - 0 1');
+
+      final moves = game.generateMoves();
+      final qxg2Move = moves.firstWhere((m) => m.fromAlgebraic == 'h2' && m.toAlgebraic == 'g2');
+
+      game.makeMove(qxg2Move);
+      expect(game.kings[PlayerColor.white], equals(-1));
+      expect(game.gameOver, isTrue);
+      expect(game.terminalEvaluation, equals(-1000.0));
     });
   });
 }

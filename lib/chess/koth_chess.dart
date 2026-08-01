@@ -1,6 +1,9 @@
 part of chess;
 
 class KothChess extends Chess {
+  @override
+  bool get isKoth => true;
+
   bool get isKothGameOver {
     final wKing = kings[white];
     final bKing = kings[black];

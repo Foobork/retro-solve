@@ -184,7 +184,17 @@ class Chess {
   bool get isAtomic => false;
   bool get isHorde => false;
   bool get isRacingKings => false;
+  bool get isKoth => false;
   ColorMap<int> checksCount = ColorMap(3);
+
+  bool hasNoPieces(PlayerColor color) {
+    for (var i = Chess.squaresA8; i <= Chess.squaresH1; i++) {
+      if ((i & 0x88) == 0 && board[i] != null && board[i]!.color == color) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   /// By default start with the standard chess starting position
   Chess() {
@@ -1296,6 +1306,28 @@ class Chess {
     if (isThreeCheck) {
       if (checksCount[white] <= 0) return 1000.0;
       if (checksCount[black] <= 0) return -1000.0;
+    }
+
+    if (isAtomic) {
+      if (kings[white] < 0 && kings[black] < 0) return 0.0;
+      if (kings[white] < 0) return -1000.0;
+      if (kings[black] < 0) return 1000.0;
+    }
+
+    if (isKoth) {
+      final wKing = kings[white];
+      final bKing = kings[black];
+      if (wKing == 51 || wKing == 52 || wKing == 67 || wKing == 68) return 1000.0;
+      if (bKing == 51 || bKing == 52 || bKing == 67 || bKing == 68) return -1000.0;
+    }
+
+    if (isHorde) {
+      if (hasNoPieces(white)) return -1000.0;
+    }
+
+    if (isAntichess) {
+      if (hasNoPieces(white) || (turn == white && generateMoves().isEmpty)) return 1000.0;
+      if (hasNoPieces(black) || (turn == black && generateMoves().isEmpty)) return -1000.0;
     }
 
     if (inCheckmate) {

@@ -244,8 +244,8 @@ class FairyStockfishService {
         }
         final existing = _currentEvals[idx - 1];
         _currentEvals[idx - 1] = EngineEvaluation(
-          centipawns: parsedInfo.centipawns ?? existing.centipawns,
-          mate: parsedInfo.mate ?? existing.mate,
+          centipawns: parsedInfo.centipawns,
+          mate: parsedInfo.mate,
           depth: parsedInfo.depth ?? existing.depth,
           candidateMove: parsedInfo.candidateMove ?? existing.candidateMove,
           multipv: parsedInfo.multipv ?? existing.multipv,

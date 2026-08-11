@@ -106,5 +106,20 @@ void main() {
       expect(game.gameOver, isTrue);
       expect(game.terminalEvaluation, equals(-1000.0));
     });
+
+    test('Bd7 against Qb5+ in rnbqkbnr/pp2p2p/3p1pp1/1Q6/8/4P3/PPPP1PPP/RNB1KB1R b KQkq - allows Qxd7# exploding Black King', () {
+      final game = AtomicChess();
+      game.load('rnbqkbnr/pp2p2p/3p1pp1/1Q6/8/4P3/PPPP1PPP/RNB1KB1R b KQkq - 0 1');
+
+      final bd7Move = game.generateMoves().firstWhere((m) => game.moveToSan(m) == 'Bd7');
+      game.makeMove(bd7Move);
+
+      final qxd7Move = game.generateMoves().firstWhere((m) => m.fromAlgebraic == 'b5' && m.toAlgebraic == 'd7');
+      game.makeMove(qxd7Move);
+
+      expect(game.kings[PlayerColor.black], equals(-1));
+      expect(game.gameOver, isTrue);
+      expect(game.terminalEvaluation, equals(1000.0));
+    });
   });
 }

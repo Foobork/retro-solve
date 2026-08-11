@@ -133,7 +133,7 @@ class Graph {
 
         double? eval;
         for (String link in pos.links) {
-          double? linkEval = v[link]?.computed;
+          double? linkEval = v[link]?.computed ?? v[link]?.assigned;
           if (linkEval == null) continue;
           double adjustedLinkEval = _adjustMateScore(linkEval);
 

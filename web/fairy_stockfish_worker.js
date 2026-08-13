@@ -26,8 +26,11 @@ function send(cmd) {
 }
 
 self.onmessage = function (e) {
-  if (typeof e.data === 'string') {
-    send(e.data);
+  var data = e.data;
+  if (typeof data === 'string') {
+    send(data);
+  } else if (data != null) {
+    send(String(data));
   }
 };
 
@@ -44,6 +47,7 @@ try {
   })
     .then(function (sf) {
       engine = sf;
+      self.postMessage('WORKER_LOG: Stockfish engine instance created');
       sf.addMessageListener(function (line) {
         self.postMessage(line);
       });

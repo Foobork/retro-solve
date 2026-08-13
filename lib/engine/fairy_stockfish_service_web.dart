@@ -7,9 +7,9 @@ import 'engine_service.dart';
 
 class FairyStockfishService implements EngineService {
   FairyStockfishService({
-    this.binaryName = 'stockfish.js',
+    this.binaryName = 'fairy_stockfish_worker.js',
     this.searchDepth = 12,
-    this.commandTimeout = const Duration(seconds: 5),
+    this.commandTimeout = const Duration(seconds: 10),
     DatasetVariant initialVariant = DatasetVariant.koth,
   }) : _variant = initialVariant;
 
@@ -27,6 +27,7 @@ class FairyStockfishService implements EngineService {
 
   html.Worker? _worker;
   StreamSubscription? _workerSubscription;
+  StreamSubscription? _workerErrorSubscription;
   final StreamController<String> _stdoutLines =
       StreamController<String>.broadcast();
   final StreamController<List<EngineEvaluation>> _evaluationController =
@@ -49,7 +50,11 @@ class FairyStockfishService implements EngineService {
   Future<void> start() async {
     if (_isStarted && _worker != null) return;
     try {
-      _worker = html.Worker('stockfish.js');
+      print('[engine-web] Launching Web Worker $binaryName ...');
+      _worker = html.Worker(binaryName);
+      _workerErrorSubscription = _worker!.onError.listen((err) {
+        print('[engine-web] Worker onerror event: $err');
+      });
       _workerSubscription = _worker!.onMessage.listen((html.MessageEvent event) {
         final line = event.data?.toString() ?? '';
         _stdoutLines.add(line);
@@ -193,6 +198,7 @@ class FairyStockfishService implements EngineService {
       _worker?.terminate();
     } catch (_) {}
     await _workerSubscription?.cancel();
+    await _workerErrorSubscription?.cancel();
     await _evaluationController.close();
     _worker = null;
     _isStarted = false;

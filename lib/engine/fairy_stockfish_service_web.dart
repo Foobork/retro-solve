@@ -134,6 +134,7 @@ class FairyStockfishService implements EngineService {
       _writeLine('setoption name Hash value 16');
       _writeLine('setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
       _writeLine('LOAD_NNUE ${_nnueFilenameForVariant(_variant)}');
+      await _waitForLine('WORKER_NNUE_DONE');
       _writeLine('isready');
       await _waitForLine('readyok');
       _isStarted = true;

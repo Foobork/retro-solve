@@ -42,6 +42,8 @@ async function handleLoadNnue(filename) {
       engine.postMessage('setoption name Use NNUE value false');
     }
     self.postMessage('WORKER_NNUE_STATUS: classical');
+  } finally {
+    self.postMessage('WORKER_NNUE_DONE');
   }
 }
 

@@ -25,9 +25,12 @@ self.onmessage = function (e) {
 try {
   importScripts('stockfish.js');
 
+  const sfUrl = new URL('stockfish.js', self.location.href).href;
+
   Stockfish({
+    mainScriptUrlOrBlob: sfUrl,
     locateFile: function (path) {
-      return path;
+      return new URL(path, self.location.href).href;
     }
   })
     .then(function (sf) {

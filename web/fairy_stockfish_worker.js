@@ -10,7 +10,7 @@ const messageQueue = [];
 
 async function handleLoadNnue(filename) {
   try {
-    if (!filename || filename === 'none' || filename === 'chess.nnue') {
+    if (!filename || filename === 'none') {
       if (engine) {
         engine.postMessage('setoption name Use NNUE value false');
       }

@@ -63,7 +63,7 @@ class FairyStockfishService implements EngineService {
       case DatasetVariant.racingKings:
         return 'racingkings.nnue';
       case DatasetVariant.standard:
-        return 'none';
+        return 'chess.nnue';
     }
   }
 

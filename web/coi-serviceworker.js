@@ -1,136 +1,68 @@
-/*! coi-serviceworker v0.1.7 - Guido Zuidhof and contributors, licensed under MIT */
-let coepCredentialless = false;
-if (typeof window === 'undefined') {
-    self.addEventListener("install", () => self.skipWaiting());
-    self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+/*! coi-serviceworker - scoped & loop-safe */
 
-    self.addEventListener("message", (ev) => {
-        if (!ev.data) {
-            return;
-        } else if (ev.data.type === "deregister") {
-            self.registration
-                .unregister()
-                .then(() => {
-                    return self.clients.matchAll();
-                })
-                .then(clients => {
-                    clients.forEach((client) => client.navigate(client.url));
-                });
-        } else if (ev.data.type === "coepCredentialless") {
-            coepCredentialless = ev.data.value;
-        }
-    });
+if (typeof window !== 'undefined') {
+  (() => {
+    if (window.crossOriginIsolated) {
+      // Already cross-origin isolated by HTTP headers (e.g. serve.json)
+      return;
+    }
 
-    self.addEventListener("fetch", function (event) {
-        const r = event.request;
-        if (r.cache === "only-if-cached" && r.mode !== "same-origin") {
-            return;
-        }
+    let hasReloaded = false;
+    try {
+      hasReloaded = !!sessionStorage.getItem('coi_reload_done');
+    } catch (_) {}
 
-        const request = (coepCredentialless && r.mode === "no-cors")
-            ? new Request(r, {
-                credentials: "omit",
-            })
-            : r;
-        event.respondWith(
-            fetch(request)
-                .then((response) => {
-                    if (response.status === 0) {
-                        return response;
-                    }
+    if (hasReloaded) {
+      console.warn('[coi] Cross-Origin Isolation reload attempted once; will not loop.');
+      return;
+    }
 
-                    const newHeaders = new Headers(response.headers);
-                    newHeaders.set("Cross-Origin-Embedder-Policy",
-                        coepCredentialless ? "credentialless" : "require-corp"
-                    );
-                    if (!coepCredentialless) {
-                        newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
-                    }
-                    newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
+    if (!window.isSecureContext) return;
 
-                    return new Response(response.body, {
-                        status: response.status,
-                        statusText: response.statusText,
-                        headers: newHeaders,
-                    });
-                })
-                .catch((e) => console.error(e))
-        );
-    });
-
-} else {
-    (() => {
-        let hasReloaded = false;
-        try {
-            hasReloaded = !!sessionStorage.getItem("coi_reload_done");
-        } catch (_) {}
-
-        if (window.crossOriginIsolated) {
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker
+        .register('coi-serviceworker.js')
+        .then((registration) => {
+          if (registration.active && !navigator.serviceWorker.controller) {
             try {
-                sessionStorage.removeItem("coi_reload_done");
-            } catch (_) {}
-            return;
-        }
-
-        const safeReload = () => {
-            if (hasReloaded) {
-                console.warn("[coi] Cross-Origin Isolation reload attempted once already, avoiding infinite loop.");
-                return;
-            }
-            try {
-                sessionStorage.setItem("coi_reload_done", "true");
+              sessionStorage.setItem('coi_reload_done', 'true');
             } catch (_) {}
             window.location.reload();
-        };
+          }
+        })
+        .catch((err) => {
+          console.warn('[coi] Service Worker registration skipped:', err);
+        });
+    }
+  })();
+} else if (
+  typeof ServiceWorkerGlobalScope !== 'undefined' &&
+  self instanceof ServiceWorkerGlobalScope
+) {
+  self.addEventListener('install', () => self.skipWaiting());
+  self.addEventListener('activate', (event) =>
+    event.waitUntil(self.clients.claim())
+  );
 
-        const coi = {
-            shouldRegister: () => true,
-            shouldDeregister: () => false,
-            coepCredentialless: () => !(window.chrome || window.netscape),
-            doReload: safeReload,
-            quiet: false,
-            ...window.coi
-        };
+  self.addEventListener('fetch', (event) => {
+    const r = event.request;
+    if (r.cache === 'only-if-cached' && r.mode !== 'same-origin') return;
 
-        const n = navigator;
-
-        if (n.serviceWorker && n.serviceWorker.controller) {
-            n.serviceWorker.controller.postMessage({
-                type: "coepCredentialless",
-                value: coi.coepCredentialless(),
-            });
-
-            if (coi.shouldDeregister()) {
-                n.serviceWorker.controller.postMessage({ type: "deregister" });
-            }
-        }
-
-        if (window.crossOriginIsolated !== false || !coi.shouldRegister()) return;
-
-        if (!window.isSecureContext) {
-            !coi.quiet && console.log("COOP/COEP Service Worker not registered, a secure context is required.");
-            return;
-        }
-
-        if (n.serviceWorker) {
-            n.serviceWorker.register(window.document.currentScript.src).then(
-                (registration) => {
-                    !coi.quiet && console.log("COOP/COEP Service Worker registered", registration.scope);
-
-                    registration.addEventListener("updatefound", () => {
-                        !coi.quiet && console.log("Reloading page to make use of updated COOP/COEP Service Worker.");
-                        coi.doReload();
-                    });
-
-                    if (registration.active && !n.serviceWorker.controller) {
-                        !coi.quiet && console.log("Reloading page to make use of COOP/COEP Service Worker.");
-                        coi.doReload();
-                    }
-                },
-                (err) => {
-                    !coi.quiet && console.error("COOP/COEP Service Worker failed to register:", err);
-                }
-            );
-        }
-    })();
+    event.respondWith(
+      fetch(r)
+        .then((response) => {
+          if (response.status === 0) return response;
+          const newHeaders = new Headers(response.headers);
+          newHeaders.set('Cross-Origin-Embedder-Policy', 'require-corp');
+          newHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
+          newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
+          return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: newHeaders,
+          });
+        })
+        .catch(() => fetch(r))
+    );
+  });
 }

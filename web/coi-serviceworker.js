@@ -60,12 +60,34 @@ if (typeof window === 'undefined') {
 
 } else {
     (() => {
-        // You can customize the behavior of this script through a global `coi` variable.
+        let hasReloaded = false;
+        try {
+            hasReloaded = !!sessionStorage.getItem("coi_reload_done");
+        } catch (_) {}
+
+        if (window.crossOriginIsolated) {
+            try {
+                sessionStorage.removeItem("coi_reload_done");
+            } catch (_) {}
+            return;
+        }
+
+        const safeReload = () => {
+            if (hasReloaded) {
+                console.warn("[coi] Cross-Origin Isolation reload attempted once already, avoiding infinite loop.");
+                return;
+            }
+            try {
+                sessionStorage.setItem("coi_reload_done", "true");
+            } catch (_) {}
+            window.location.reload();
+        };
+
         const coi = {
             shouldRegister: () => true,
             shouldDeregister: () => false,
             coepCredentialless: () => !(window.chrome || window.netscape),
-            doReload: () => window.location.reload(),
+            doReload: safeReload,
             quiet: false,
             ...window.coi
         };
@@ -83,8 +105,6 @@ if (typeof window === 'undefined') {
             }
         }
 
-        // If we're already coi: do nothing. Perhaps it's due to this script doing its job, or COOP/COEP are
-        // already set from the origin server. Also if the browser has no notion of crossOriginIsolated, just give up here.
         if (window.crossOriginIsolated !== false || !coi.shouldRegister()) return;
 
         if (!window.isSecureContext) {
@@ -92,7 +112,6 @@ if (typeof window === 'undefined') {
             return;
         }
 
-        // In some environments (e.g. Chrome incognito mode) this won't be available
         if (n.serviceWorker) {
             n.serviceWorker.register(window.document.currentScript.src).then(
                 (registration) => {
@@ -103,7 +122,6 @@ if (typeof window === 'undefined') {
                         coi.doReload();
                     });
 
-                    // If the registration is active, but it's not controlling the page
                     if (registration.active && !n.serviceWorker.controller) {
                         !coi.quiet && console.log("Reloading page to make use of COOP/COEP Service Worker.");
                         coi.doReload();

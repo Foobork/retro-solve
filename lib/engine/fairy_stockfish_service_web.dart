@@ -10,7 +10,7 @@ class FairyStockfishService implements EngineService {
   FairyStockfishService({
     this.binaryName = 'fairy_stockfish_worker.js',
     this.searchDepth = 12,
-    this.commandTimeout = const Duration(seconds: 8),
+    this.commandTimeout = const Duration(seconds: 10),
     DatasetVariant initialVariant = DatasetVariant.koth,
   }) : _variant = initialVariant;
 
@@ -19,12 +19,13 @@ class FairyStockfishService implements EngineService {
   final Duration commandTimeout;
 
   DatasetVariant _variant;
+  bool _isNNUE = false;
 
   @override
   DatasetVariant get variant => _variant;
 
   @override
-  bool get isNNUE => false;
+  bool get isNNUE => _isNNUE;
 
   web.Worker? _worker;
   final StreamController<String> _stdoutLines =
@@ -45,6 +46,27 @@ class FairyStockfishService implements EngineService {
   @override
   bool get isEngineAvailable => _isStarted && _worker != null;
 
+  String _nnueFilenameForVariant(DatasetVariant v) {
+    switch (v) {
+      case DatasetVariant.koth:
+        return 'kingofthehill.nnue';
+      case DatasetVariant.threeCheck:
+        return '3check.nnue';
+      case DatasetVariant.crazyhouse:
+        return 'crazyhouse.nnue';
+      case DatasetVariant.antichess:
+        return 'antichess.nnue';
+      case DatasetVariant.atomic:
+        return 'atomic.nnue';
+      case DatasetVariant.horde:
+        return 'horde.nnue';
+      case DatasetVariant.racingKings:
+        return 'racingkings.nnue';
+      case DatasetVariant.standard:
+        return 'none';
+    }
+  }
+
   @override
   Future<void> start() async {
     if (_isStarted && _worker != null) return;
@@ -52,6 +74,7 @@ class FairyStockfishService implements EngineService {
       print('[engine-web] Launching Web Worker $binaryName for variant ${uciVariantForDataset(_variant)}...');
       final worker = web.Worker(binaryName.toJS);
       _worker = worker;
+      _isNNUE = false;
 
       worker.onerror = ((web.ErrorEvent event) {
         print('[engine-web] Worker onerror: "${event.message}" at ${event.filename}:${event.lineno}:${event.colno}');
@@ -74,6 +97,11 @@ class FairyStockfishService implements EngineService {
         }
         if (line.startsWith('WORKER_')) {
           print('[engine-web-worker-log] $line');
+        }
+        if (line.contains('NNUE evaluation') || line.contains('WORKER_NNUE_STATUS: enabled')) {
+          _isNNUE = true;
+        } else if (line.contains('classical evaluation') || line.contains('WORKER_NNUE_STATUS: classical')) {
+          _isNNUE = false;
         }
         _stdoutLines.add(line);
         if (line.trim() == 'readyok') {
@@ -105,10 +133,11 @@ class FairyStockfishService implements EngineService {
       _writeLine('setoption name Threads value 1');
       _writeLine('setoption name Hash value 16');
       _writeLine('setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
+      _writeLine('LOAD_NNUE ${_nnueFilenameForVariant(_variant)}');
       _writeLine('isready');
       await _waitForLine('readyok');
       _isStarted = true;
-      print('[engine-web] Fairy-Stockfish WASM Worker ready for ${uciVariantForDataset(_variant)}');
+      print('[engine-web] Fairy-Stockfish WASM Worker ready for ${uciVariantForDataset(_variant)} (NNUE: $_isNNUE)');
 
       if (_activeFen.isNotEmpty) {
         startSearch(_activeFen);
@@ -121,6 +150,7 @@ class FairyStockfishService implements EngineService {
 
   void _handleWorkerCrash() {
     _isStarted = false;
+    _isNNUE = false;
     try {
       _worker?.terminate();
     } catch (_) {}
@@ -136,6 +166,7 @@ class FairyStockfishService implements EngineService {
 
   Future<void> _restartWorker() async {
     _isStarted = false;
+    _isNNUE = false;
     try {
       _writeLine('quit');
       _worker?.terminate();
@@ -247,5 +278,6 @@ class FairyStockfishService implements EngineService {
     await _evaluationController.close();
     _worker = null;
     _isStarted = false;
+    _isNNUE = false;
   }
 }

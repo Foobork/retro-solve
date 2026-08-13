@@ -1,6 +1,6 @@
 // ignore_for_file: avoid_print
 
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, AssetManifest;
 import 'package:retro_solve/graph/graph.dart';
 import 'package:retro_solve/persistence/database_service.dart';
 
@@ -82,20 +82,26 @@ Future<void> importGraph(String filename) async {
 
     // Fallback: Initial load from bundled asset
     String? content;
-    final assetCandidates = [
-      normalized,
-      'data/$baseName',
-      baseName,
-    ];
-    for (final candidate in assetCandidates) {
-      try {
-        content = await rootBundle.loadString(candidate);
-        if (content.isNotEmpty) break;
-      } catch (_) {}
-    }
+    try {
+      final manifest = await AssetManifest.loadFromAssetBundle(rootBundle);
+      final allAssets = manifest.listAssets().toSet();
+      final assetCandidates = [
+        normalized,
+        'data/$baseName',
+        baseName,
+        'assets/data/$baseName',
+        'assets/$baseName',
+      ];
+      for (final candidate in assetCandidates) {
+        if (allAssets.contains(candidate)) {
+          content = await rootBundle.loadString(candidate);
+          if (content.isNotEmpty) break;
+        }
+      }
+    } catch (_) {}
 
     if (content == null || content.isEmpty) {
-      print("Dataset asset $filename not found. Initializing empty database.");
+      print("Starting with clean repertoire database for $variant ($dbPath).");
       return;
     }
 

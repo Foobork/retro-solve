@@ -3,6 +3,7 @@
 import 'package:flutter/services.dart' show rootBundle, AssetManifest;
 import 'package:retro_solve/graph/graph.dart';
 import 'package:retro_solve/persistence/database_service.dart';
+import 'package:retro_solve/persistence/db_init.dart';
 
 import '../chess/chess.dart';
 
@@ -16,7 +17,8 @@ Future<void> importGraph(String filename) async {
   try {
     final normalized = filename.replaceAll('\\', '/');
     final baseName = normalized.split('/').last;
-    final dbPath = baseName.replaceAll('.txt', '.db');
+    final dbName = baseName.replaceAll('.txt', '.db');
+    final dbPath = resolvePlatformDbPath(dbName);
 
     String variant = 'standard';
     final lower = filename.toLowerCase();

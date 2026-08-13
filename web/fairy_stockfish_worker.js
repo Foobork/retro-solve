@@ -9,6 +9,15 @@ let engine = null;
 const messageQueue = [];
 
 function send(cmd) {
+  if (cmd === 'quit') {
+    try {
+      if (engine && typeof engine.terminate === 'function') {
+        engine.terminate();
+      }
+    } catch (_) {}
+    self.close();
+    return;
+  }
   if (engine) {
     engine.postMessage(cmd);
   } else {

@@ -9,7 +9,7 @@ class FairyStockfishService implements EngineService {
   FairyStockfishService({
     this.binaryName = 'fairy_stockfish_worker.js',
     this.searchDepth = 12,
-    this.commandTimeout = const Duration(seconds: 10),
+    this.commandTimeout = const Duration(seconds: 8),
     DatasetVariant initialVariant = DatasetVariant.koth,
   }) : _variant = initialVariant;
 
@@ -50,7 +50,7 @@ class FairyStockfishService implements EngineService {
   Future<void> start() async {
     if (_isStarted && _worker != null) return;
     try {
-      print('[engine-web] Launching Web Worker $binaryName ...');
+      print('[engine-web] Launching Web Worker $binaryName for variant ${uciVariantForDataset(_variant)}...');
       _worker = html.Worker(binaryName);
       _workerErrorSubscription = _worker!.onError.listen((err) {
         if (err is html.ErrorEvent) {
@@ -58,6 +58,7 @@ class FairyStockfishService implements EngineService {
         } else {
           print('[engine-web] Worker onerror event: $err');
         }
+        _handleWorkerCrash();
       });
       _workerSubscription = _worker!.onMessage.listen((html.MessageEvent event) {
         final line = event.data?.toString() ?? '';
@@ -91,6 +92,8 @@ class FairyStockfishService implements EngineService {
 
       _writeLine('uci');
       await _waitForLine('uciok');
+      _writeLine('setoption name Threads value 1');
+      _writeLine('setoption name Hash value 16');
       _writeLine('setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
       _writeLine('isready');
       await _waitForLine('readyok');
@@ -102,27 +105,53 @@ class FairyStockfishService implements EngineService {
       }
     } catch (e) {
       print('[engine-web] Failed to initialize Fairy-Stockfish WASM worker: $e');
+      _handleWorkerCrash();
     }
+  }
+
+  void _handleWorkerCrash() {
+    _isStarted = false;
+    try {
+      _worker?.terminate();
+    } catch (_) {}
+    _worker = null;
   }
 
   @override
   Future<void> setVariant(DatasetVariant variant) async {
-    if (_variant == variant) return;
+    if (_variant == variant && _isStarted) return;
     _variant = variant;
-    if (_isStarted && _worker != null) {
-      _writeLine('setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
-      _writeLine('isready');
-      await _waitForLine('readyok');
-    }
+    // In WebAssembly, switching variants on an existing worker instance while threads
+    // or memory pools are allocated can trigger out-of-bounds memory errors.
+    // Re-spawning a clean worker avoids state corruption across variants.
+    await _restartWorker();
+  }
+
+  Future<void> _restartWorker() async {
+    _isStarted = false;
+    try {
+      _writeLine('quit');
+      _worker?.terminate();
+    } catch (_) {}
+    await _workerSubscription?.cancel();
+    await _workerErrorSubscription?.cancel();
+    _worker = null;
+    _currentEvals.clear();
+    _evaluationController.add([]);
+    await start();
   }
 
   @override
   Future<void> newGame() async {
     if (!_isStarted || _worker == null) return;
-    _writeLine('stop');
-    _writeLine('ucinewgame');
-    _writeLine('isready');
-    await _waitForLine('readyok');
+    try {
+      _writeLine('stop');
+      _writeLine('ucinewgame');
+      _writeLine('isready');
+      await _waitForLine('readyok');
+    } catch (e) {
+      print('[engine-web] newGame error: $e');
+    }
   }
 
   @override
@@ -148,6 +177,7 @@ class FairyStockfishService implements EngineService {
       _writeLine('go depth 16');
     } catch (e) {
       print('[engine-web] startSearch error: $e');
+      _handleWorkerCrash();
     }
   }
 
@@ -156,35 +186,40 @@ class FairyStockfishService implements EngineService {
     if (!_isStarted || _worker == null) await start();
     if (!_isStarted || _worker == null) return null;
 
-    _waitingForReadyOk = true;
-    _writeLine('stop');
-    _writeLine('isready');
-    await _waitForLine('readyok');
+    try {
+      _waitingForReadyOk = true;
+      _writeLine('stop');
+      _writeLine('isready');
+      await _waitForLine('readyok');
 
-    _currentEvals.clear();
-    _writeLine('setoption name MultiPV value 1');
-    _activeFen = fen;
-    _writeLine('position fen $fen');
+      _currentEvals.clear();
+      _writeLine('setoption name MultiPV value 1');
+      _activeFen = fen;
+      _writeLine('position fen $fen');
 
-    EngineEvaluation? lastEval;
-    final completer = Completer<void>();
-    final sub = _stdoutLines.stream.listen((line) {
-      if (line.startsWith('info ')) {
-        final parsed = parseUciInfo(line);
-        if (parsed != null && (parsed.centipawns != null || parsed.mate != null)) {
-          lastEval = parsed;
+      EngineEvaluation? lastEval;
+      final completer = Completer<void>();
+      final sub = _stdoutLines.stream.listen((line) {
+        if (line.startsWith('info ')) {
+          final parsed = parseUciInfo(line);
+          if (parsed != null && (parsed.centipawns != null || parsed.mate != null)) {
+            lastEval = parsed;
+          }
+        } else if (line.startsWith('bestmove')) {
+          if (!completer.isCompleted) completer.complete();
         }
-      } else if (line.startsWith('bestmove')) {
-        if (!completer.isCompleted) completer.complete();
-      }
-    });
+      });
 
-    _writeLine('go depth $depth');
-    await completer.future;
-    await sub.cancel();
+      _writeLine('go depth $depth');
+      await completer.future.timeout(commandTimeout);
+      await sub.cancel();
 
-    _writeLine('setoption name MultiPV value 5');
-    return lastEval;
+      _writeLine('setoption name MultiPV value 5');
+      return lastEval;
+    } catch (e) {
+      print('[engine-web] evaluatePositionSync error: $e');
+      return null;
+    }
   }
 
   void _writeLine(String line) {

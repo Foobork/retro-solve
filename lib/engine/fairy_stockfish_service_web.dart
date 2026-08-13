@@ -1,7 +1,8 @@
-// ignore_for_file: avoid_print, avoid_web_libraries_in_flutter, deprecated_member_use
+// ignore_for_file: avoid_print
 
 import 'dart:async';
-import 'dart:html' as html;
+import 'dart:js_interop';
+import 'package:web/web.dart' as web;
 import '../dataset_variant.dart';
 import 'engine_service.dart';
 
@@ -25,9 +26,7 @@ class FairyStockfishService implements EngineService {
   @override
   bool get isNNUE => false;
 
-  html.Worker? _worker;
-  StreamSubscription? _workerSubscription;
-  StreamSubscription? _workerErrorSubscription;
+  web.Worker? _worker;
   final StreamController<String> _stdoutLines =
       StreamController<String>.broadcast();
   final StreamController<List<EngineEvaluation>> _evaluationController =
@@ -51,17 +50,17 @@ class FairyStockfishService implements EngineService {
     if (_isStarted && _worker != null) return;
     try {
       print('[engine-web] Launching Web Worker $binaryName for variant ${uciVariantForDataset(_variant)}...');
-      _worker = html.Worker(binaryName);
-      _workerErrorSubscription = _worker!.onError.listen((err) {
-        if (err is html.ErrorEvent) {
-          print('[engine-web] Worker onerror: "${err.message}" at ${err.filename}:${err.lineno}:${err.colno}');
-        } else {
-          print('[engine-web] Worker onerror event: $err');
-        }
+      final worker = web.Worker(binaryName.toJS);
+      _worker = worker;
+
+      worker.onerror = ((web.ErrorEvent event) {
+        print('[engine-web] Worker onerror: "${event.message}" at ${event.filename}:${event.lineno}:${event.colno}');
         _handleWorkerCrash();
-      });
-      _workerSubscription = _worker!.onMessage.listen((html.MessageEvent event) {
-        final line = event.data?.toString() ?? '';
+      }).toJS;
+
+      worker.onmessage = ((web.MessageEvent event) {
+        final rawData = event.data;
+        final line = rawData != null ? (rawData as JSString).toDart : '';
         if (line.startsWith('WORKER_')) {
           print('[engine-web-worker-log] $line');
         }
@@ -88,7 +87,7 @@ class FairyStockfishService implements EngineService {
           );
           _evaluationController.add(List.from(_currentEvals));
         }
-      });
+      }).toJS;
 
       _writeLine('uci');
       await _waitForLine('uciok');
@@ -121,9 +120,6 @@ class FairyStockfishService implements EngineService {
   Future<void> setVariant(DatasetVariant variant) async {
     if (_variant == variant && _isStarted) return;
     _variant = variant;
-    // In WebAssembly, switching variants on an existing worker instance while threads
-    // or memory pools are allocated can trigger out-of-bounds memory errors.
-    // Re-spawning a clean worker avoids state corruption across variants.
     await _restartWorker();
   }
 
@@ -133,8 +129,6 @@ class FairyStockfishService implements EngineService {
       _writeLine('quit');
       _worker?.terminate();
     } catch (_) {}
-    await _workerSubscription?.cancel();
-    await _workerErrorSubscription?.cancel();
     _worker = null;
     _currentEvals.clear();
     _evaluationController.add([]);
@@ -224,7 +218,7 @@ class FairyStockfishService implements EngineService {
 
   void _writeLine(String line) {
     if (_worker == null) return;
-    _worker!.postMessage(line);
+    _worker!.postMessage(line.toJS);
   }
 
   Future<void> _waitForLine(String expectedLine) async {
@@ -239,8 +233,6 @@ class FairyStockfishService implements EngineService {
       _writeLine('quit');
       _worker?.terminate();
     } catch (_) {}
-    await _workerSubscription?.cancel();
-    await _workerErrorSubscription?.cancel();
     await _evaluationController.close();
     _worker = null;
     _isStarted = false;

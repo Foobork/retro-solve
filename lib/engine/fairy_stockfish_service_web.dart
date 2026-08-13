@@ -82,19 +82,8 @@ class FairyStockfishService implements EngineService {
       }).toJS;
 
       worker.onmessage = ((web.MessageEvent event) {
-        String line = '';
         final rawData = event.data;
-        if (rawData != null) {
-          try {
-            if (rawData is JSString) {
-              line = rawData.toDart;
-            } else {
-              line = rawData.toString();
-            }
-          } catch (_) {
-            line = rawData.toString();
-          }
-        }
+        final line = rawData?.dartify()?.toString() ?? '';
         if (line.startsWith('WORKER_')) {
           print('[engine-web-worker-log] $line');
         }

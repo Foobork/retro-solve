@@ -53,10 +53,17 @@ class FairyStockfishService implements EngineService {
       print('[engine-web] Launching Web Worker $binaryName ...');
       _worker = html.Worker(binaryName);
       _workerErrorSubscription = _worker!.onError.listen((err) {
-        print('[engine-web] Worker onerror event: $err');
+        if (err is html.ErrorEvent) {
+          print('[engine-web] Worker onerror: "${err.message}" at ${err.filename}:${err.lineno}:${err.colno}');
+        } else {
+          print('[engine-web] Worker onerror event: $err');
+        }
       });
       _workerSubscription = _worker!.onMessage.listen((html.MessageEvent event) {
         final line = event.data?.toString() ?? '';
+        if (line.startsWith('WORKER_')) {
+          print('[engine-web-worker-log] $line');
+        }
         _stdoutLines.add(line);
         if (line.trim() == 'readyok') {
           _waitingForReadyOk = false;

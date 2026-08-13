@@ -1,18 +1,4 @@
-// ignore_for_file: avoid_print
-
-import 'dart:io';
-
-import 'package:retro_solve/graph/graph.dart';
-
-void exportGraph(String filename) {
-  print("exportGraph $filename");
-  var file = File(filename).openSync(mode: FileMode.write);
-  for (var entry in graph.v.entries) {
-    if (entry.value.computed == null) continue;
-    var assigned = entry.value.assigned?.toString() ?? "-";
-    var computed = entry.value.computed.toString();
-    file.writeStringSync("${entry.key} $assigned $computed\n");
-  }
-  file.closeSync();
-  print("exportGraph done");
-}
+export 'graph_export_stub.dart'
+    if (dart.library.io) 'graph_export_io.dart'
+    if (dart.library.html) 'graph_export_web.dart'
+    if (dart.library.js_interop) 'graph_export_web.dart';

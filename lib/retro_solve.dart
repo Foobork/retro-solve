@@ -1,7 +1,6 @@
 // ignore_for_file: avoid_print
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -388,21 +387,6 @@ class _HomePageState extends State<HomePage> {
 
     // Let the loading overlay paint before we block.
     await Future<void>.delayed(const Duration(milliseconds: 16));
-
-    final file = File(_variant.dataPath);
-    final dbPath = _variant.dataPath.replaceAll('.txt', '.db');
-    final dbFile = File(dbPath);
-    if (!file.existsSync() && !dbFile.existsSync()) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Dataset file not found; initializing empty database for ${_variant.label}.',
-            ),
-          ),
-        );
-      }
-    }
 
     resetGraph();
     // Re-hook the callback after reset

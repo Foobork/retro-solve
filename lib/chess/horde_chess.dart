@@ -111,7 +111,6 @@ class HordeChess extends Chess {
     var whiteBishops = <int>[];
     var blackBishops = <int>[];
     var whiteKnights = 0;
-    var blackKnights = 0;
     var sqColor = 0;
 
     for (var i = Chess.squaresA8; i <= Chess.squaresH1; i++) {
@@ -132,7 +131,6 @@ class HordeChess extends Chess {
         } else {
           blackPieces++;
           if (piece.type == bishop) blackBishops.add(sqColor);
-          if (piece.type == knight) blackKnights++;
         }
       }
     }

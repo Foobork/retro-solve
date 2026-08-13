@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:developer';
-import 'dart:io';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_common/sqlite_api.dart';
+import 'db_init.dart';
 
 class _NodeUpdate {
   final String bfen;
@@ -19,7 +19,6 @@ class _EdgeUpdate {
 class DatabaseService {
   static DatabaseService? _instance;
   Database? _db;
-  static bool _ffiInitialized = false;
 
   final Map<String, _NodeUpdate> _updateQueue = {};
   final List<_EdgeUpdate> _edgeQueue = [];
@@ -40,44 +39,39 @@ class DatabaseService {
       await _db!.close();
       _db = null;
     }
-    if (Platform.isWindows || Platform.isLinux) {
-      if (!_ffiInitialized) {
-        sqfliteFfiInit();
-        databaseFactory = databaseFactoryFfi;
-        _ffiInitialized = true;
-      }
-    }
-
-    _db = await openDatabase(
+    final factory = getPlatformDatabaseFactory();
+    _db = await factory.openDatabase(
       dbPath,
-      version: 2,
-      onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE nodes (
-            bfen TEXT PRIMARY KEY,
-            assigned REAL,
-            computed REAL
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE edges (
-            source TEXT,
-            target TEXT,
-            PRIMARY KEY (source, target)
-          )
-        ''');
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
+      options: OpenDatabaseOptions(
+        version: 2,
+        onCreate: (db, version) async {
           await db.execute('''
-            CREATE TABLE IF NOT EXISTS edges (
+            CREATE TABLE nodes (
+              bfen TEXT PRIMARY KEY,
+              assigned REAL,
+              computed REAL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE edges (
               source TEXT,
               target TEXT,
               PRIMARY KEY (source, target)
             )
           ''');
-        }
-      },
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await db.execute('''
+              CREATE TABLE IF NOT EXISTS edges (
+                source TEXT,
+                target TEXT,
+                PRIMARY KEY (source, target)
+              )
+            ''');
+          }
+        },
+      ),
     );
 
     // Failsafe: Ensure tables always exist regardless of migration state (useful during dev)

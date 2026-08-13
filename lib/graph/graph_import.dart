@@ -1,6 +1,6 @@
 // ignore_for_file: avoid_print
-import 'dart:io';
 
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:retro_solve/graph/graph.dart';
 import 'package:retro_solve/persistence/database_service.dart';
 
@@ -14,29 +14,34 @@ double? parseEvalString(String? s) {
 
 Future<void> importGraph(String filename) async {
   try {
-    final absolutePath = File(filename).absolute.path;
-    final dbPath = absolutePath.replaceAll('.txt', '.db');
+    final normalized = filename.replaceAll('\\', '/');
+    final baseName = normalized.split('/').last;
+    final dbPath = baseName.replaceAll('.txt', '.db');
+
     String variant = 'standard';
-    if (filename.toLowerCase().contains('threecheck')) {
+    final lower = filename.toLowerCase();
+    if (lower.contains('threecheck')) {
       variant = 'threecheck';
-    } else if (filename.toLowerCase().contains('koth')) {
+    } else if (lower.contains('koth')) {
       variant = 'koth';
-    } else if (filename.toLowerCase().contains('crazyhouse')) {
+    } else if (lower.contains('crazyhouse')) {
       variant = 'crazyhouse';
-    } else if (filename.toLowerCase().contains('antichess')) {
+    } else if (lower.contains('antichess')) {
       variant = 'antichess';
-    } else if (filename.toLowerCase().contains('atomic')) {
+    } else if (lower.contains('atomic')) {
       variant = 'atomic';
-    } else if (filename.toLowerCase().contains('horde')) {
+    } else if (lower.contains('horde')) {
       variant = 'horde';
-    } else if (filename.toLowerCase().contains('racingkings')) {
+    } else if (lower.contains('racingkings')) {
       variant = 'racingkings';
     }
-    print("dbPath $dbPath");
-    if (File(dbPath).existsSync()) {
-      print("Loading from database $dbPath");
-      await DatabaseService.instance.init(dbPath);
-      final nodes = await DatabaseService.instance.loadNodes();
+
+    print("Opening database for variant $variant at $dbPath");
+    await DatabaseService.instance.init(dbPath);
+    final nodes = await DatabaseService.instance.loadNodes();
+
+    if (nodes.isNotEmpty) {
+      print("Loading ${nodes.length} nodes from database $dbPath");
       for (var node in nodes) {
         graph.addFullVertex(
           node['bfen'] as String,
@@ -46,9 +51,9 @@ Future<void> importGraph(String filename) async {
       }
       print("Nodes loaded: ${graph.v.length}. Loading edges...");
       final edges = await DatabaseService.instance.loadEdges();
-      
+
       if (edges.isEmpty && nodes.isNotEmpty) {
-        print("Legacy DB detected (0 edges). Regenerating and migrating edges (this will take a while)...");
+        print("Legacy DB detected (0 edges). Regenerating edges...");
         final bfens = graph.v.keys.toList();
         int count = 0;
         for (var bfen in bfens) {
@@ -59,9 +64,7 @@ Future<void> importGraph(String filename) async {
           _addEdgesForBfen(bfen, variant: variant);
           count++;
         }
-        // Give final flushes a chance to drain
         while (DatabaseService.instance.getEdgeQueueLength() > 0) {
-          print("Draining final edges... (${DatabaseService.instance.getEdgeQueueLength()} pending)");
           await Future.delayed(const Duration(milliseconds: 200));
         }
       } else {
@@ -72,26 +75,33 @@ Future<void> importGraph(String filename) async {
         }
         graph.onEdgeAdded = oldOnEdgeAdded;
       }
-      
+
       print("importGraph done (from DB). Final vertices count: ${graph.v.length}");
       return;
     }
 
-    // Fallback to TXT
-    if (!File(filename).existsSync()) {
-      print("Dataset file $filename not found. Initializing empty database at $dbPath.");
-      await DatabaseService.instance.init(dbPath);
-      print("importGraph done (empty DB created)");
+    // Fallback: Initial load from bundled asset
+    String? content;
+    final assetCandidates = [
+      normalized,
+      'data/$baseName',
+      baseName,
+    ];
+    for (final candidate in assetCandidates) {
+      try {
+        content = await rootBundle.loadString(candidate);
+        if (content.isNotEmpty) break;
+      } catch (_) {}
+    }
+
+    if (content == null || content.isEmpty) {
+      print("Dataset asset $filename not found. Initializing empty database.");
       return;
     }
-    _importFromTxt(filename);
 
-    // Initial migration to DB
-    print("Migrating to database $dbPath");
-    await DatabaseService.instance.init(dbPath);
-    // Use a transaction or batch if possible, but for initial migration 
-    // we'll just upsert them. We only migrate nodes that were in the original txt
-    // (which have inDatabase=true or computed evaluation).
+    print("Importing initial dataset from asset $filename into database $dbPath");
+    _importFromLines(content.split('\n'), variant: variant);
+
     for (var entry in graph.v.entries) {
       if (entry.value.inDatabase || entry.value.computed != null) {
         await DatabaseService.instance.upsertNode(
@@ -104,36 +114,21 @@ Future<void> importGraph(String filename) async {
         await DatabaseService.instance.upsertEdge(entry.key, link);
       }
     }
-    print("importGraph done (migrated from TXT)");
+    print("importGraph done (migrated from asset)");
   } catch (e) {
     print("Error in importGraph: $e");
   }
 }
 
-void _importFromTxt(String filename) {
-  String variant = 'standard';
-  if (filename.toLowerCase().contains('threecheck')) {
-    variant = 'threecheck';
-  } else if (filename.toLowerCase().contains('koth')) {
-    variant = 'koth';
-  } else if (filename.toLowerCase().contains('crazyhouse')) {
-    variant = 'crazyhouse';
-  } else if (filename.toLowerCase().contains('antichess')) {
-    variant = 'antichess';
-  } else if (filename.toLowerCase().contains('atomic')) {
-    variant = 'atomic';
-  } else if (filename.toLowerCase().contains('horde')) {
-    variant = 'horde';
-  } else if (filename.toLowerCase().contains('racingkings')) {
-    variant = 'racingkings';
-  }
+void _importFromLines(List<String> lines, {required String variant}) {
   var regex = RegExp(r"^(.* .* .* .*) (.*) (.*)$");
-  var lines = File(filename).readAsLinesSync();
   int lineNumber = 1;
   for (var line in lines) {
+    line = line.trim();
+    if (line.isEmpty) continue;
     if (lineNumber % 1000 == 0) print(lineNumber);
     var match = regex.firstMatch(line);
-    if (match == null) continue; // Skip malformed lines
+    if (match == null) continue;
 
     var bfen = match.group(1) as String;
     var assigned = parseEvalString(match.group(2));
@@ -143,8 +138,6 @@ void _importFromTxt(String filename) {
     lineNumber++;
   }
 }
-
-
 
 void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
   Chess game;
@@ -165,10 +158,10 @@ void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
   } else {
     game = Chess();
   }
-  // Ensure we have a valid FEN for chess library (append halfmove/fullmove if missing)
+
   final parts = bfen.split(' ');
   final fullFen = parts.length >= 4 ? "$bfen 0 1" : bfen;
-  
+
   try {
     game.load(fullFen);
     String a = game.bfen;

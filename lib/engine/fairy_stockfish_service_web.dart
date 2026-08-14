@@ -120,14 +120,14 @@ class FairyStockfishService implements EngineService {
       }).toJS;
 
       _writeLine('uci');
-      await _waitForLine('uciok');
+      await _waitForLine('uciok', timeout: const Duration(seconds: 60));
       _writeLine('setoption name Threads value 1');
       _writeLine('setoption name Hash value 16');
       _writeLine('setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
       _writeLine('LOAD_NNUE ${_nnueFilenameForVariant(_variant)}');
       await _waitForLine('WORKER_NNUE_DONE', timeout: const Duration(seconds: 90));
       _writeLine('isready');
-      await _waitForLine('readyok');
+      await _waitForLine('readyok', timeout: const Duration(seconds: 60));
       _isStarted = true;
       print('[engine-web] Fairy-Stockfish WASM Worker ready for ${uciVariantForDataset(_variant)} (NNUE: $_isNNUE)');
 

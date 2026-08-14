@@ -20,8 +20,22 @@ if (typeof window !== 'undefined') {
     if (!window.isSecureContext) return;
 
     if (navigator.serviceWorker) {
+      const scriptUrl =
+        document.currentScript && document.currentScript.src
+            ? document.currentScript.src
+            : new URL('coi-serviceworker.js', window.location.href).href;
+
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!window.crossOriginIsolated) {
+          try {
+            sessionStorage.setItem('coi_reload_done', 'true');
+          } catch (_) {}
+          window.location.reload();
+        }
+      });
+
       navigator.serviceWorker
-        .register('coi-serviceworker.js')
+        .register(scriptUrl)
         .then((registration) => {
           if (registration.active && !navigator.serviceWorker.controller) {
             try {

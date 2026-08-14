@@ -73,7 +73,7 @@ class FairyStockfishService implements EngineService {
     try {
       final base = web.window.document.baseURI;
       final workerUrl = web.URL(binaryName, base).href;
-      print('[engine-web] Launching Web Worker $workerUrl for variant ${uciVariantForDataset(_variant)}...');
+      print('[engine-web] Launching Web Worker $workerUrl for variant ${uciVariantForDataset(_variant)} (crossOriginIsolated: ${web.window.crossOriginIsolated})...');
       final worker = web.Worker(workerUrl.toJS);
       _worker = worker;
       _isNNUE = false;

@@ -4,6 +4,7 @@
 # 3rd party
 *.exe
 *.nnue
+!web/*.nnue
 
 # Miscellaneous
 *.class

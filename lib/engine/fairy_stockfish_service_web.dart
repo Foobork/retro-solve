@@ -71,8 +71,10 @@ class FairyStockfishService implements EngineService {
   Future<void> start() async {
     if (_isStarted && _worker != null) return;
     try {
-      print('[engine-web] Launching Web Worker $binaryName for variant ${uciVariantForDataset(_variant)}...');
-      final worker = web.Worker(binaryName.toJS);
+      final base = web.window.document.baseURI;
+      final workerUrl = web.URL(binaryName, base).href;
+      print('[engine-web] Launching Web Worker $workerUrl for variant ${uciVariantForDataset(_variant)}...');
+      final worker = web.Worker(workerUrl.toJS);
       _worker = worker;
       _isNNUE = false;
 
@@ -123,7 +125,7 @@ class FairyStockfishService implements EngineService {
       _writeLine('setoption name Hash value 16');
       _writeLine('setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
       _writeLine('LOAD_NNUE ${_nnueFilenameForVariant(_variant)}');
-      await _waitForLine('WORKER_NNUE_DONE');
+      await _waitForLine('WORKER_NNUE_DONE', timeout: const Duration(seconds: 90));
       _writeLine('isready');
       await _waitForLine('readyok');
       _isStarted = true;
@@ -253,10 +255,10 @@ class FairyStockfishService implements EngineService {
     _worker!.postMessage(line.toJS);
   }
 
-  Future<void> _waitForLine(String expectedLine) async {
+  Future<void> _waitForLine(String expectedLine, {Duration? timeout}) async {
     await _stdoutLines.stream
         .firstWhere((line) => line.trim() == expectedLine)
-        .timeout(commandTimeout);
+        .timeout(timeout ?? commandTimeout);
   }
 
   @override

@@ -96,6 +96,7 @@ class _HomePageState extends State<HomePage> {
 
     final moreMenu = PopupMenuButton<_MoreAction>(
       tooltip: 'More actions',
+      enabled: !_isExploring,
       onSelected: _onMoreAction,
       itemBuilder: (_) => const [
         PopupMenuItem(
@@ -119,8 +120,8 @@ class _HomePageState extends State<HomePage> {
       spacing: 2,
       runSpacing: 2,
       children: [
-        _button("reset", _reset),
-        _button("back", _back),
+        _button("reset", _isExploring ? null : _reset),
+        _button("back", _isExploring ? null : _back),
         _button("flip", _flip),
         _button(_isExploring ? "stop exploring" : "explore", _exploreToggle),
         moreMenu,
@@ -596,10 +597,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _back() {
+    if (_isExploring) return;
     _controller.undoMove();
   }
 
   void _reset() {
+    if (_isExploring) return;
     _controller.resetBoard();
   }
 

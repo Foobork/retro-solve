@@ -94,58 +94,125 @@ class _HomePageState extends State<HomePage> {
       ],
     );
 
-    var body = Center(
-      child: _padded(
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Column(
-              children: <Widget>[
-                Expanded(child: chessboard),
+    final moreMenu = PopupMenuButton<_MoreAction>(
+      tooltip: 'More actions',
+      onSelected: _onMoreAction,
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: _MoreAction.solve,
+          child: Text('Solve'),
+        ),
+        PopupMenuItem(
+          value: _MoreAction.export_,
+          child: Text('Export'),
+        ),
+        PopupMenuItem(
+          value: _MoreAction.analyzeGame,
+          child: Text('Analyze Game'),
+        ),
+      ],
+    );
+
+    final actionButtons = Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 2,
+      runSpacing: 2,
+      children: [
+        _button("reset", _reset),
+        _button("back", _back),
+        _button("flip", _flip),
+        _button(_isExploring ? "stop exploring" : "explore", _exploreToggle),
+        moreMenu,
+        if (Config.showBatchEval)
+          _button("batch eval", _isBatchEvaluating ? null : _batchEval),
+      ],
+    );
+
+    var body = LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 800;
+
+        if (isNarrow) {
+          final boardSize = (constraints.maxWidth - 24).clamp(100.0, 440.0);
+          return SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: boardSize,
+                  child: chessboard,
+                ),
+                const SizedBox(height: 8),
                 turn,
+                const SizedBox(height: 4),
+                actionButtons,
+                const Divider(height: 20),
                 Wrap(
                   alignment: WrapAlignment.center,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+                  crossAxisAlignment: WrapCrossAlignment.start,
+                  spacing: 12,
+                  runSpacing: 12,
                   children: [
-                    _button("reset", _reset),
-                    _button("back", _back),
-                    _button("flip", _flip),
-                    _button(_isExploring ? "stop exploring" : "explore",
-                        _exploreToggle),
-                    PopupMenuButton<_MoreAction>(
-                      tooltip: 'More actions',
-                      onSelected: _onMoreAction,
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                          value: _MoreAction.solve,
-                          child: Text('Solve'),
-                        ),
-                        PopupMenuItem(
-                          value: _MoreAction.export_,
-                          child: Text('Export'),
-                        ),
-                        PopupMenuItem(
-                          value: _MoreAction.analyzeGame,
-                          child: Text('Analyze Game'),
-                        ),
-                      ],
-                    ),
-                    if (Config.showBatchEval)
-                      _button(
-                          "batch eval", _isBatchEvaluating ? null : _batchEval),
+                    _evaluationWidget(),
+                    _engineWidget(),
                   ],
+                ),
+                if (Config.showBatchEval && _isBatchEvaluating) ...[
+                  const SizedBox(height: 12),
+                  _batchEvalProgress(),
+                ],
+                const SizedBox(height: 16),
+                const Text('Known Moves',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                const SizedBox(height: 8),
+                _movesTable(),
+                const SizedBox(height: 32),
+              ],
+            ),
+          );
+        }
+
+        return Center(
+          child: _padded(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Flexible(
+                  flex: 4,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: 500,
+                          maxHeight: 560,
+                        ),
+                        child: chessboard,
+                      ),
+                      const SizedBox(height: 4),
+                      turn,
+                      const SizedBox(height: 4),
+                      actionButtons,
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 3,
+                  child: _movesColumn(),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 3,
+                  child: _engineColumn(),
                 ),
               ],
             ),
-            Expanded(
-              child: _movesColumn(),
-            ),
-            Expanded(
-              child: _engineColumn(),
-            )
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
 
     return Scaffold(
@@ -258,6 +325,38 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _batchEvalProgress() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_isBatchEvaluating)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
+            child: Text(
+              "Evaluating $_evalProgress / $_evalTotal",
+              style: const TextStyle(
+                  fontSize: 14,
+                  color: Colors.blue,
+                  fontWeight: FontWeight.bold),
+            ),
+          ),
+        if (_isBatchEvaluating)
+          LinearProgressIndicator(
+            value: _evalTotal > 0 ? _evalProgress / _evalTotal : 0,
+            backgroundColor: Colors.grey[300],
+          ),
+        if (_isBatchEvaluating && _batchTimeText.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Text(
+              _batchTimeText,
+              style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+            ),
+          ),
+      ],
+    );
+  }
+
   _engineColumn() {
     return _padded(
       Column(
@@ -265,31 +364,7 @@ class _HomePageState extends State<HomePage> {
         children: [
           _engineWidget(),
           if (Config.showBatchEval && _isBatchEvaluating)
-            Padding(
-              padding: const EdgeInsets.only(top: 16.0, bottom: 8.0),
-              child: Text(
-                "Evaluating $_evalProgress / $_evalTotal",
-                style: const TextStyle(
-                    fontSize: 14,
-                    color: Colors.blue,
-                    fontWeight: FontWeight.bold),
-              ),
-            ),
-          if (Config.showBatchEval && _isBatchEvaluating)
-            LinearProgressIndicator(
-              value: _evalTotal > 0 ? _evalProgress / _evalTotal : 0,
-              backgroundColor: Colors.grey[300],
-            ),
-          if (Config.showBatchEval &&
-              _isBatchEvaluating &&
-              _batchTimeText.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8.0),
-              child: Text(
-                _batchTimeText,
-                style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
-              ),
-            ),
+            _batchEvalProgress(),
         ],
       ),
     );

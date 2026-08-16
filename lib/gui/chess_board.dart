@@ -199,7 +199,7 @@ class _ChessBoardState extends State<ChessBoard> {
             children: [
               _buildPocket(game, topColor),
               const SizedBox(height: 4.0),
-              Expanded(child: boardWidget),
+              boardWidget,
               const SizedBox(height: 4.0),
               _buildPocket(game, bottomColor),
             ],

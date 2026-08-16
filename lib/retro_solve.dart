@@ -179,33 +179,32 @@ class _HomePageState extends State<HomePage> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Flexible(
-                  flex: 4,
+                Expanded(
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: 500,
-                          maxHeight: 560,
+                      Expanded(
+                        child: Center(
+                          child: AspectRatio(
+                            aspectRatio: 1.0,
+                            child: chessboard,
+                          ),
                         ),
-                        child: chessboard,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       turn,
                       const SizedBox(height: 4),
                       actionButtons,
                     ],
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 3,
+                const SizedBox(width: 16),
+                SizedBox(
+                  width: 250,
                   child: _movesColumn(),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 3,
+                const SizedBox(width: 16),
+                SizedBox(
+                  width: 250,
                   child: _engineColumn(),
                 ),
               ],

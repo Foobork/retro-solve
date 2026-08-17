@@ -31,8 +31,7 @@ class Graph {
   }
 
   void assign(String bfen, double? eval) {
-    final pos = v[bfen];
-    if (pos == null) return;
+    final pos = addVertex(bfen);
     pos.assigned = eval;
     pos.computed = null;
     pos.inDatabase = true;

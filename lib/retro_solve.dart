@@ -485,16 +485,12 @@ class _HomePageState extends State<HomePage> {
   void _chessBoardListener() {
     var game = _controller.game.copy();
     String a = game.bfen;
-    bool assignedAny = false;
     if (game.gameOver) {
       final score = game.terminalEvaluation;
       if (score != null && graph.v[a]?.assigned == null) {
         graph.assign(a, score);
-        assignedAny = true;
       }
-      if (assignedAny) {
-        graph.solveBfen(a);
-      }
+      graph.solveBfen(a);
       setState(_update);
       return;
     }
@@ -507,15 +503,12 @@ class _HomePageState extends State<HomePage> {
         final score = game.terminalEvaluation;
         if (score != null && graph.v[b]?.assigned == null) {
           graph.assign(b, score);
-          assignedAny = true;
         }
       }
       game.undo();
       graph.addLink(a, b);
     }
-    if (assignedAny) {
-      graph.solveBfen(a);
-    }
+    graph.solveBfen(a);
     setState(_update);
   }
 
@@ -620,7 +613,9 @@ class _HomePageState extends State<HomePage> {
 
   void _solve() {
     graph.solve();
-    // _export(); // Incremental via onNodeUpdated
+    if (mounted) {
+      setState(_update);
+    }
   }
 
   void _onMoreAction(_MoreAction action) {

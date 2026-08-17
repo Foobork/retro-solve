@@ -121,5 +121,40 @@ void main() {
       expect(game.gameOver, isTrue);
       expect(game.terminalEvaluation, equals(1000.0));
     });
+
+    test('Qxf2+ in rnb1kbnr/pppp1ppp/4p3/8/4P2q/2N5/PPPPKPPP/R1BQ1BNR b kq - explodes White King and solves to -999.0 (-M1)', () {
+      final game = AtomicChess();
+      const fen = 'rnb1kbnr/pppp1ppp/4p3/8/4P2q/2N5/PPPPKPPP/R1BQ1BNR b kq - 0 1';
+      game.load(fen);
+
+      final testGraph = Graph();
+      final a = game.bfen;
+
+      final moves = game.generateMoves();
+      final qxf2 = moves.firstWhere((m) => m.fromAlgebraic == 'h4' && m.toAlgebraic == 'f2');
+      
+      for (final move in moves) {
+        game.makeMove(move);
+        final b = game.bfen;
+        if (game.gameOver) {
+          final score = game.terminalEvaluation;
+          if (score != null) {
+            testGraph.assign(b, score);
+          }
+        }
+        game.undo();
+        testGraph.addLink(a, b);
+      }
+
+      // Verify Qxf2 move exploded the king and terminal score is -1000.0
+      game.makeMove(qxf2);
+      expect(game.kings[PlayerColor.white], equals(-1));
+      expect(game.gameOver, isTrue);
+      expect(game.terminalEvaluation, equals(-1000.0));
+      game.undo();
+
+      testGraph.solve();
+      expect(testGraph.v[a]?.computed, equals(-999.0));
+    });
   });
 }

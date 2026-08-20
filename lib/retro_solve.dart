@@ -679,23 +679,23 @@ class _HomePageState extends State<HomePage> {
 
     final knownMoveSans = _getKnownMoveSans();
     final isWhite = _controller.game.turn == white;
-    final hasKnownMateInOne = _knownMoves.any((m) =>
+    final hasKnownWinningMate = _knownMoves.any((m) =>
         m.eval != null && (isWhite ? m.eval! >= 999.0 : m.eval! <= -999.0));
 
-    // If the position already contains a known Mate in 1, skip exploring weaker alternatives
-    if (hasKnownMateInOne) {
+    // If the side to move already has a winning mate in 1 in known moves, skip exploring weaker alternatives
+    if (hasKnownWinningMate) {
       print(
-          '[explore] Position already has Mate in 1 in known moves. Skipping weaker alternatives.');
+          '[explore] Side to move already has a winning move in graph. Skipping weaker alternatives.');
       return;
     }
 
-    // Check if any candidate move in engine evals is an immediate Mate in 1 (mate 1 or mate 0)
-    String? engineMateInOneSan;
+    // Check if any candidate move in engine evals is an immediate winning Mate in 1 for the side to move
+    String? engineWinningMateSan;
     for (final e in _engineEvals) {
-      if (e.mate != null && e.mate! >= 0 && e.mate! <= 1 && e.candidateMove != null) {
+      if (_isWinningMateInOne(e, isWhite)) {
         final san = _uciToSan(e.candidateMove);
         if (san != '—') {
-          engineMateInOneSan = san;
+          engineWinningMateSan = san;
           break;
         }
       }
@@ -708,18 +708,18 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      if (engineMateInOneSan != null &&
-          (knownMoveSans.contains(engineMateInOneSan) ||
-              knownMoveSans.contains(_controller.game.normalizeMoveString(engineMateInOneSan)))) {
+      if (engineWinningMateSan != null &&
+          (knownMoveSans.contains(engineWinningMateSan) ||
+              knownMoveSans.contains(_controller.game.normalizeMoveString(engineWinningMateSan)))) {
         print(
-            '[explore] Mate in 1 ($engineMateInOneSan) already explored from this position. Backing up.');
+            '[explore] Winning move ($engineWinningMateSan) already explored from this position. Backing up.');
         return;
       }
 
       bool hasUnexplored = false;
-      if (engineMateInOneSan != null) {
-        hasUnexplored = !knownMoveSans.contains(engineMateInOneSan) &&
-            !knownMoveSans.contains(_controller.game.normalizeMoveString(engineMateInOneSan));
+      if (engineWinningMateSan != null) {
+        hasUnexplored = !knownMoveSans.contains(engineWinningMateSan) &&
+            !knownMoveSans.contains(_controller.game.normalizeMoveString(engineWinningMateSan));
       } else {
         for (final e in _engineEvals) {
           String san = _uciToSan(e.candidateMove);
@@ -742,36 +742,36 @@ class _HomePageState extends State<HomePage> {
     while (_isExploring && mounted) {
       final currentKnownSans = _getKnownMoveSans();
       final currentIsWhite = _controller.game.turn == white;
-      final currentHasMateInOne = _knownMoves.any((m) =>
+      final currentHasWinningMate = _knownMoves.any((m) =>
           m.eval != null && (currentIsWhite ? m.eval! >= 999.0 : m.eval! <= -999.0));
 
-      if (currentHasMateInOne) {
-        print('[explore] Position resolved to Mate in 1. Skipping weaker alternatives.');
+      if (currentHasWinningMate) {
+        print('[explore] Position resolved with winning move for side to move. Skipping weaker alternatives.');
         break;
       }
 
       String? nextMoveToExplore;
 
-      // Re-check engine mate in 1 in current evals
-      String? currentMateInOneSan;
+      // Re-check engine winning mate in 1 in current evals
+      String? currentWinningMateSan;
       for (final e in _engineEvals) {
-        if (e.mate != null && e.mate! >= 0 && e.mate! <= 1 && e.candidateMove != null) {
+        if (_isWinningMateInOne(e, currentIsWhite)) {
           final san = _uciToSan(e.candidateMove);
           if (san != '—') {
-            currentMateInOneSan = san;
+            currentWinningMateSan = san;
             break;
           }
         }
       }
 
-      if (currentMateInOneSan != null) {
-        if (currentKnownSans.contains(currentMateInOneSan) ||
-            currentKnownSans.contains(_controller.game.normalizeMoveString(currentMateInOneSan))) {
+      if (currentWinningMateSan != null) {
+        if (currentKnownSans.contains(currentWinningMateSan) ||
+            currentKnownSans.contains(_controller.game.normalizeMoveString(currentWinningMateSan))) {
           print(
-              '[explore] Mate in 1 ($currentMateInOneSan) already explored. Skipping weaker alternatives.');
+              '[explore] Winning move ($currentWinningMateSan) already explored. Skipping weaker alternatives.');
           break;
         }
-        nextMoveToExplore = currentMateInOneSan;
+        nextMoveToExplore = currentWinningMateSan;
       } else {
         for (final e in _engineEvals) {
           String san = _uciToSan(e.candidateMove);
@@ -1052,21 +1052,10 @@ class _HomePageState extends State<HomePage> {
       final knownMoveSans = _getKnownMoveSans();
       final rows = validEngineEvals.map((e) {
         String san = _uciToSan(e.candidateMove);
-        String evalStr = 'unknown';
-        if (e.mate != null) {
-          if (e.mate == 0) {
-            final score =
-                _engineEvalToGraphScore(e, _controller.game.turn == white);
-            evalStr = score! > 0 ? '+M0' : '-M0';
-          } else {
-            evalStr = e.mate! > 0 ? '+M${e.mate!}' : '-M${e.mate!.abs()}';
-          }
-        } else if (e.centipawns != null) {
-          final pawns = e.centipawns! / 100.0;
-          evalStr = pawns > 0
-              ? '+${pawns.toStringAsFixed(2)}'
-              : pawns.toStringAsFixed(2);
-        }
+        final score = _engineEvalToGraphScore(e, _controller.game.turn == white);
+        final evalStr = score != null
+            ? _formatScore(score, isMoveScore: true)
+            : 'unknown';
 
         final isKnown = knownMoveSans.contains(san) ||
             knownMoveSans.contains(_controller.game.normalizeMoveString(san));
@@ -1141,21 +1130,26 @@ class _HomePageState extends State<HomePage> {
       final m = eval.mate!;
       if (m == 0) {
         return isWhiteToMove ? -1000.0 : 1000.0;
+      }
+      final absM = m.abs();
+      final pliesToMate = 2 * absM - 1;
+      if (isWhiteToMove) {
+        return m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
       } else {
-        int pliesToMate;
-        if (m > 0) {
-          pliesToMate = isWhiteToMove ? (2 * m - 1) : (2 * m);
-          return 1000.0 - pliesToMate;
-        } else {
-          int mAbs = m.abs();
-          pliesToMate = isWhiteToMove ? (2 * mAbs) : (2 * mAbs - 1);
-          return -1000.0 + pliesToMate;
-        }
+        return m > 0 ? (-1000.0 + pliesToMate) : (1000.0 - pliesToMate);
       }
     } else if (eval.centipawns != null) {
-      return eval.centipawns! / 100.0;
+      final cp = eval.centipawns! / 100.0;
+      return isWhiteToMove ? cp : -cp;
     }
     return null;
+  }
+
+  bool _isWinningMateInOne(EngineEvaluation eval, bool isWhiteToMove) {
+    if (eval.candidateMove == null) return false;
+    final score = _engineEvalToGraphScore(eval, isWhiteToMove);
+    if (score == null) return false;
+    return isWhiteToMove ? score >= 999.0 : score <= -999.0;
   }
 
   String _formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) {

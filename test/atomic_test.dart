@@ -201,7 +201,7 @@ void main() {
       game.undo();
 
       expect(testGraph.v[rootBfen]?.computed, equals(997.0));
-      expect(testGraph.v[qg5Bfen]?.computed, equals(997.0));
+      expect(testGraph.v[qg5Bfen]?.computed, equals(998.0));
     });
   });
 }

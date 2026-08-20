@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:retro_solve/chess/chess.dart';
+import 'package:retro_solve/graph/graph.dart';
 
 void main() {
   group('Atomic Chess Variant Tests', () {
@@ -155,6 +156,52 @@ void main() {
 
       testGraph.solve();
       expect(testGraph.v[a]?.computed, equals(-999.0));
+    });
+
+    test('Qg5 in r2qkb1r/pp2p2p/2n3pn/3p3Q/3PP3/8/PPP2P1P/R3KB1R w KQkq - solves to +997.0 (+M2)', () {
+      final game = AtomicChess();
+      const fen = 'r2qkb1r/pp2p2p/2n3pn/3p3Q/3PP3/8/PPP2P1P/R3KB1R w KQkq - 0 1';
+      game.load(fen);
+
+      final testGraph = Graph();
+      void addEdgesRecursive(String bfen, int depth) {
+        if (depth > 3) return;
+        final g = AtomicChess();
+        g.load('$bfen 0 1');
+        if (g.gameOver) {
+          final score = g.terminalEvaluation;
+          if (score != null) {
+            testGraph.assign(bfen, score);
+          }
+          return;
+        }
+        for (final m in g.generateMoves()) {
+          g.makeMove(m);
+          final nextBfen = g.bfen;
+          if (g.gameOver) {
+            final score = g.terminalEvaluation;
+            if (score != null) {
+              testGraph.assign(nextBfen, score);
+            }
+          }
+          g.undo();
+          testGraph.addLink(bfen, nextBfen);
+          addEdgesRecursive(nextBfen, depth + 1);
+        }
+      }
+
+      final rootBfen = game.bfen;
+      addEdgesRecursive(rootBfen, 1);
+      testGraph.solve();
+
+      final moves = game.generateMoves();
+      final qg5 = moves.firstWhere((m) => game.moveToSan(m) == 'Qg5');
+      game.makeMove(qg5);
+      final qg5Bfen = game.bfen;
+      game.undo();
+
+      expect(testGraph.v[rootBfen]?.computed, equals(997.0));
+      expect(testGraph.v[qg5Bfen]?.computed, equals(997.0));
     });
   });
 }

@@ -678,6 +678,28 @@ class _HomePageState extends State<HomePage> {
     if (!_isExploring || !mounted) return;
 
     final knownMoveSans = _getKnownMoveSans();
+    final isWhite = _controller.game.turn == white;
+    final hasKnownMateInOne = _knownMoves.any((m) =>
+        m.eval != null && (isWhite ? m.eval! >= 999.0 : m.eval! <= -999.0));
+
+    // If the position already contains a known Mate in 1, skip exploring weaker alternatives
+    if (hasKnownMateInOne) {
+      print(
+          '[explore] Position already has Mate in 1 in known moves. Skipping weaker alternatives.');
+      return;
+    }
+
+    // Check if any candidate move in engine evals is an immediate Mate in 1 (mate 1 or mate 0)
+    String? engineMateInOneSan;
+    for (final e in _engineEvals) {
+      if (e.mate != null && e.mate! >= 0 && e.mate! <= 1 && e.candidateMove != null) {
+        final san = _uciToSan(e.candidateMove);
+        if (san != '—') {
+          engineMateInOneSan = san;
+          break;
+        }
+      }
+    }
 
     if (!isRoot) {
       if (knownMoveSans.isEmpty) {
@@ -686,12 +708,27 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
+      if (engineMateInOneSan != null &&
+          (knownMoveSans.contains(engineMateInOneSan) ||
+              knownMoveSans.contains(_controller.game.normalizeMoveString(engineMateInOneSan)))) {
+        print(
+            '[explore] Mate in 1 ($engineMateInOneSan) already explored from this position. Backing up.');
+        return;
+      }
+
       bool hasUnexplored = false;
-      for (final e in _engineEvals) {
-        String san = _uciToSan(e.candidateMove);
-        if (san != '—' && !knownMoveSans.contains(san)) {
-          hasUnexplored = true;
-          break;
+      if (engineMateInOneSan != null) {
+        hasUnexplored = !knownMoveSans.contains(engineMateInOneSan) &&
+            !knownMoveSans.contains(_controller.game.normalizeMoveString(engineMateInOneSan));
+      } else {
+        for (final e in _engineEvals) {
+          String san = _uciToSan(e.candidateMove);
+          if (san != '—' &&
+              !knownMoveSans.contains(san) &&
+              !knownMoveSans.contains(_controller.game.normalizeMoveString(san))) {
+            hasUnexplored = true;
+            break;
+          }
         }
       }
 
@@ -704,13 +741,46 @@ class _HomePageState extends State<HomePage> {
 
     while (_isExploring && mounted) {
       final currentKnownSans = _getKnownMoveSans();
+      final currentIsWhite = _controller.game.turn == white;
+      final currentHasMateInOne = _knownMoves.any((m) =>
+          m.eval != null && (currentIsWhite ? m.eval! >= 999.0 : m.eval! <= -999.0));
+
+      if (currentHasMateInOne) {
+        print('[explore] Position resolved to Mate in 1. Skipping weaker alternatives.');
+        break;
+      }
+
       String? nextMoveToExplore;
 
+      // Re-check engine mate in 1 in current evals
+      String? currentMateInOneSan;
       for (final e in _engineEvals) {
-        String san = _uciToSan(e.candidateMove);
-        if (san != '—' && !currentKnownSans.contains(san)) {
-          nextMoveToExplore = san;
+        if (e.mate != null && e.mate! >= 0 && e.mate! <= 1 && e.candidateMove != null) {
+          final san = _uciToSan(e.candidateMove);
+          if (san != '—') {
+            currentMateInOneSan = san;
+            break;
+          }
+        }
+      }
+
+      if (currentMateInOneSan != null) {
+        if (currentKnownSans.contains(currentMateInOneSan) ||
+            currentKnownSans.contains(_controller.game.normalizeMoveString(currentMateInOneSan))) {
+          print(
+              '[explore] Mate in 1 ($currentMateInOneSan) already explored. Skipping weaker alternatives.');
           break;
+        }
+        nextMoveToExplore = currentMateInOneSan;
+      } else {
+        for (final e in _engineEvals) {
+          String san = _uciToSan(e.candidateMove);
+          if (san != '—' &&
+              !currentKnownSans.contains(san) &&
+              !currentKnownSans.contains(_controller.game.normalizeMoveString(san))) {
+            nextMoveToExplore = san;
+            break;
+          }
         }
       }
 

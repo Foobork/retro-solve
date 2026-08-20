@@ -203,5 +203,53 @@ void main() {
       expect(testGraph.v[rootBfen]?.computed, equals(997.0));
       expect(testGraph.v[qg5Bfen]?.computed, equals(998.0));
     });
+
+    test('r2qkb1r/pp2p2p/2n3pn/3p4/3PP2Q/8/PPP2P1P/R3KB1R b KQkq - known moves and graph test', () {
+      final game = AtomicChess();
+      const fen = 'r2qkb1r/pp2p2p/2n3pn/3p4/3PP2Q/8/PPP2P1P/R3KB1R b KQkq - 0 1';
+      game.load(fen);
+
+      final testGraph = Graph();
+      void addEdgesRecursive(String bfen, int depth) {
+        if (depth > 3) return;
+        final g = AtomicChess();
+        g.load('$bfen 0 1');
+        if (g.gameOver) {
+          final score = g.terminalEvaluation;
+          if (score != null) {
+            testGraph.assign(bfen, score);
+          }
+          return;
+        }
+        for (final m in g.generateMoves()) {
+          g.makeMove(m);
+          final nextBfen = g.bfen;
+          if (g.gameOver) {
+            final score = g.terminalEvaluation;
+            if (score != null) {
+              testGraph.assign(nextBfen, score);
+            }
+          }
+          g.undo();
+          testGraph.addLink(bfen, nextBfen);
+          addEdgesRecursive(nextBfen, depth + 1);
+        }
+      }
+
+      final rootBfen = game.bfen;
+      addEdgesRecursive(rootBfen, 1);
+      testGraph.solve();
+
+      print('Root computed: ${testGraph.v[rootBfen]?.computed}');
+      for (final m in game.generateMoves()) {
+        final san = game.moveToSan(m);
+        game.makeMove(m);
+        final b = game.bfen;
+        final eval = testGraph.v[b]?.computed ?? testGraph.v[b]?.assigned;
+        print('Move $san -> bfen: $b, eval: $eval');
+        game.undo();
+      }
+      expect(testGraph.v[rootBfen]?.computed, equals(998.0));
+    });
   });
 }

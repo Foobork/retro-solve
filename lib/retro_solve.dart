@@ -416,7 +416,7 @@ class _HomePageState extends State<HomePage> {
               if (bestEval.fen == fen &&
                   (bestEval.mate != null ||
                       (bestEval.depth != null && bestEval.depth! >= 16))) {
-                final score = _engineEvalToGraphScore(bestEval, whiteToMove);
+                final score = _engineEvalToGraphScore(bestEval);
                 if (score != null) {
                   graph.assign(bfen, score);
                   graph.v[bfen]?.inDatabase = true;
@@ -933,7 +933,7 @@ class _HomePageState extends State<HomePage> {
       if (evalRaw != null) {
         final isWhiteToMove = graph.v[bfen]!.whiteToMove;
         final eval = evalRaw.asWhitePerspective(whiteToMove: isWhiteToMove);
-        final score = _engineEvalToGraphScore(eval, isWhiteToMove);
+        final score = _engineEvalToGraphScore(eval);
         if (score != null) {
           graph.assign(bfen, score);
         }
@@ -1052,7 +1052,7 @@ class _HomePageState extends State<HomePage> {
       final knownMoveSans = _getKnownMoveSans();
       final rows = validEngineEvals.map((e) {
         String san = _uciToSan(e.candidateMove);
-        final score = _engineEvalToGraphScore(e, _controller.game.turn == white);
+        final score = _engineEvalToGraphScore(e);
         final evalStr = score != null
             ? _formatScore(score, isMoveScore: true)
             : 'unknown';
@@ -1125,29 +1125,24 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  double? _engineEvalToGraphScore(EngineEvaluation eval, bool isWhiteToMove) {
+  double? _engineEvalToGraphScore(EngineEvaluation eval) {
     if (eval.mate != null) {
       final m = eval.mate!;
       if (m == 0) {
-        return isWhiteToMove ? -1000.0 : 1000.0;
+        return null;
       }
       final absM = m.abs();
       final pliesToMate = 2 * absM - 1;
-      if (isWhiteToMove) {
-        return m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
-      } else {
-        return m > 0 ? (-1000.0 + pliesToMate) : (1000.0 - pliesToMate);
-      }
+      return m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
     } else if (eval.centipawns != null) {
-      final cp = eval.centipawns! / 100.0;
-      return isWhiteToMove ? cp : -cp;
+      return eval.centipawns! / 100.0;
     }
     return null;
   }
 
   bool _isWinningMateInOne(EngineEvaluation eval, bool isWhiteToMove) {
     if (eval.candidateMove == null) return false;
-    final score = _engineEvalToGraphScore(eval, isWhiteToMove);
+    final score = _engineEvalToGraphScore(eval);
     if (score == null) return false;
     return isWhiteToMove ? score >= 999.0 : score <= -999.0;
   }

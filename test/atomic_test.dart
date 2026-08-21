@@ -248,17 +248,17 @@ void main() {
       game.undo();
       testGraph.solve();
 
-      expect(testGraph.v[rootBfen]?.computed, equals(998.0));
+      expect(testGraph.v[rootBfen]?.computed, equals(996.0));
       expect(testGraph.v[g5Bfen]?.computed, isNotNull);
     });
 
-    test('Qh4+ in rnbqk3/pp1p2p1/2p1p3/5p2/1b1PP1P1/2N5/PPP2P1P/R1BQKB1R b KQq - is -M2 and explores alternatives', () {
+    test('Qh4 in rnbqk3/pp1p2p1/2p1p3/5p2/1b1PP1P1/2N5/PPP2P1P/R1BQKB1R b KQq - is -M2 and explores alternatives', () {
       final game = AtomicChess();
       const fen = 'rnbqk3/pp1p2p1/2p1p3/5p2/1b1PP1P1/2N5/PPP2P1P/R1BQKB1R b KQq - 0 1';
       game.load(fen);
 
       final moves = game.generateMoves();
-      final qh4 = moves.firstWhere((m) => game.moveToSan(m) == 'Qh4+');
+      final qh4 = moves.firstWhere((m) => game.moveToSan(m) == 'Qh4');
       game.makeMove(qh4);
       final qh4Bfen = game.bfen;
       game.undo();

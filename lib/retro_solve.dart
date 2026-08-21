@@ -416,7 +416,7 @@ class _HomePageState extends State<HomePage> {
               if (bestEval.fen == fen &&
                   (bestEval.mate != null ||
                       (bestEval.depth != null && bestEval.depth! >= 16))) {
-                final score = _engineEvalToGraphScore(bestEval);
+                final score = _engineEvalToGraphScore(bestEval, _controller.game.turn == white);
                 if (score != null) {
                   graph.assign(bfen, score);
                   graph.v[bfen]?.inDatabase = true;
@@ -933,7 +933,7 @@ class _HomePageState extends State<HomePage> {
       if (evalRaw != null) {
         final isWhiteToMove = graph.v[bfen]!.whiteToMove;
         final eval = evalRaw.asWhitePerspective(whiteToMove: isWhiteToMove);
-        final score = _engineEvalToGraphScore(eval);
+        final score = _engineEvalToGraphScore(eval, isWhiteToMove);
         if (score != null) {
           graph.assign(bfen, score);
         }
@@ -1052,7 +1052,7 @@ class _HomePageState extends State<HomePage> {
       final knownMoveSans = _getKnownMoveSans();
       final rows = validEngineEvals.map((e) {
         String san = _uciToSan(e.candidateMove);
-        final score = _engineEvalToGraphScore(e);
+        final score = _engineEvalToGraphScore(e, _controller.game.turn == white);
         final evalStr = score != null
             ? _formatScore(score, isMoveScore: true)
             : 'unknown';
@@ -1125,14 +1125,23 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  double? _engineEvalToGraphScore(EngineEvaluation eval) {
+  double? _engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove) {
     if (eval.mate != null) {
       final m = eval.mate!;
-      if (m == 0) {
-        return null;
-      }
+      if (m == 0) return null;
       final absM = m.abs();
-      final pliesToMate = 2 * absM - 1;
+      int pliesToMate;
+      if (whiteToMove) {
+        // In White-to-move position (after asWhitePerspective):
+        // m > 0: White is to move and checkmates in m moves -> 2*m - 1 plies (1, 3, 5, ...)
+        // m < 0: White is to move and gets checkmated in |m| moves -> 2*|m| plies (2, 4, 6, ...)
+        pliesToMate = m > 0 ? (2 * absM - 1) : (2 * absM);
+      } else {
+        // In Black-to-move position (after asWhitePerspective):
+        // m < 0: Black is to move and checkmates in |m| moves -> 2*|m| - 1 plies (1, 3, 5, ...)
+        // m > 0: Black is to move and gets checkmated in m moves -> 2*m plies (2, 4, 6, ...)
+        pliesToMate = m < 0 ? (2 * absM - 1) : (2 * absM);
+      }
       return m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
     } else if (eval.centipawns != null) {
       return eval.centipawns! / 100.0;
@@ -1142,8 +1151,9 @@ class _HomePageState extends State<HomePage> {
 
   bool _isWinningMateInOne(EngineEvaluation eval, bool isWhiteToMove) {
     if (eval.candidateMove == null) return false;
-    final score = _engineEvalToGraphScore(eval);
+    final score = _engineEvalToGraphScore(eval, isWhiteToMove);
     if (score == null) return false;
+    // Immediate mate in 1 on this turn requires +/-999.0 or +/-1000.0 (1 ply to checkmate)
     return isWhiteToMove ? score >= 999.0 : score <= -999.0;
   }
 
@@ -1151,23 +1161,20 @@ class _HomePageState extends State<HomePage> {
     const double mateThreshold = 900.0;
     String formatted;
     if (score.abs() >= mateThreshold) {
-      double adjustedScore = score;
+      final sign = score > 0 ? '+' : '-';
+      final pliesRemaining = (1000.0 - score.abs()).round();
+      int moves;
       if (isMoveScore) {
-        if (score > 0) {
-          adjustedScore = score - 1.0;
+        final totalPlies = 1 + pliesRemaining;
+        moves = (totalPlies + 1) ~/ 2;
+      } else {
+        if (pliesRemaining == 0) {
+          moves = 0;
         } else {
-          adjustedScore = score + 1.0;
+          moves = (pliesRemaining + 1) ~/ 2;
         }
       }
-      if (adjustedScore > 0) {
-        final plies = (1000.0 - adjustedScore).round();
-        final moves = (plies + 1) ~/ 2;
-        formatted = '+M$moves';
-      } else {
-        final plies = (adjustedScore + 1000.0).round();
-        final moves = (plies + 1) ~/ 2;
-        formatted = '-M$moves';
-      }
+      formatted = '$sign' 'M$moves';
     } else {
       formatted = score > 0 ? '+${score.toStringAsFixed(2)}' : score.toStringAsFixed(2);
     }

@@ -240,16 +240,16 @@ void main() {
       addEdgesRecursive(rootBfen, 1);
       testGraph.solve();
 
-      print('Root computed: ${testGraph.v[rootBfen]?.computed}');
-      for (final m in game.generateMoves()) {
-        final san = game.moveToSan(m);
-        game.makeMove(m);
-        final b = game.bfen;
-        final eval = testGraph.v[b]?.computed ?? testGraph.v[b]?.assigned;
-        print('Move $san -> bfen: $b, eval: $eval');
-        game.undo();
-      }
+      // Specifically expand the g5 branch down to mate so g5 is solved
+      final g5Move = game.generateMoves().firstWhere((m) => game.moveToSan(m) == 'g5');
+      game.makeMove(g5Move);
+      final g5Bfen = game.bfen;
+      addEdgesRecursive(g5Bfen, 1);
+      game.undo();
+      testGraph.solve();
+
       expect(testGraph.v[rootBfen]?.computed, equals(998.0));
+      expect(testGraph.v[g5Bfen]?.computed, isNotNull);
     });
 
     test('Qh4+ in rnbqk3/pp1p2p1/2p1p3/5p2/1b1PP1P1/2N5/PPP2P1P/R1BQKB1R b KQq - is -M2 and explores alternatives', () {

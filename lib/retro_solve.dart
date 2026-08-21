@@ -1052,10 +1052,15 @@ class _HomePageState extends State<HomePage> {
       final knownMoveSans = _getKnownMoveSans();
       final rows = validEngineEvals.map((e) {
         String san = _uciToSan(e.candidateMove);
-        final score = _engineEvalToGraphScore(e, _controller.game.turn == white);
-        final evalStr = score != null
-            ? _formatScore(score, isMoveScore: true)
-            : 'unknown';
+        String evalStr = 'unknown';
+        if (e.mate != null) {
+          evalStr = e.mate! > 0 ? '+M${e.mate!}' : '-M${e.mate!.abs()}';
+        } else if (e.centipawns != null) {
+          final pawns = e.centipawns! / 100.0;
+          evalStr = pawns > 0
+              ? '+${pawns.toStringAsFixed(2)}'
+              : pawns.toStringAsFixed(2);
+        }
 
         final isKnown = knownMoveSans.contains(san) ||
             knownMoveSans.contains(_controller.game.normalizeMoveString(san));

@@ -879,18 +879,15 @@ class _HomePageState extends State<HomePage> {
         // Match variant if specified in PGN header
         if (game.variant != null) {
           final pgnVar = game.variant!.toLowerCase();
-          ChessVariant? targetVariant;
-          for (final v in ChessVariant.values) {
-            if (v.name.toLowerCase() == pgnVar) {
+          DatasetVariant? targetVariant;
+          for (final v in DatasetVariant.values) {
+            if (v.name.toLowerCase() == pgnVar || v.label.toLowerCase() == pgnVar) {
               targetVariant = v;
               break;
             }
           }
           if (targetVariant != null && targetVariant != _variant) {
-            setState(() {
-              _variant = targetVariant!;
-              _controller.changeVariant(_variant);
-            });
+            _setVariant(targetVariant);
           }
         }
 

@@ -36,9 +36,10 @@ class ChessBoardController extends ValueNotifier<Chess> {
   }
 
   /// Makes move on the board
-  void makeMoveWithNormalNotation(String move) {
-    game.move(move);
+  bool makeMoveWithNormalNotation(String move) {
+    final result = game.move(move);
     notifyListeners();
+    return result;
   }
 
   void undoMove() {
@@ -69,7 +70,12 @@ class ChessBoardController extends ValueNotifier<Chess> {
     notifyListeners();
   }
 
-  /// Loads a PGN
+  /// Loads a FEN
+  void load(String fen) {
+    loadFen(fen);
+  }
+
+  /// Loads a FEN
   void loadFen(String fen) {
     game.load(fen);
     notifyListeners();

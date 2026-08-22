@@ -8,6 +8,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:file_selector/file_selector.dart';
 
 import 'chess/chess.dart';
+import 'chess/pgn_parser.dart';
 import 'dataset_variant.dart';
 import 'config.dart';
 import 'engine/fairy_stockfish_service.dart';
@@ -814,25 +815,26 @@ class _HomePageState extends State<HomePage> {
 
       print('[explore] Returning to parent position.');
       _controller.undoMove();
+      await _waitForEngineStabilization();
+    }
+  }
 
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      // Wait for stabilization after undoing the move
-      while (_isExploring &&
-          mounted &&
-          (_engineEvalPending || _engineEvals.isEmpty)) {
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
-      while (_isExploring && mounted) {
-        if (_engineEvals.isNotEmpty) {
-          final bestEval = _engineEvals.first;
-          if (bestEval.mate != null ||
-              (bestEval.depth != null && bestEval.depth! >= 16)) {
-            break;
-          }
+  Future<void> _waitForEngineStabilization() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    while (_isExploring &&
+        mounted &&
+        (_engineEvalPending || _engineEvals.isEmpty)) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    while (_isExploring && mounted) {
+      if (_engineEvals.isNotEmpty) {
+        final bestEval = _engineEvals.first;
+        if (bestEval.mate != null ||
+            (bestEval.depth != null && bestEval.depth! >= 16)) {
+          break;
         }
-        await Future.delayed(const Duration(milliseconds: 100));
       }
+      await Future.delayed(const Duration(milliseconds: 100));
     }
   }
 
@@ -852,57 +854,92 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _analyzeGame(String pgnText) async {
-    final tempGame = Chess();
-    if (!tempGame.loadPgn(pgnText)) {
+    final games = PgnParser.parse(pgnText);
+    if (games.isEmpty || games.every((g) => g.root.children.isEmpty)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to parse PGN')),
+          const SnackBar(content: Text('Failed to parse PGN or no moves found')),
         );
       }
       return;
     }
 
-    final rawMoves = tempGame.sanMoves();
-    final List<String> moves = [];
-    for (final raw in rawMoves) {
-      if (raw == null) continue;
-      final parts = raw.split(' ');
-      for (final p in parts) {
-        if (!p.contains('.') &&
-            p.isNotEmpty &&
-            !['1/2-1/2', '1-0', '0-1', '*'].contains(p)) {
-          moves.add(p);
-        }
-      }
-    }
-
-    _reset();
     if (!_engineAvailable) return;
     setState(() => _isExploring = true);
     WakelockPlus.enable();
-    print('[analyze] Started analyzing game');
+    print('[analyze] Started analyzing study / game(s) with ${games.length} chapter(s)');
 
     try {
-      // Analyze starting position
-      await _exploreRecursive(isRoot: true);
-
-      // Play through moves
-      for (final san in moves) {
+      for (int chapterIndex = 0; chapterIndex < games.length; chapterIndex++) {
         if (!_isExploring || !mounted) break;
+        final game = games[chapterIndex];
+        final chapterTitle = game.chapterName ?? game.event ?? 'Chapter ${chapterIndex + 1}';
+        print('[analyze] Starting $chapterTitle');
 
-        print('[analyze] Playing move: $san');
-        _controller.makeMoveWithNormalNotation(san);
+        // Match variant if specified in PGN header
+        if (game.variant != null) {
+          final pgnVar = game.variant!.toLowerCase();
+          ChessVariant? targetVariant;
+          for (final v in ChessVariant.values) {
+            if (v.name.toLowerCase() == pgnVar) {
+              targetVariant = v;
+              break;
+            }
+          }
+          if (targetVariant != null && targetVariant != _variant) {
+            setState(() {
+              _variant = targetVariant!;
+              _controller.changeVariant(_variant);
+            });
+          }
+        }
 
-        // Wait for board to update and engine to start
-        await Future.delayed(const Duration(milliseconds: 200));
+        // Set starting position
+        if (game.fen != null && game.fen!.isNotEmpty) {
+          _controller.load(game.fen!);
+        } else {
+          _reset();
+        }
 
-        // Analyze new position
-        await _exploreRecursive(isRoot: true);
+        await _waitForEngineStabilization();
+        await _analyzePgnTree(game.root);
       }
     } finally {
       if (mounted) setState(() => _isExploring = false);
       WakelockPlus.disable();
-      print('[analyze] Game analysis ended/stopped.');
+      print('[analyze] Game/study analysis ended/stopped.');
+    }
+  }
+
+  Future<void> _analyzePgnTree(PgnNode node) async {
+    if (!_isExploring || !mounted) return;
+
+    // Explore/resolve the current position
+    await _exploreRecursive(isRoot: true);
+
+    // Recursively traverse each child variation/move
+    for (final child in node.children) {
+      if (!_isExploring || !mounted) break;
+      if (child.san == null) continue;
+
+      print('[analyze] Playing move: ${child.san}');
+      final moveSuccess = _controller.makeMoveWithNormalNotation(child.san!);
+      if (!moveSuccess) {
+        print('[analyze] Warning: Failed to make move ${child.san} from position ${_controller.game.fen}');
+        continue;
+      }
+
+      await _waitForEngineStabilization();
+
+      // Recurse into child branch
+      await _analyzePgnTree(child);
+
+      if (!_isExploring || !mounted) break;
+
+      // Backtrack to parent position
+      print('[analyze] Backtracking from move ${child.san}');
+      _controller.undoMove();
+      await _waitForEngineStabilization();
     }
   }
 

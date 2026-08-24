@@ -252,6 +252,13 @@ class _HomePageState extends State<HomePage> {
   int _evalTotal = 0;
   String _batchTimeText = "";
 
+  bool _isAnalyzingGame = false;
+  int _analyzeProgress = 0;
+  int _analyzeTotal = 0;
+  String _analyzeTimeText = "";
+  String _analyzeChapterText = "";
+  final Stopwatch _analyzeStopwatch = Stopwatch();
+
   TableRow _buildMoveRow(String move, String evalStr, {Color? color}) {
     return TableRow(
       children: [
@@ -358,6 +365,55 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _analyzeGameProgress() {
+    final percent = _analyzeTotal > 0
+        ? (_analyzeProgress / _analyzeTotal).clamp(0.0, 1.0)
+        : 0.0;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (_analyzeChapterText.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Text(
+              _analyzeChapterText,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Colors.blueGrey,
+                fontWeight: FontWeight.w600,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6.0, bottom: 6.0),
+          child: Text(
+            "Analyzing position $_analyzeProgress / $_analyzeTotal (${(percent * 100).toStringAsFixed(1)}%)",
+            style: const TextStyle(
+              fontSize: 14,
+              color: Colors.blue,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        LinearProgressIndicator(
+          value: percent,
+          backgroundColor: Colors.grey[300],
+          valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+        ),
+        if (_analyzeTimeText.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6.0),
+            child: Text(
+              _analyzeTimeText,
+              style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+            ),
+          ),
+      ],
+    );
+  }
+
   _engineColumn() {
     return _padded(
       Column(
@@ -366,6 +422,8 @@ class _HomePageState extends State<HomePage> {
           _engineWidget(),
           if (Config.showBatchEval && _isBatchEvaluating)
             _batchEvalProgress(),
+          if (_isAnalyzingGame)
+            _analyzeGameProgress(),
         ],
       ),
     );
@@ -890,9 +948,19 @@ class _HomePageState extends State<HomePage> {
     }
     _update();
 
-    setState(() => _isExploring = true);
+    _analyzeTotal = games.fold(0, (sum, g) => sum + 1 + g.root.totalNodes);
+    _analyzeProgress = 0;
+    _analyzeTimeText = "";
+    _analyzeChapterText = "";
+    _analyzeStopwatch.reset();
+    _analyzeStopwatch.start();
+
+    setState(() {
+      _isExploring = true;
+      _isAnalyzingGame = true;
+    });
     WakelockPlus.enable();
-    print('[analyze] Started analyzing study / game(s) with ${games.length} chapter(s)');
+    print('[analyze] Started analyzing study / game(s) with ${games.length} chapter(s) ($_analyzeTotal total positions)');
 
     try {
       for (int chapterIndex = 0; chapterIndex < games.length; chapterIndex++) {
@@ -900,6 +968,9 @@ class _HomePageState extends State<HomePage> {
         final game = games[chapterIndex];
         final chapterTitle = game.chapterName ?? game.event ?? 'Chapter ${chapterIndex + 1}';
         print('[analyze] Starting $chapterTitle');
+        setState(() {
+          _analyzeChapterText = chapterTitle;
+        });
 
         // Match variant if specified in PGN header
         if (game.variant != null) {
@@ -929,17 +1000,53 @@ class _HomePageState extends State<HomePage> {
         await _analyzePgnTree(game.root);
       }
     } finally {
+      _analyzeStopwatch.stop();
       if (mounted) {
-        setState(() => _isExploring = false);
-        _update();
+        setState(() {
+          _isExploring = false;
+          _isAnalyzingGame = false;
+          _analyzeTimeText = "";
+          _analyzeChapterText = "";
+          _update();
+        });
       }
       WakelockPlus.disable();
       print('[analyze] Game/study analysis ended/stopped.');
     }
   }
 
+  void _recordAnalyzeProgress() {
+    _analyzeProgress++;
+    final elapsedMs = _analyzeStopwatch.elapsedMilliseconds;
+    if (_analyzeProgress > 0 && elapsedMs > 0) {
+      final msPerNode = elapsedMs / _analyzeProgress;
+      final remainingNodes =
+          (_analyzeTotal - _analyzeProgress).clamp(0, _analyzeTotal);
+      final remainingMs = (msPerNode * remainingNodes).round();
+      final duration = Duration(milliseconds: remainingMs);
+      final hours = duration.inHours;
+      final minutes = duration.inMinutes % 60;
+      final seconds = duration.inSeconds % 60;
+
+      String eta;
+      if (hours > 0) {
+        eta = "~${hours}h ${minutes}m remaining";
+      } else if (minutes > 0) {
+        eta = "~${minutes}m ${seconds}s remaining";
+      } else {
+        eta = "~${seconds}s remaining";
+      }
+      _analyzeTimeText = "ETA: $eta";
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _analyzePgnTree(PgnNode node) async {
     if (!_isExploring || !mounted) return;
+
+    _recordAnalyzeProgress();
 
     // Explore/resolve the current position
     await _exploreRecursive(isRoot: true);

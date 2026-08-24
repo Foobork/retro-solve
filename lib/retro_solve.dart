@@ -161,6 +161,10 @@ class _HomePageState extends State<HomePage> {
                     _engineWidget(),
                   ],
                 ),
+                if (_isAnalyzingGame) ...[
+                  const SizedBox(height: 12),
+                  _analyzeGameProgress(),
+                ],
                 if (Config.showBatchEval && _isBatchEvaluating) ...[
                   const SizedBox(height: 12),
                   _batchEvalProgress(),
@@ -334,34 +338,50 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _batchEvalProgress() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (_isBatchEvaluating)
-          Padding(
-            padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
-            child: Text(
-              "Evaluating $_evalProgress / $_evalTotal",
-              style: const TextStyle(
-                  fontSize: 14,
-                  color: Colors.blue,
-                  fontWeight: FontWeight.bold),
+    final percent = _evalTotal > 0 ? (_evalProgress / _evalTotal).clamp(0.0, 1.0) : 0.0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            "Evaluating $_evalProgress / $_evalTotal (${(percent * 100).toStringAsFixed(1)}%)",
+            style: const TextStyle(
+              fontSize: 13,
+              color: Colors.blue,
+              fontWeight: FontWeight.bold,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: percent,
+              minHeight: 6,
+              backgroundColor: Colors.blue.shade100,
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
             ),
           ),
-        if (_isBatchEvaluating)
-          LinearProgressIndicator(
-            value: _evalTotal > 0 ? _evalProgress / _evalTotal : 0,
-            backgroundColor: Colors.grey[300],
-          ),
-        if (_isBatchEvaluating && _batchTimeText.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8.0),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 16,
             child: Text(
-              _batchTimeText,
-              style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+              _batchTimeText.isNotEmpty ? _batchTimeText : "Calculating ETA...",
+              style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade700),
+              textAlign: TextAlign.center,
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -369,48 +389,64 @@ class _HomePageState extends State<HomePage> {
     final percent = _analyzeTotal > 0
         ? (_analyzeProgress / _analyzeTotal).clamp(0.0, 1.0)
         : 0.0;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (_analyzeChapterText.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: Text(
-              _analyzeChapterText,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Colors.blueGrey,
-                fontWeight: FontWeight.w600,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_analyzeChapterText.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2.0),
+              child: Text(
+                _analyzeChapterText,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.blue.shade900,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
-          ),
-        Padding(
-          padding: const EdgeInsets.only(top: 6.0, bottom: 6.0),
-          child: Text(
-            "Analyzing position $_analyzeProgress / $_analyzeTotal (${(percent * 100).toStringAsFixed(1)}%)",
+          Text(
+            "Position $_analyzeProgress / $_analyzeTotal (${(percent * 100).toStringAsFixed(1)}%)",
             style: const TextStyle(
-              fontSize: 14,
+              fontSize: 13,
               color: Colors.blue,
               fontWeight: FontWeight.bold,
             ),
+            textAlign: TextAlign.center,
           ),
-        ),
-        LinearProgressIndicator(
-          value: percent,
-          backgroundColor: Colors.grey[300],
-          valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
-        ),
-        if (_analyzeTimeText.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 6.0),
-            child: Text(
-              _analyzeTimeText,
-              style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: percent,
+              minHeight: 6,
+              backgroundColor: Colors.blue.shade100,
+              valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
             ),
           ),
-      ],
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 16,
+            child: Text(
+              _analyzeTimeText.isNotEmpty ? _analyzeTimeText : "Calculating ETA...",
+              style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade700),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -419,11 +455,15 @@ class _HomePageState extends State<HomePage> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _engineWidget(),
-          if (Config.showBatchEval && _isBatchEvaluating)
-            _batchEvalProgress(),
           if (_isAnalyzingGame)
             _analyzeGameProgress(),
+          if (Config.showBatchEval && _isBatchEvaluating)
+            _batchEvalProgress(),
+          Expanded(
+            child: SingleChildScrollView(
+              child: _engineWidget(),
+            ),
+          ),
         ],
       ),
     );

@@ -89,6 +89,14 @@ class DatabaseService {
         PRIMARY KEY (source, target)
       )
     ''');
+
+    // Enable WAL mode and busy timeout for safe multi-process concurrency
+    try {
+      await _db!.execute('PRAGMA journal_mode = WAL;');
+      await _db!.execute('PRAGMA busy_timeout = 10000;');
+    } catch (e) {
+      log("Warning setting WAL / busy_timeout: $e");
+    }
   }
 
   Future<void> upsertNode(String bfen, double? assigned, double? computed) async {

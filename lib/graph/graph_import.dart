@@ -78,7 +78,8 @@ Future<void> importGraph(String filename) async {
         graph.onEdgeAdded = oldOnEdgeAdded;
       }
 
-      print("importGraph done (from DB). Final vertices count: ${graph.v.length}");
+      print("importGraph done (from DB). Final vertices count: ${graph.v.length}. Solving graph...");
+      graph.solve();
       return;
     }
 
@@ -122,7 +123,8 @@ Future<void> importGraph(String filename) async {
         await DatabaseService.instance.upsertEdge(entry.key, link);
       }
     }
-    print("importGraph done (migrated from asset)");
+    print("importGraph done (migrated from asset). Solving graph...");
+    graph.solve();
   } catch (e) {
     print("Error in importGraph: $e");
   }

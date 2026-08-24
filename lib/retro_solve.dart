@@ -865,6 +865,32 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (!_engineAvailable) return;
+
+    // Reset UI to start position of first chapter before setting _isExploring
+    final firstGame = games.first;
+    if (firstGame.variant != null) {
+      final pgnVar = firstGame.variant!.toLowerCase();
+      DatasetVariant? targetVariant;
+      for (final v in DatasetVariant.values) {
+        if (v.name.toLowerCase() == pgnVar || v.label.toLowerCase() == pgnVar) {
+          targetVariant = v;
+          break;
+        }
+      }
+      if (targetVariant != null && targetVariant != _variant) {
+        await _setVariant(targetVariant);
+      }
+    }
+
+    if (firstGame.fen != null && firstGame.fen!.isNotEmpty) {
+      _controller.load(firstGame.fen!);
+    } else {
+      _controller.setGame(_createGameForVariant(_variant));
+      _controller.resetBoard();
+    }
+    _fenController.text = _controller.game.fen;
+    _update();
+
     setState(() => _isExploring = true);
     WakelockPlus.enable();
     print('[analyze] Started analyzing study / game(s) with ${games.length} chapter(s)');
@@ -887,7 +913,7 @@ class _HomePageState extends State<HomePage> {
             }
           }
           if (targetVariant != null && targetVariant != _variant) {
-            _setVariant(targetVariant);
+            await _setVariant(targetVariant);
           }
         }
 
@@ -895,14 +921,20 @@ class _HomePageState extends State<HomePage> {
         if (game.fen != null && game.fen!.isNotEmpty) {
           _controller.load(game.fen!);
         } else {
-          _reset();
+          _controller.setGame(_createGameForVariant(_variant));
+          _controller.resetBoard();
         }
+        _fenController.text = _controller.game.fen;
+        _update();
 
         await _waitForEngineStabilization();
         await _analyzePgnTree(game.root);
       }
     } finally {
-      if (mounted) setState(() => _isExploring = false);
+      if (mounted) {
+        setState(() => _isExploring = false);
+        _update();
+      }
       WakelockPlus.disable();
       print('[analyze] Game/study analysis ended/stopped.');
     }

@@ -888,7 +888,6 @@ class _HomePageState extends State<HomePage> {
       _controller.setGame(_createGameForVariant(_variant));
       _controller.resetBoard();
     }
-    _fenController.text = _controller.game.fen;
     _update();
 
     setState(() => _isExploring = true);
@@ -924,7 +923,6 @@ class _HomePageState extends State<HomePage> {
           _controller.setGame(_createGameForVariant(_variant));
           _controller.resetBoard();
         }
-        _fenController.text = _controller.game.fen;
         _update();
 
         await _waitForEngineStabilization();

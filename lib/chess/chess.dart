@@ -209,7 +209,7 @@ class Chess {
   /// Deep copy of the current Chess instance
   Chess copy() {
     return Chess()
-      ..board = List<Piece?>.from(board)
+      ..board = cloneBoard(board)
       ..kings = ColorMap<int>.clone(kings)
       ..turn = turn
       ..castling = ColorMap<int>.clone(castling)
@@ -219,6 +219,10 @@ class Chess {
       ..history = history.map(GameState.clone).toList()
       ..header = Map.from(header)
       ..checksCount = ColorMap<int>.clone(checksCount);
+  }
+
+  static List<Piece?> cloneBoard(List<Piece?> board) {
+    return board.map((p) => p?.clone()).toList();
   }
 
   /// Reset all of the instance variables
@@ -431,6 +435,11 @@ class Chess {
       }
     }
 
+    /* 9th criterion: no pawns on the 1st or 8th rank? */
+    if (rows[0].contains('p') || rows[0].contains('P') || rows[7].contains('p') || rows[7].contains('P')) {
+      return {'valid': false, 'error_number': 11, 'error': 'Pawns cannot be on the first or eighth rank.'};
+    }
+
     /* everything's okay! */
     return {'valid': true, 'error_number': 0, 'error': errors[0]};
   }
@@ -587,7 +596,9 @@ class Chess {
     void addMove(List<Piece?> board, List<Move> moves, from, to, flags) {
       /* if pawn promotion */
       if (board[from]!.type == pawn && (rank(to) == rank8 || rank(to) == rank1)) {
-        const pieces = [queen, rook, bishop, knight];
+        final pieces = isAntichess
+            ? const [queen, rook, bishop, knight, king]
+            : const [queen, rook, bishop, knight];
         for (var i = 0, len = pieces.length; i < len; i++) {
           moves.add(buildMove(board, from, to, flags, pieces[i]));
         }
@@ -1722,6 +1733,8 @@ class Piece {
   PieceType type;
   final PlayerColor color;
   Piece(this.type, this.color);
+
+  Piece clone() => Piece(type, color);
 
   bool eq(Piece? piece) {
     return piece != null && type == piece.type && color == piece.color;

@@ -58,7 +58,7 @@ class ThreeCheckChess extends Chess {
   @override
   ThreeCheckChess copy() {
     return ThreeCheckChess()
-      ..board = List<Piece?>.from(board)
+      ..board = Chess.cloneBoard(board)
       ..kings = ColorMap<int>.clone(kings)
       ..turn = turn
       ..castling = ColorMap<int>.clone(castling)

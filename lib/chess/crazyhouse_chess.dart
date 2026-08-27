@@ -215,7 +215,7 @@ class CrazyhouseChess extends Chess {
   @override
   CrazyhouseChess copy() {
     return CrazyhouseChess()
-      ..board = List<Piece?>.from(board)
+      ..board = Chess.cloneBoard(board)
       ..kings = ColorMap<int>.clone(kings)
       ..turn = turn
       ..castling = ColorMap<int>.clone(castling)

@@ -28,7 +28,7 @@ class AtomicChess extends Chess {
   @override
   void makeMove(Move move) {
     // 1. Save current board state to history
-    boardHistory.add(List<Piece?>.from(board));
+    boardHistory.add(Chess.cloneBoard(board));
 
     // 2. Call super.makeMove
     super.makeMove(move);
@@ -177,7 +177,7 @@ class AtomicChess extends Chess {
   @override
   AtomicChess copy() {
     return AtomicChess()
-      ..board = List<Piece?>.from(board)
+      ..board = Chess.cloneBoard(board)
       ..kings = ColorMap<int>.clone(kings)
       ..turn = turn
       ..castling = ColorMap<int>.clone(castling)
@@ -186,6 +186,6 @@ class AtomicChess extends Chess {
       ..moveNumber = moveNumber
       ..history = history.map(GameState.clone).toList()
       ..header = Map.from(header)
-      ..boardHistory = List<List<Piece?>>.from(boardHistory.map((b) => List<Piece?>.from(b)));
+      ..boardHistory = boardHistory.map(Chess.cloneBoard).toList();
   }
 }

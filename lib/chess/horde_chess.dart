@@ -160,7 +160,7 @@ class HordeChess extends Chess {
   @override
   HordeChess copy() {
     return HordeChess()
-      ..board = List<Piece?>.from(board)
+      ..board = Chess.cloneBoard(board)
       ..kings = ColorMap<int>.clone(kings)
       ..turn = turn
       ..castling = ColorMap<int>.clone(castling)

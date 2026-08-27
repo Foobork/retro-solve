@@ -236,6 +236,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   final _controller = ChessBoardController();
+  @visibleForTesting
+  ChessBoardController get controller => _controller;
   final _textStyle = const TextStyle(fontSize: 20);
 
   late DatasetVariant _variant;
@@ -1324,7 +1326,9 @@ class _HomePageState extends State<HomePage> {
     graph.assign(bfen, _parseScore(newEval));
     graph.v[bfen]?.inDatabase = true;
     graph.solveBfen(bfen);
-    // _export(); // Incremental via onNodeUpdated
+    if (mounted) {
+      setState(_update);
+    }
   }
 
   _textField(label, TextEditingController controller, onSubmitted) {

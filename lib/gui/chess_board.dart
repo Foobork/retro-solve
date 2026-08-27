@@ -103,6 +103,7 @@ class _ChessBoardState extends State<ChessBoard> {
                   var pieceOnSquare = game.get(squareName);
 
                   var piece = BoardPiece(
+                    key: ValueKey('piece-$squareName-${pieceOnSquare?.color}-${pieceOnSquare?.type}'),
                     squareName: squareName,
                     game: game,
                   );
@@ -110,6 +111,7 @@ class _ChessBoardState extends State<ChessBoard> {
                   var draggable = game.get(squareName) != null
                       ? (widget.enableUserMoves
                           ? Draggable<PieceMoveData>(
+                              key: ValueKey('drag-$squareName-${pieceOnSquare?.color}-${pieceOnSquare?.type}'),
                               child: piece,
                               feedback: Material(
                                 color: Colors.transparent,
@@ -125,24 +127,28 @@ class _ChessBoardState extends State<ChessBoard> {
                           : piece)
                       : Container();
 
-                  var dragTarget = DragTarget<PieceMoveData>(builder: (context, list, _) {
-                    return draggable;
-                  }, onWillAcceptWithDetails: (pieceMoveData) {
+                  var dragTarget = DragTarget<PieceMoveData>(
+                    key: ValueKey('target-$squareName'),
+                    builder: (context, list, _) {
+                      return draggable;
+                    }, onWillAcceptWithDetails: (pieceMoveData) {
                     return widget.enableUserMoves ? true : false;
                   }, onAcceptWithDetails: (DragTargetDetails<PieceMoveData> dragTargetDetails) async {
                     PieceMoveData pieceMoveData = dragTargetDetails.data;
                     // A way to check if move occurred.
                     PlayerColor moveColor = game.turn;
 
-                    if (pieceMoveData.pieceType == "P" &&
+                    final isPawnPromotion = pieceMoveData.pieceType.toUpperCase() == "P" &&
                         !pieceMoveData.squareName.startsWith('@') &&
-                        ((pieceMoveData.squareName[1] == "7" &&
-                                squareName[1] == "8" &&
-                                pieceMoveData.pieceColor == white) ||
-                            (pieceMoveData.squareName[1] == "2" &&
-                                squareName[1] == "1" &&
-                                pieceMoveData.pieceColor == black))) {
-                      var val = await _promotionDialog(context);
+                        ((squareName[1] == "8" && pieceMoveData.pieceColor == white) ||
+                            (squareName[1] == "1" && pieceMoveData.pieceColor == black));
+
+                    if (isPawnPromotion) {
+                      var val = await _promotionDialog(
+                        context,
+                        color: pieceMoveData.pieceColor,
+                        isAntichess: game.isAntichess,
+                      );
 
                       if (val != null) {
                         widget.controller.makeMoveWithPromotion(
@@ -330,7 +336,8 @@ class _ChessBoardState extends State<ChessBoard> {
   }
 
   /// Show dialog when pawn reaches last square
-  Future<String?> _promotionDialog(BuildContext context) async {
+  Future<String?> _promotionDialog(BuildContext context, {PlayerColor color = white, bool isAntichess = false}) async {
+    final isWhite = color == white;
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -341,36 +348,41 @@ class _ChessBoardState extends State<ChessBoard> {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: <Widget>[
               InkWell(
-                child: WhiteQueen(),
+                child: isWhite ? WhiteQueen() : BlackQueen(),
                 onTap: () {
                   Navigator.of(context).pop("q");
                 },
               ),
               InkWell(
-                child: WhiteRook(),
+                child: isWhite ? WhiteRook() : BlackRook(),
                 onTap: () {
                   Navigator.of(context).pop("r");
                 },
               ),
               InkWell(
-                child: WhiteBishop(),
+                child: isWhite ? WhiteBishop() : BlackBishop(),
                 onTap: () {
                   Navigator.of(context).pop("b");
                 },
               ),
               InkWell(
-                child: WhiteKnight(),
+                child: isWhite ? WhiteKnight() : BlackKnight(),
                 onTap: () {
                   Navigator.of(context).pop("n");
                 },
               ),
+              if (isAntichess)
+                InkWell(
+                  child: isWhite ? WhiteKing() : BlackKing(),
+                  onTap: () {
+                    Navigator.of(context).pop("k");
+                  },
+                ),
             ],
           ),
         );
       },
-    ).then((value) {
-      return value;
-    });
+    );
   }
 }
 

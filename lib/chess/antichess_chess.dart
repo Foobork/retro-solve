@@ -30,25 +30,8 @@ class AntichessChess extends Chess {
     }
     final rawMoves = super.generateMoves(superOptions);
     
-    // Antichess: support promotion to King!
-    final moves = <Move>[];
-    for (final m in rawMoves) {
-      moves.add(m);
-      if ((m.flags & Chess.bitsPromotion) != 0) {
-        moves.add(Move(
-          m.color,
-          m.from,
-          m.to,
-          m.flags,
-          m.piece,
-          m.captured,
-          king, // promotion piece
-        ));
-      }
-    }
-    
     // Filter out castling moves just in case
-    final nonCastleMoves = moves.where((m) => (m.flags & (Chess.bitsKsideCastle | Chess.bitsQsideCastle)) == 0).toList();
+    final nonCastleMoves = rawMoves.where((m) => (m.flags & (Chess.bitsKsideCastle | Chess.bitsQsideCastle)) == 0).toList();
 
     // Antichess rule: Captures are mandatory!
     final captureMoves = nonCastleMoves.where((m) => (m.flags & (Chess.bitsCapture | Chess.bitsEpCapture)) != 0).toList();
@@ -90,7 +73,7 @@ class AntichessChess extends Chess {
   @override
   AntichessChess copy() {
     return AntichessChess()
-      ..board = List<Piece?>.from(board)
+      ..board = Chess.cloneBoard(board)
       ..kings = ColorMap<int>.clone(kings)
       ..turn = turn
       ..castling = ColorMap<int>.clone(castling)

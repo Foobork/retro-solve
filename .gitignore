@@ -1,5 +1,7 @@
 # Data files
 *.db
+*.db-shm
+*.db-wal
 
 # 3rd party
 *.exe
@@ -53,3 +55,4 @@ app.*.map.json
 /linux/
 /macos/
 /windows/
+

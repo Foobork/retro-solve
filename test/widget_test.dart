@@ -42,4 +42,33 @@ void main() {
     expect(state.controller.game.get('g1')?.type.name, equals('b'));
     expect(state.controller.game.get('g1')?.color.name, equals('black'));
   });
+
+  testWidgets('Engine mate ply conversions are correct across all winning and losing perspectives', (WidgetTester tester) async {
+    final engineService = FairyStockfishService(initialVariant: DatasetVariant.standard);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+
+    // 1. White to move, White wins in 2 moves (mate +2 in UCI): 2*2 - 1 = 3 plies -> +997.0
+    const wWin2 = EngineEvaluation(mate: 2);
+    expect(state.engineEvalToGraphScore(wWin2.asWhitePerspective(whiteToMove: true), true), equals(997.0));
+
+    // 2. White to move, White loses in 2 moves (mate -2 in UCI): 2*2 = 4 plies -> -996.0
+    const wLose2 = EngineEvaluation(mate: -2);
+    expect(state.engineEvalToGraphScore(wLose2.asWhitePerspective(whiteToMove: true), true), equals(-996.0));
+
+    // 3. Black to move, Black wins in 2 moves (mate +2 in UCI): 2*2 - 1 = 3 plies -> -997.0
+    const bWin2 = EngineEvaluation(mate: 2);
+    expect(state.engineEvalToGraphScore(bWin2.asWhitePerspective(whiteToMove: false), false), equals(-997.0));
+
+    // 4. Black to move, Black loses in 2 moves (mate -2 in UCI): 2*2 = 4 plies -> +996.0
+    const bLose2 = EngineEvaluation(mate: -2);
+    expect(state.engineEvalToGraphScore(bLose2.asWhitePerspective(whiteToMove: false), false), equals(996.0));
+  });
 }

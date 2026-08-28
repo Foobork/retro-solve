@@ -1345,23 +1345,30 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Converts an [EngineEvaluation] (in White's perspective) to a graph database score (+1000.0 to -1000.0).
+  ///
+  /// In UCI protocol (evaluated from the perspective of the side to move):
+  /// - Forced Win in M moves (`score mate +M` where M > 0):
+  ///   The side to move plays M times and opponent plays M-1 times.
+  ///   Plies to mate = 2 * M - 1 (e.g. mate +1 -> 1 ply, mate +2 -> 3 plies, mate +12 -> 23 plies).
+  /// - Forced Loss in M moves (`score mate -M` where M > 0):
+  ///   The side to move plays M times and opponent plays M times to deliver mate/win.
+  ///   Plies to mate = 2 * M (e.g. mate -1 -> 2 plies, mate -2 -> 4 plies, mate -12 -> 24 plies).
+  ///
+  /// Since [eval] has already been converted to White's perspective via [asWhitePerspective]:
+  /// - When [whiteToMove] is true:
+  ///   - m > 0: White wins -> side to move is winning -> plies = 2*|m| - 1
+  ///   - m < 0: White loses -> side to move is losing  -> plies = 2*|m|
+  /// - When [whiteToMove] is false:
+  ///   - m < 0: Black wins -> side to move is winning -> plies = 2*|m| - 1
+  ///   - m > 0: Black loses -> side to move is losing  -> plies = 2*|m|
   double? _engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove) {
     if (eval.mate != null) {
       final m = eval.mate!;
       if (m == 0) return null;
       final absM = m.abs();
-      int pliesToMate;
-      if (whiteToMove) {
-        // In White-to-move position (after asWhitePerspective):
-        // m > 0: White is to move and checkmates in m moves -> 2*m - 1 plies (1, 3, 5, ...)
-        // m < 0: White is to move and gets checkmated in |m| moves -> 2*|m| plies (2, 4, 6, ...)
-        pliesToMate = m > 0 ? (2 * absM - 1) : (2 * absM);
-      } else {
-        // In Black-to-move position (after asWhitePerspective):
-        // m < 0: Black is to move and checkmates in |m| moves -> 2*|m| - 1 plies (1, 3, 5, ...)
-        // m > 0: Black is to move and gets checkmated in m moves -> 2*m plies (2, 4, 6, ...)
-        pliesToMate = m < 0 ? (2 * absM - 1) : (2 * absM);
-      }
+      final sideToMoveIsWinning = whiteToMove ? (m > 0) : (m < 0);
+      final pliesToMate = sideToMoveIsWinning ? (2 * absM - 1) : (2 * absM);
       return m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
     } else if (eval.centipawns != null) {
       return eval.centipawns! / 100.0;
@@ -1400,6 +1407,14 @@ class _HomePageState extends State<HomePage> {
     }
     return wrapInParentheses ? '($formatted)' : formatted;
   }
+
+  @visibleForTesting
+  double? engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove) =>
+      _engineEvalToGraphScore(eval, whiteToMove);
+
+  @visibleForTesting
+  String formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) =>
+      _formatScore(score, wrapInParentheses: wrapInParentheses, isMoveScore: isMoveScore);
 
   double? _parseScore(String text) {
     text = text.trim();

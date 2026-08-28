@@ -1,6 +1,18 @@
 import 'dart:async';
 import '../dataset_variant.dart';
 
+/// Represents an engine evaluation produced by UCI engines (such as Fairy-Stockfish).
+///
+/// ### UCI Mate Score Convention
+/// In UCI protocol, evaluations are always reported from the perspective of the **side to move**:
+/// - **Forced Win in M moves (`score mate +M` where M > 0):**
+///   The side to move has a forced win in M moves ($2M - 1$ plies).
+///   Example: `mate +1` = 1 ply, `mate +2` = 3 plies, `mate +12` = 23 plies.
+/// - **Forced Loss in M moves (`score mate -M` where M > 0):**
+///   The side to move has a forced loss in M moves ($2M$ plies).
+///   Example: `mate -1` = 2 plies, `mate -2` = 4 plies, `mate -12` = 24 plies.
+/// - **Terminal position (`score mate 0`):**
+///   Game is already over in the current position.
 class EngineEvaluation {
   final int? centipawns;
   final int? mate;
@@ -18,8 +30,11 @@ class EngineEvaluation {
     this.fen,
   });
 
-  /// UCI scores are from the side to move. Flip sign when Black is to move so
-  /// values represent White's perspective (positive favors White).
+  /// Converts evaluation to White's perspective (positive values favor White, negative favor Black).
+  ///
+  /// When Black is to move, UCI scores are from Black's perspective, so we negate them:
+  /// - Black winning (`mate +M`) becomes `mate -M` (favoring Black).
+  /// - Black losing (`mate -M`) becomes `mate +M` (favoring White).
   EngineEvaluation asWhitePerspective({required bool whiteToMove}) {
     if (whiteToMove) return this;
     return EngineEvaluation(

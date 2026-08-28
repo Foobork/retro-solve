@@ -47,6 +47,11 @@ void main() {
   test('asWhitePerspective negates mate when black to move', () {
     const e = EngineEvaluation(mate: 3);
     expect(e.asWhitePerspective(whiteToMove: false).mate, equals(-3));
+
+    // When Black is to move and Black is losing (mate -2 in UCI):
+    const losingBlackEval = EngineEvaluation(mate: -2);
+    // After asWhitePerspective, it becomes +2 (favoring White)
+    expect(losingBlackEval.asWhitePerspective(whiteToMove: false).mate, equals(2));
   });
 
   test('toString omits cp prefix for centipawns and includes lines', () {

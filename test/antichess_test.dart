@@ -60,7 +60,8 @@ void main() {
     test('Validate FEN rejects pawns on 1st or 8th rank', () {
       expect(Chess.validateFen('5N2/Q3n3/8/8/8/N7/P1P1P3/R3K1p1 w - - 0 1')['valid'], isFalse);
       expect(Chess.validateFen('P7/8/8/8/8/8/8/8 w - - 0 1')['valid'], isFalse);
-      expect(Chess.validateFen('8/8/8/8/8/8/8/P7 w - - 0 1')['valid'], isFalse);
+      expect(Chess.validateFen('p7/8/8/8/8/8/8/8 w - - 0 1')['valid'], isFalse);
+      expect(Chess.validateFen('8/8/8/8/8/8/8/p7 w - - 0 1')['valid'], isFalse);
     });
 
     test('Antichess generates exactly 5 promotion piece options (Q, R, B, N, K) without duplicates', () {
@@ -118,7 +119,6 @@ void main() {
 
       final moves = game.generateMoves();
       final sans = moves.map(game.moveToSan).toList();
-      print('Moves from 5Nn1 position: $sans');
 
       // Total 10 moves: a6, a5, Ne7, Nf6, Nh6, g1=Q, g1=R, g1=B, g1=N, g1=K
       expect(sans.length, equals(10));

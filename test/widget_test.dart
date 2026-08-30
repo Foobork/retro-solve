@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:retro_solve/chess/chess.dart';
 import 'package:retro_solve/dataset_variant.dart';
 import 'package:retro_solve/engine/fairy_stockfish_service.dart';
 import 'package:retro_solve/retro_solve.dart';
@@ -40,7 +41,7 @@ void main() {
 
     // Verify promoted piece is Bishop
     expect(state.controller.game.get('g1')?.type.name, equals('b'));
-    expect(state.controller.game.get('g1')?.color.name, equals('black'));
+    expect(state.controller.game.get('g1')?.color, equals(PlayerColor.black));
   });
 
   testWidgets('Engine mate ply conversions are correct across all winning and losing perspectives', (WidgetTester tester) async {

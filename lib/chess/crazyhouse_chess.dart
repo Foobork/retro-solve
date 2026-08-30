@@ -5,7 +5,7 @@ class CrazyhouseChess extends Chess {
   late List<bool> promoted;
 
   CrazyhouseChess() : super() {
-    clear();
+    reset();
   }
 
   @override

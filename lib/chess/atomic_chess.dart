@@ -4,7 +4,7 @@ class AtomicChess extends Chess {
   List<List<Piece?>> boardHistory = [];
 
   AtomicChess() : super() {
-    clear();
+    reset();
   }
 
   @override

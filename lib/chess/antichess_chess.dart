@@ -2,7 +2,7 @@ part of chess;
 
 class AntichessChess extends Chess {
   AntichessChess() : super() {
-    clear();
+    reset();
   }
 
   @override

@@ -196,9 +196,9 @@ class Chess {
     return true;
   }
 
-  /// By default start with the standard chess starting position
+  /// By default start with the chess starting position
   Chess() {
-    load(defaultPosition);
+    reset();
   }
 
   /// Start with a position from a FEN
@@ -436,7 +436,9 @@ class Chess {
     }
 
     /* 9th criterion: no pawns on the 1st or 8th rank? */
-    if (rows[0].contains('p') || rows[0].contains('P') || rows[7].contains('p') || rows[7].contains('P')) {
+    // Note: In Horde chess, White pawns start on the 1st rank (row index 7).
+    // Pawns on the 8th rank (row 0) or Black pawns on the 1st rank (row 7) are invalid.
+    if (rows[0].contains('p') || rows[0].contains('P') || rows[7].contains('p')) {
       return {'valid': false, 'error_number': 11, 'error': 'Pawns cannot be on the first or eighth rank.'};
     }
 

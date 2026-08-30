@@ -3,6 +3,17 @@ import 'package:retro_solve/chess/chess.dart';
 
 void main() {
   group('Horde Chess Variant Tests', () {
+    test('Horde starts with default position and valid moves on construction', () {
+      final game = HordeChess();
+      expect(game.isHorde, isTrue);
+      expect(game.fen, equals('rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1'));
+      final moves = game.generateMoves();
+      expect(moves, isNotEmpty);
+      // White has pawns on ranks 1-4. Rank 4 pawns (b4, c4, f4, g4) can single push.
+      // Rank 1 pawns (b1, c1, f1, g1) can single/double push, etc.
+      expect(moves.length, greaterThan(0));
+    });
+
     test('FEN loading and getters for Horde', () {
       final game = HordeChess();
       const fen = 'rnbqkbnr/pppppppp/8/1PP2PP1/PPPPPPPP/PPPPPPPP/PPPPPPPP/PPPPPPPP w kq - 0 1';

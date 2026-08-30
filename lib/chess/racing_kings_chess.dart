@@ -2,7 +2,7 @@ part of chess;
 
 class RacingKingsChess extends Chess {
   RacingKingsChess() : super() {
-    clear();
+    reset();
   }
 
   @override

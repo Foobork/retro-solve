@@ -62,8 +62,12 @@ void main() {
     resetGraph();
 
     const startBfen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -';
+    const childBfen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -';
     final vertex = graph.addVertex(startBfen);
     vertex.inDatabase = true;
+    graph.addLink(startBfen, childBfen);
+    graph.assign(childBfen, 991.0);
+    graph.solveBfen(startBfen);
 
     await tester.pumpWidget(
       RetroSolve(
@@ -72,9 +76,6 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    
-    // Set a computed mate in 5 moves (+990.0)
-    vertex.computed = 990.0;
     
     // Trigger board notification to run _update()
     final ChessBoard board = tester.widget(find.byType(ChessBoard));

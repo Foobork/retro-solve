@@ -2,7 +2,7 @@ part of chess;
 
 class HordeChess extends Chess {
   HordeChess() : super() {
-    clear();
+    reset();
   }
 
   @override

@@ -190,10 +190,7 @@ class _HomePageState extends State<HomePage> {
                     children: <Widget>[
                       Expanded(
                         child: Center(
-                          child: AspectRatio(
-                            aspectRatio: 1.0,
-                            child: chessboard,
-                          ),
+                          child: chessboard,
                         ),
                       ),
                       const SizedBox(height: 6),

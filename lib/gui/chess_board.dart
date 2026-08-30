@@ -196,118 +196,171 @@ class _ChessBoardState extends State<ChessBoard> {
           ],
         );
 
-        if (game is CrazyhouseChess) {
-          final topColor = widget.boardOrientation == white ? black : white;
-          final bottomColor = widget.boardOrientation == white ? white : black;
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final hasBoundedWidth = constraints.hasBoundedWidth && !constraints.maxWidth.isInfinite;
+            final hasBoundedHeight = constraints.hasBoundedHeight && !constraints.maxHeight.isInfinite;
 
-          return Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildPocket(game, topColor),
-              const SizedBox(height: 4.0),
-              boardWidget,
-              const SizedBox(height: 4.0),
-              _buildPocket(game, bottomColor),
-            ],
-          );
-        } else {
-          return SizedBox(
-            width: widget.size,
-            height: widget.size,
-            child: boardWidget,
-          );
-        }
+            if (game is CrazyhouseChess) {
+              final topColor = widget.boardOrientation == white ? black : white;
+              final bottomColor = widget.boardOrientation == white ? white : black;
+
+              double boardSize;
+              double pocketHeight = 44.0;
+              const verticalSpacing = 8.0; // Two 4.0 spacers
+
+              if (hasBoundedWidth && hasBoundedHeight) {
+                final maxBoardHeight = max(0.0, constraints.maxHeight - (pocketHeight * 2) - verticalSpacing);
+                boardSize = min(constraints.maxWidth, maxBoardHeight);
+              } else if (hasBoundedWidth) {
+                boardSize = widget.size ?? constraints.maxWidth;
+              } else if (hasBoundedHeight) {
+                final maxBoardHeight = max(0.0, constraints.maxHeight - (pocketHeight * 2) - verticalSpacing);
+                boardSize = widget.size ?? maxBoardHeight;
+              } else {
+                boardSize = widget.size ?? 400.0;
+              }
+
+              pocketHeight = (boardSize / 8).clamp(24.0, 44.0);
+
+              return Center(
+                child: SizedBox(
+                  width: boardSize,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildPocket(game, topColor, pocketHeight),
+                      const SizedBox(height: 4.0),
+                      SizedBox(
+                        width: boardSize,
+                        height: boardSize,
+                        child: boardWidget,
+                      ),
+                      const SizedBox(height: 4.0),
+                      _buildPocket(game, bottomColor, pocketHeight),
+                    ],
+                  ),
+                ),
+              );
+            } else {
+              double boardSize;
+              if (hasBoundedWidth && hasBoundedHeight) {
+                boardSize = min(constraints.maxWidth, constraints.maxHeight);
+              } else if (hasBoundedWidth) {
+                boardSize = widget.size ?? constraints.maxWidth;
+              } else if (hasBoundedHeight) {
+                boardSize = widget.size ?? constraints.maxHeight;
+              } else {
+                boardSize = widget.size ?? 400.0;
+              }
+
+              return Center(
+                child: SizedBox(
+                  width: boardSize,
+                  height: boardSize,
+                  child: boardWidget,
+                ),
+              );
+            }
+          },
+        );
       },
     );
   }
 
-  Widget _buildPocket(CrazyhouseChess game, PlayerColor color) {
+  Widget _buildPocket(CrazyhouseChess game, PlayerColor color, double height) {
     final pocket = game.pockets[color]!;
     final types = [PieceType.queen, PieceType.rook, PieceType.bishop, PieceType.knight, PieceType.pawn];
+    final pieceSize = (height - 8.0).clamp(16.0, 36.0);
 
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      height: height,
       color: Colors.grey.shade100,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: types.map((type) {
-          final count = pocket[type] ?? 0;
-          final hasPieces = count > 0;
-          final letter = type.name.toUpperCase();
-          final dropCode = '$letter@';
+      child: Center(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: types.map((type) {
+              final count = pocket[type] ?? 0;
+              final hasPieces = count > 0;
+              final letter = type.name.toUpperCase();
+              final dropCode = '$letter@';
 
-          Widget pieceWidget = SizedBox(
-            width: 40,
-            height: 40,
-            child: Opacity(
-              opacity: hasPieces ? 1.0 : 0.25,
-              child: _getPieceVector(type, color),
-            ),
-          );
+              Widget pieceWidget = SizedBox(
+                width: pieceSize,
+                height: pieceSize,
+                child: Opacity(
+                  opacity: hasPieces ? 1.0 : 0.25,
+                  child: _getPieceVector(type, color),
+                ),
+              );
 
-          Widget pieceWithBadge = Stack(
-            clipBehavior: Clip.none,
-            children: [
-              pieceWidget,
-              if (hasPieces)
-                Positioned(
-                  right: -4,
-                  bottom: -4,
-                  child: Container(
-                    padding: const EdgeInsets.all(2.0),
-                    decoration: const BoxDecoration(
-                      color: Colors.deepPurple,
-                      shape: BoxShape.circle,
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 16,
-                      minHeight: 16,
-                    ),
-                    child: Text(
-                      '$count',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
+              Widget pieceWithBadge = Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  pieceWidget,
+                  if (hasPieces)
+                    Positioned(
+                      right: -4,
+                      bottom: -4,
+                      child: Container(
+                        padding: const EdgeInsets.all(2.0),
+                        decoration: const BoxDecoration(
+                          color: Colors.deepPurple,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          '$count',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
-                      textAlign: TextAlign.center,
                     ),
-                  ),
-                ),
-            ],
-          );
+                ],
+              );
 
-          if (hasPieces && widget.enableUserMoves) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Draggable<PieceMoveData>(
-                feedback: Material(
-                  color: Colors.transparent,
-                  child: SizedBox(
-                    width: 50,
-                    height: 50,
-                    child: _getPieceVector(type, color),
+              if (hasPieces && widget.enableUserMoves) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6.0),
+                  child: Draggable<PieceMoveData>(
+                    feedback: Material(
+                      color: Colors.transparent,
+                      child: SizedBox(
+                        width: 50,
+                        height: 50,
+                        child: _getPieceVector(type, color),
+                      ),
+                    ),
+                    childWhenDragging: Opacity(
+                      opacity: 0.3,
+                      child: pieceWithBadge,
+                    ),
+                    data: PieceMoveData(
+                      squareName: dropCode,
+                      pieceType: letter,
+                      pieceColor: color,
+                    ),
+                    child: pieceWithBadge,
                   ),
-                ),
-                childWhenDragging: Opacity(
-                  opacity: 0.3,
+                );
+              } else {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6.0),
                   child: pieceWithBadge,
-                ),
-                data: PieceMoveData(
-                  squareName: dropCode,
-                  pieceType: letter,
-                  pieceColor: color,
-                ),
-                child: pieceWithBadge,
-              ),
-            );
-          } else {
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: pieceWithBadge,
-            );
-          }
-        }).toList(),
+                );
+              }
+            }).toList(),
+          ),
+        ),
       ),
     );
   }

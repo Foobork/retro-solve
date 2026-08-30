@@ -1,7 +1,9 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:retro_solve/chess/chess.dart';
 import 'package:retro_solve/dataset_variant.dart';
 import 'package:retro_solve/engine/fairy_stockfish_service.dart';
+import 'package:retro_solve/gui/chess_board.dart';
 import 'package:retro_solve/retro_solve.dart';
 
 void main() {
@@ -71,5 +73,40 @@ void main() {
     // 4. Black to move, Black loses in 2 moves (mate -2 in UCI): 2*2 = 4 plies -> +996.0
     const bLose2 = EngineEvaluation(mate: -2);
     expect(state.engineEvalToGraphScore(bLose2.asWhitePerspective(whiteToMove: false), false), equals(996.0));
+  });
+
+  testWidgets('Crazyhouse layout renders board and pockets without overflow in wide and narrow layouts', (WidgetTester tester) async {
+    final engineService = FairyStockfishService(initialVariant: DatasetVariant.crazyhouse);
+    
+    // Test wide layout (1000x700)
+    tester.view.physicalSize = const Size(1000, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.crazyhouse,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Verify no exception / overflow
+    expect(tester.takeException(), isNull);
+    expect(find.byType(ChessBoard), findsOneWidget);
+
+    // Test narrow layout (400x800)
+    tester.view.physicalSize = const Size(400, 800);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.crazyhouse,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   });
 }

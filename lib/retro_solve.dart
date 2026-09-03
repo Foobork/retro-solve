@@ -521,11 +521,7 @@ class _HomePageState extends State<HomePage> {
                   graph.solveBfen(bfen);
                   // _export(); // Incremental via onNodeUpdated
 
-                  // Dynamically update the UI eval box
-                  _eval = score.toString();
-                  if (_evalController.text != _eval) {
-                    _evalController.text = _eval;
-                  }
+                  _update();
                 }
               }
             }
@@ -627,9 +623,17 @@ class _HomePageState extends State<HomePage> {
     if (vertex != null) {
       final assigned = vertex.assigned;
       final computed = vertex.computed;
-      _eval = assigned != null
-          ? _formatScore(assigned)
-          : (computed != null ? _formatScore(computed, wrapInParentheses: true) : "");
+      if (computed != null) {
+        final bool isSameAsAssigned =
+            assigned != null && (computed - assigned).abs() < 1e-6;
+        _eval = isSameAsAssigned
+            ? _formatScore(assigned)
+            : _formatScore(computed, wrapInParentheses: true);
+      } else if (assigned != null) {
+        _eval = _formatScore(assigned);
+      } else {
+        _eval = "";
+      }
     } else {
       _eval = "";
     }
@@ -897,7 +901,7 @@ class _HomePageState extends State<HomePage> {
 
       while (_isExploring && mounted) {
         final bfen = _controller.game.bfen;
-        if (graph.v[bfen]?.assigned != null) break;
+        if (graph.v[bfen]?.assigned != null || graph.v[bfen]?.computed != null) break;
         await Future.delayed(const Duration(milliseconds: 100));
       }
 

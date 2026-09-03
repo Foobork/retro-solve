@@ -94,6 +94,31 @@ void main() {
 
     // Verify that the assigned score is correctly parsed to 1000 - 6 = 994.0
     expect(vertex.assigned, equals(994.0));
+    // Since child variation is solved (+M5), the backsolved computed evaluation takes precedence in display
+    expect(find.text('(+M5)'), findsOneWidget);
+  });
+
+  testWidgets('displays assigned evaluation directly when no child moves are computed', (WidgetTester tester) async {
+    resetGraph();
+
+    const startBfen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -';
+    final vertex = graph.addVertex(startBfen);
+    vertex.inDatabase = true;
+
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: _NoopEngineService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Type +M3 on leaf position
+    await tester.enterText(find.byType(TextField), '+M3');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(vertex.assigned, equals(994.0));
     expect(find.text('+M3'), findsOneWidget);
   });
 }

@@ -25,9 +25,11 @@ class Graph {
   }
 
   void addLink(String a, String b) {
-    addVertex(a).links.add(b);
+    final bool isNew = addVertex(a).links.add(b);
     addVertex(b).backLinks.add(a);
-    onEdgeAdded?.call(a, b);
+    if (isNew) {
+      onEdgeAdded?.call(a, b);
+    }
   }
 
   void assign(String bfen, double? eval) {

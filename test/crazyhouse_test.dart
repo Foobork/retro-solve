@@ -124,5 +124,98 @@ void main() {
       game.undo();
       expect(game.pockets[PlayerColor.white]![PieceType.pawn], equals(0));
     });
+
+    test('No redundant disambiguator when piece in pocket can drop to target square', () {
+      final game = CrazyhouseChess();
+      // White has Bishop on f1, e2 is empty, and White has a Bishop in hand [B]
+      game.load('rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR[B] w KQkq - 0 1');
+
+      final moves = game.generateMoves();
+      final bishopMove = moves.firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) == 0 && m.fromAlgebraic == 'f1' && m.toAlgebraic == 'e2',
+      );
+      final dropMove = moves.firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) != 0 && m.piece == PieceType.bishop && m.toAlgebraic == 'e2',
+      );
+
+      // Bishop move to e2 must be Be2, NOT Bfe2
+      expect(game.moveToSan(bishopMove), equals('Be2'));
+      // Bishop drop to e2 must be B@e2
+      expect(game.moveToSan(dropMove), equals('B@e2'));
+
+      // Both can be played
+      final game1 = game.copy();
+      expect(game1.move('Be2'), isTrue);
+
+      final game2 = game.copy();
+      expect(game2.move('B@e2'), isTrue);
+
+      // Redundant disambiguator input 'Bfe2' should also resolve to the board move
+      final game3 = game.copy();
+      expect(game3.move('Bfe2'), isTrue);
+      expect(game3.get('e2')?.type, equals(PieceType.bishop));
+      // Pocket bishop still in hand
+      expect(game3.pockets[PlayerColor.white]![PieceType.bishop], equals(1));
+    });
+
+    test('Disambiguator is retained when multiple board pieces can move to target square', () {
+      final game = CrazyhouseChess();
+      // White has Bishop on f1 and Bishop on c4, e2 is empty, and White has a Bishop in hand [B]
+      game.load('rnbqkbnr/pppppppp/8/8/2B5/8/PPPP1PPP/RNBQKBNR[B] w KQkq - 0 1');
+
+      final moves = game.generateMoves();
+      final bishopF1 = moves.firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) == 0 && m.fromAlgebraic == 'f1' && m.toAlgebraic == 'e2',
+      );
+      final bishopC4 = moves.firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) == 0 && m.fromAlgebraic == 'c4' && m.toAlgebraic == 'e2',
+      );
+      final bishopDrop = moves.firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) != 0 && m.piece == PieceType.bishop && m.toAlgebraic == 'e2',
+      );
+
+      // Board bishops must disambiguate each other
+      expect(game.moveToSan(bishopF1), equals('Bfe2'));
+      expect(game.moveToSan(bishopC4), equals('Bce2'));
+      // Drop remains B@e2
+      expect(game.moveToSan(bishopDrop), equals('B@e2'));
+    });
+
+    test('No redundant disambiguator for Knights, Queens, and Rooks when piece is in pocket', () {
+      final game = CrazyhouseChess();
+
+      // Knight: Ng1 to f3 with N in hand
+      game.load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[N] w KQkq - 0 1');
+      final nMove = game.generateMoves().firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) == 0 && m.fromAlgebraic == 'g1' && m.toAlgebraic == 'f3',
+      );
+      final nDrop = game.generateMoves().firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) != 0 && m.piece == PieceType.knight && m.toAlgebraic == 'f3',
+      );
+      expect(game.moveToSan(nMove), equals('Nf3'));
+      expect(game.moveToSan(nDrop), equals('N@f3'));
+
+      // Queen: Qd1 to d4 with Q in hand
+      game.load('rnbqkbnr/pppppppp/8/8/8/8/PPP1PPPP/RNBQKBNR[Q] w KQkq - 0 1');
+      final qMove = game.generateMoves().firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) == 0 && m.fromAlgebraic == 'd1' && m.toAlgebraic == 'd4',
+      );
+      final qDrop = game.generateMoves().firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) != 0 && m.piece == PieceType.queen && m.toAlgebraic == 'd4',
+      );
+      expect(game.moveToSan(qMove), equals('Qd4'));
+      expect(game.moveToSan(qDrop), equals('Q@d4'));
+
+      // Rook: Ra1 to a4 with R in hand
+      game.load('rnbqkbnr/pppppppp/8/8/8/8/1PPPPPPP/RNBQKBNR[R] w KQkq - 0 1');
+      final rMove = game.generateMoves().firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) == 0 && m.fromAlgebraic == 'a1' && m.toAlgebraic == 'a4',
+      );
+      final rDrop = game.generateMoves().firstWhere(
+        (m) => (m.flags & Chess.bitsDrop) != 0 && m.piece == PieceType.rook && m.toAlgebraic == 'a4',
+      );
+      expect(game.moveToSan(rMove), equals('Ra4'));
+      expect(game.moveToSan(rDrop), equals('R@a4'));
+    });
   });
 }

@@ -98,6 +98,11 @@ class CrazyhouseChess extends Chess {
       return moves;
     }
 
+    final includeDrops = options == null || !options.containsKey('drops') || options['drops'] == true;
+    if (!includeDrops) {
+      return moves;
+    }
+
     final us = turn;
     final pocket = pockets[us]!;
     for (final type in [queen, rook, bishop, knight, pawn]) {

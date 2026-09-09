@@ -1096,7 +1096,11 @@ class Chess {
 
   /* this function is used to uniquely identify ambiguous moves */
   String getDisambiguator(Move move) {
-    var moves = generateMoves();
+    if ((move.flags & bitsDrop) != 0) {
+      return '';
+    }
+
+    var moves = generateMoves({'drops': false});
 
     var from = move.from;
     var to = move.to;
@@ -1107,9 +1111,13 @@ class Chess {
     var sameFile = 0;
 
     for (var i = 0, len = moves.length; i < len; i++) {
-      var ambigFrom = moves[i].from;
-      var ambigTo = moves[i].to;
-      var ambigPiece = moves[i].piece;
+      var ambigMove = moves[i];
+      if ((ambigMove.flags & bitsDrop) != 0) {
+        continue;
+      }
+      var ambigFrom = ambigMove.from;
+      var ambigTo = ambigMove.to;
+      var ambigPiece = ambigMove.piece;
 
       /* if a move of the same piece type ends on the same to square, we'll
        * need to add a disambiguator to the algebraic notation
@@ -1476,9 +1484,11 @@ class Chess {
     Move? moveFromSan(move) {
       final moves = generateMoves();
       final cleanMove = move.replaceAll(RegExp(r'[+#?!=]+$'), '');
+      final amb = ambiguate(cleanMove);
       for (var i = 0, len = moves.length; i < len; i++) {
         /* strip off any trailing move decorations: e.g Nf3+?! */
-        if (cleanMove == moveToSan(moves[i]).replaceAll(RegExp(r'[+#?!=]+$'), '')) {
+        final san = moveToSan(moves[i]).replaceAll(RegExp(r'[+#?!=]+$'), '');
+        if (cleanMove == san || amb == san) {
           return moves[i];
         }
         
@@ -1638,7 +1648,7 @@ class Chess {
         final amb = ambiguate(move);
         for (var i = 0; i < moves.length; i++) {
           String n = normalizeMoveString(moveToSan(moves[i]));
-          if (amb == n) {
+          if (normalizeMoveString(amb) == n) {
             moveObj = moves[i];
             break;
           }
@@ -1649,7 +1659,8 @@ class Chess {
         // try UCI matching
         for (var i = 0; i < moves.length; i++) {
           final mUci = '${moves[i].fromAlgebraic}${moves[i].toAlgebraic}${moves[i].promotion?.name ?? ''}'.toLowerCase();
-          if (cleanMove == mUci) {
+          final pieceUci = '${moves[i].piece == pawn ? '' : moves[i].piece.name}$mUci'.toLowerCase();
+          if (cleanMove == mUci || cleanMove == pieceUci) {
             moveObj = moves[i];
             break;
           }
@@ -1681,9 +1692,10 @@ class Chess {
   }
 
   String ambiguate(String s) {
-    var r = RegExp(r"^[NRQ][a-h1-8][a-h][1-8]$");
-    if (r.hasMatch(s)) {
-      return s.substring(0, 1) + s.substring(2);
+    var r = RegExp(r"^([BKNQR])([a-h][1-8]|[a-h1-8])(x?[a-h][1-8].*)$");
+    final match = r.firstMatch(s);
+    if (match != null) {
+      return match.group(1)! + match.group(3)!;
     }
     return s;
   }

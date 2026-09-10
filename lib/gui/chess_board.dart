@@ -109,22 +109,21 @@ class _ChessBoardState extends State<ChessBoard> {
                   );
 
                   var draggable = game.get(squareName) != null
-                      ? (widget.enableUserMoves
-                          ? Draggable<PieceMoveData>(
-                              key: ValueKey('drag-$squareName-${pieceOnSquare?.color}-${pieceOnSquare?.type}'),
-                              child: piece,
-                              feedback: Material(
-                                color: Colors.transparent,
-                                child: piece,
-                              ),
-                              childWhenDragging: const SizedBox(),
-                              data: PieceMoveData(
-                                squareName: squareName,
-                                pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
-                                pieceColor: pieceOnSquare?.color ?? white,
-                              ),
-                            )
-                          : piece)
+                      ? Draggable<PieceMoveData>(
+                          key: ValueKey('drag-$squareName'),
+                          maxSimultaneousDrags: widget.enableUserMoves ? 1 : 0,
+                          child: piece,
+                          feedback: Material(
+                            color: Colors.transparent,
+                            child: piece,
+                          ),
+                          childWhenDragging: const SizedBox(),
+                          data: PieceMoveData(
+                            squareName: squareName,
+                            pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
+                            pieceColor: pieceOnSquare?.color ?? white,
+                          ),
+                        )
                       : Container();
 
                   var dragTarget = DragTarget<PieceMoveData>(
@@ -328,10 +327,12 @@ class _ChessBoardState extends State<ChessBoard> {
                 ],
               );
 
-              if (hasPieces && widget.enableUserMoves) {
+              if (hasPieces) {
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 6.0),
                   child: Draggable<PieceMoveData>(
+                    key: ValueKey('pocket-drag-$color-${type.name}'),
+                    maxSimultaneousDrags: widget.enableUserMoves ? 1 : 0,
                     feedback: Material(
                       color: Colors.transparent,
                       child: SizedBox(

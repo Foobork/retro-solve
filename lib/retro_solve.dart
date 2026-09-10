@@ -66,11 +66,17 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    var chessboard = ChessBoard(
-      controller: _controller,
-      boardColor: BoardColor.brown,
-      boardOrientation: _orientation,
-      enableUserMoves: !_isExploring,
+    final bool isBoardDisabled =
+        _isExploring || _isAnalyzingGame || _isBatchEvaluating || _isLoadingVariant || _isPickingFile;
+
+    var chessboard = IgnorePointer(
+      ignoring: isBoardDisabled,
+      child: ChessBoard(
+        controller: _controller,
+        boardColor: BoardColor.brown,
+        boardOrientation: _orientation,
+        enableUserMoves: !isBoardDisabled,
+      ),
     );
     var turn = Text(_turn, style: _textStyle);
     var appBar = AppBar(
@@ -80,7 +86,7 @@ class _HomePageState extends State<HomePage> {
           child: DropdownButton<DatasetVariant>(
             value: _variant,
             dropdownColor: Colors.deepPurple.shade50,
-            onChanged: (_isLoadingVariant || _isExploring) ? null : (v) => _setVariant(v),
+            onChanged: isBoardDisabled ? null : (v) => _setVariant(v),
             items: DatasetVariant.values
                 .map(
                   (v) => DropdownMenuItem(
@@ -97,7 +103,7 @@ class _HomePageState extends State<HomePage> {
 
     final moreMenu = PopupMenuButton<_MoreAction>(
       tooltip: 'More actions',
-      enabled: !_isExploring,
+      enabled: !isBoardDisabled,
       onSelected: _onMoreAction,
       itemBuilder: (_) => const [
         PopupMenuItem(
@@ -121,13 +127,14 @@ class _HomePageState extends State<HomePage> {
       spacing: 2,
       runSpacing: 2,
       children: [
-        _button("reset", _isExploring ? null : _reset),
-        _button("back", _isExploring ? null : _back),
+        _button("reset", isBoardDisabled ? null : _reset),
+        _button("back", isBoardDisabled ? null : _back),
         _button("flip", _flip),
-        _button(_isExploring ? "stop exploring" : "explore", _exploreToggle),
+        _button(_isExploring ? "stop exploring" : "explore",
+            (_isPickingFile || _isAnalyzingGame) ? null : _exploreToggle),
         moreMenu,
         if (Config.showBatchEval)
-          _button("batch eval", _isBatchEvaluating ? null : _batchEval),
+          _button("batch eval", isBoardDisabled ? null : _batchEval),
       ],
     );
 
@@ -256,6 +263,7 @@ class _HomePageState extends State<HomePage> {
   String _batchTimeText = "";
 
   bool _isAnalyzingGame = false;
+  bool _isPickingFile = false;
   int _analyzeProgress = 0;
   int _analyzeTotal = 0;
   String _analyzeTimeText = "";
@@ -993,17 +1001,31 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _pickAndAnalyzeGame() async {
-    const XTypeGroup typeGroup = XTypeGroup(
-      label: 'PGN files',
-      extensions: <String>['pgn', 'txt'],
-    );
-    final XFile? file =
-        await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
-    if (file == null) return;
+    if (_isPickingFile) return;
+    setState(() => _isPickingFile = true);
 
-    final String pgnText = await file.readAsString();
-    if (pgnText.isNotEmpty) {
-      _analyzeGame(pgnText);
+    try {
+      const XTypeGroup typeGroup = XTypeGroup(
+        label: 'PGN files',
+        extensions: <String>['pgn', 'txt'],
+      );
+      final XFile? file =
+          await openFile(acceptedTypeGroups: <XTypeGroup>[typeGroup]);
+
+      // Debounce window to absorb any residual pointer down / up / click events
+      // from double-clicking a file in the native file picker.
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      if (file != null && mounted) {
+        final String pgnText = await file.readAsString();
+        if (pgnText.isNotEmpty && mounted) {
+          _analyzeGame(pgnText);
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPickingFile = false);
+      }
     }
   }
 

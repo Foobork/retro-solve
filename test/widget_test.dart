@@ -4,6 +4,7 @@ import 'package:retro_solve/chess/chess.dart';
 import 'package:retro_solve/dataset_variant.dart';
 import 'package:retro_solve/engine/fairy_stockfish_service.dart';
 import 'package:retro_solve/gui/chess_board.dart';
+import 'package:retro_solve/gui/chess_board_controller.dart';
 import 'package:retro_solve/retro_solve.dart';
 
 void main() {
@@ -108,5 +109,58 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('ChessBoard disables dragging and ignores pointers when user moves are disabled', (WidgetTester tester) async {
+    final controller = ChessBoardController();
+    bool enableUserMoves = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return ChessBoard(
+                controller: controller,
+                enableUserMoves: enableUserMoves,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // When enableUserMoves is true, draggables have maxSimultaneousDrags == 1
+    var draggables = tester.widgetList<Draggable<PieceMoveData>>(find.byType(Draggable<PieceMoveData>));
+    expect(draggables, isNotEmpty);
+    for (final draggable in draggables) {
+      expect(draggable.maxSimultaneousDrags, equals(1));
+    }
+
+    // Now disable user moves
+    enableUserMoves = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) {
+              return ChessBoard(
+                controller: controller,
+                enableUserMoves: enableUserMoves,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // When enableUserMoves is false, all draggables have maxSimultaneousDrags == 0
+    draggables = tester.widgetList<Draggable<PieceMoveData>>(find.byType(Draggable<PieceMoveData>));
+    expect(draggables, isNotEmpty);
+    for (final draggable in draggables) {
+      expect(draggable.maxSimultaneousDrags, equals(0));
+    }
   });
 }

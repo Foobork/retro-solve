@@ -8,7 +8,26 @@ class FairyStockfishService implements EngineService {
     int searchDepth = 12,
     Duration commandTimeout = const Duration(seconds: 5),
     DatasetVariant initialVariant = DatasetVariant.koth,
-  }) : _variant = initialVariant;
+    EngineCache? cache,
+  })  : _variant = initialVariant,
+        cache = cache ?? EngineCache();
+
+  @override
+  final EngineCache cache;
+
+  @override
+  List<EngineEvaluation>? getCachedEvaluation(String fen, {int minDepth = 16}) =>
+      cache.get(_variant, fen, minDepth: minDepth);
+
+  @override
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) =>
+      cache.put(_variant, fen, evals);
+
+  @override
+  void clearCache() => cache.clear();
+
+  @override
+  int get cacheSize => cache.size;
 
   DatasetVariant _variant;
 

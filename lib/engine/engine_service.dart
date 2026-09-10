@@ -1,5 +1,7 @@
 import 'dart:async';
 import '../dataset_variant.dart';
+import 'engine_cache.dart';
+export 'engine_cache.dart';
 
 /// Represents an engine evaluation produced by UCI engines (such as Fairy-Stockfish).
 ///
@@ -153,6 +155,22 @@ abstract class EngineService {
   bool get isNNUE;
   bool get isEngineAvailable;
   Stream<List<EngineEvaluation>> get evaluationStream;
+
+  EngineCache get cache;
+
+  List<EngineEvaluation>? getCachedEvaluation(String fen, {int minDepth = 16}) {
+    return cache.get(variant, fen, minDepth: minDepth);
+  }
+
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) {
+    cache.put(variant, fen, evals);
+  }
+
+  void clearCache() {
+    cache.clear();
+  }
+
+  int get cacheSize => cache.size;
 
   Future<void> start();
   Future<void> setVariant(DatasetVariant variant);

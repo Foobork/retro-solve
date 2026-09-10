@@ -1,3 +1,4 @@
+export 'engine_cache.dart';
 export 'engine_service.dart';
 export 'fairy_stockfish_service_stub.dart'
     if (dart.library.io) 'fairy_stockfish_service_io.dart'

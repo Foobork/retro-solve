@@ -12,7 +12,26 @@ class FairyStockfishService implements EngineService {
     this.searchDepth = 12,
     this.commandTimeout = const Duration(seconds: 10),
     DatasetVariant initialVariant = DatasetVariant.koth,
-  }) : _variant = initialVariant;
+    EngineCache? cache,
+  })  : _variant = initialVariant,
+        cache = cache ?? EngineCache();
+
+  @override
+  final EngineCache cache;
+
+  @override
+  List<EngineEvaluation>? getCachedEvaluation(String fen, {int minDepth = 16}) =>
+      cache.get(_variant, fen, minDepth: minDepth);
+
+  @override
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) =>
+      cache.put(_variant, fen, evals);
+
+  @override
+  void clearCache() => cache.clear();
+
+  @override
+  int get cacheSize => cache.size;
 
   final String binaryName;
   final int searchDepth;
@@ -41,6 +60,7 @@ class FairyStockfishService implements EngineService {
   String _activeFen = "";
   bool _isStarted = false;
   bool _waitingForReadyOk = false;
+  bool _isSearching = false;
   Future<void> _evalQueue = Future<void>.value();
 
   @override
@@ -99,9 +119,15 @@ class FairyStockfishService implements EngineService {
           _waitingForReadyOk = false;
         }
         final parsedInfo = parseUciInfo(line);
-        if (!_waitingForReadyOk &&
+        if (_isSearching &&
+            !_waitingForReadyOk &&
             parsedInfo != null &&
             (parsedInfo.centipawns != null || parsedInfo.mate != null)) {
+          if (parsedInfo.candidateMove != null &&
+              _activeFen.isNotEmpty &&
+              !EngineCache.isMoveColorConsistentWithFen(_activeFen, parsedInfo.candidateMove!)) {
+            return;
+          }
           final idx = parsedInfo.multipv ?? 1;
           while (_currentEvals.length < idx) {
             _currentEvals.add(const EngineEvaluation());
@@ -116,6 +142,20 @@ class FairyStockfishService implements EngineService {
             fen: _activeFen,
           );
           _evaluationController.add(List.from(_currentEvals));
+          if (_activeFen.isNotEmpty && _currentEvals.isNotEmpty) {
+            final best = _currentEvals.first;
+            if (best.mate != null || (best.depth != null && best.depth! >= 16)) {
+              cache.put(_variant, _activeFen, _currentEvals);
+            }
+          }
+        } else if (line.startsWith('bestmove')) {
+          if (_isSearching &&
+              !_waitingForReadyOk &&
+              _activeFen.isNotEmpty &&
+              _currentEvals.isNotEmpty) {
+            cache.put(_variant, _activeFen, _currentEvals);
+          }
+          _isSearching = false;
         }
       }).toJS;
 
@@ -188,18 +228,39 @@ class FairyStockfishService implements EngineService {
   }
 
   Future<void> _startSearchImpl(String fen) async {
+    final cached = cache.get(_variant, fen, minDepth: 16);
+    if (cached != null && cached.isNotEmpty) {
+      if (_isStarted && _worker != null) {
+        _waitingForReadyOk = true;
+        _isSearching = false;
+        try {
+          _writeLine('stop');
+          _writeLine('isready');
+          await _waitForLine('readyok');
+        } catch (_) {}
+      }
+      _activeFen = fen;
+      _currentEvals.clear();
+      _currentEvals.addAll(cached.map((e) => e.copyWithFen(fen)));
+      _evaluationController.add(List.from(_currentEvals));
+      return;
+    }
+
     if (!_isStarted || _worker == null) {
       await start();
       if (!_isStarted || _worker == null) return;
     }
     try {
-      _activeFen = fen;
-      _currentEvals.clear();
-      _evaluationController.add([]);
       _waitingForReadyOk = true;
+      _isSearching = false;
       _writeLine('stop');
       _writeLine('isready');
       await _waitForLine('readyok');
+
+      _activeFen = fen;
+      _currentEvals.clear();
+      _evaluationController.add([]);
+      _isSearching = true;
       _writeLine('setoption name MultiPV value 5');
       _writeLine('position fen $fen');
       _writeLine('go depth 16');
@@ -211,11 +272,17 @@ class FairyStockfishService implements EngineService {
 
   @override
   Future<EngineEvaluation?> evaluatePositionSync(String fen, {int depth = 16}) async {
+    final cached = cache.get(_variant, fen, minDepth: depth);
+    if (cached != null && cached.isNotEmpty) {
+      return cached.first.copyWithFen(fen);
+    }
+
     if (!_isStarted || _worker == null) await start();
     if (!_isStarted || _worker == null) return null;
 
     try {
       _waitingForReadyOk = true;
+      _isSearching = false;
       _writeLine('stop');
       _writeLine('isready');
       await _waitForLine('readyok');
@@ -231,18 +298,26 @@ class FairyStockfishService implements EngineService {
         if (line.startsWith('info ')) {
           final parsed = parseUciInfo(line);
           if (parsed != null && (parsed.centipawns != null || parsed.mate != null)) {
-            lastEval = parsed;
+            if (parsed.candidateMove == null ||
+                EngineCache.isMoveColorConsistentWithFen(fen, parsed.candidateMove!)) {
+              lastEval = parsed;
+            }
           }
         } else if (line.startsWith('bestmove')) {
           if (!completer.isCompleted) completer.complete();
         }
       });
 
+      _isSearching = true;
       _writeLine('go depth $depth');
       await completer.future.timeout(commandTimeout);
       await sub.cancel();
+      _isSearching = false;
 
       _writeLine('setoption name MultiPV value 5');
+      if (lastEval != null) {
+        cache.put(_variant, fen, [lastEval!.copyWithFen(fen)]);
+      }
       return lastEval;
     } catch (e) {
       print('[engine-web] evaluatePositionSync error: $e');

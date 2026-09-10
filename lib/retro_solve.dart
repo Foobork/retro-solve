@@ -498,7 +498,9 @@ class _HomePageState extends State<HomePage> {
               .where((e) =>
                   (e.centipawns != null || e.mate != null) &&
                   e.fen != null &&
-                  Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen))
+                  Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen) &&
+                  (e.candidateMove == null ||
+                      EngineCache.isMoveColorConsistentWithFen(currentFen, e.candidateMove!)))
               .map((e) => e.asWhitePerspective(whiteToMove: whiteToMove))
               .toList();
 
@@ -652,6 +654,41 @@ class _HomePageState extends State<HomePage> {
   void _requestEngineEval() {
     if (!_engineAvailable) return;
     final fen = _controller.game.fen;
+    final cached = widget.engineService.getCachedEvaluation(fen, minDepth: 16);
+    if (cached != null && cached.isNotEmpty) {
+      final whiteToMove = _controller.game.turn == white;
+      final validEvals = cached
+          .where((e) =>
+              (e.centipawns != null || e.mate != null) &&
+              (e.candidateMove == null ||
+                  EngineCache.isMoveColorConsistentWithFen(fen, e.candidateMove!)))
+          .map((e) => e.copyWithFen(fen).asWhitePerspective(whiteToMove: whiteToMove))
+          .toList();
+      if (validEvals.isNotEmpty) {
+        setState(() {
+          _engineEvalPending = false;
+          _engineEvals = validEvals;
+
+          final bfen = _controller.game.bfen;
+          if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
+            final bestEval = _engineEvals.first;
+            if (bestEval.mate != null ||
+                (bestEval.depth != null && bestEval.depth! >= 16)) {
+              final score = _engineEvalToGraphScore(bestEval, whiteToMove);
+              if (score != null) {
+                graph.assign(bfen, score);
+                graph.v[bfen]?.inDatabase = true;
+                graph.solveBfen(bfen);
+                _knownMovesToSan();
+              }
+            }
+          }
+        });
+        widget.engineService.startSearch(fen);
+        return;
+      }
+    }
+
     setState(() {
       _engineEvalPending = true;
       _engineEvals = [];
@@ -921,6 +958,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _waitForEngineStabilization() async {
+    final currentFen = _controller.game.fen;
+    if (!_engineEvalPending && _engineEvals.isNotEmpty) {
+      final bestEval = _engineEvals.first;
+      if (bestEval.fen != null &&
+          Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(currentFen) &&
+          (bestEval.candidateMove == null ||
+              EngineCache.isMoveColorConsistentWithFen(currentFen, bestEval.candidateMove!)) &&
+          (bestEval.mate != null ||
+              (bestEval.depth != null && bestEval.depth! >= 16))) {
+        return;
+      }
+    }
     await Future.delayed(const Duration(milliseconds: 200));
     while (_isExploring &&
         mounted &&
@@ -930,8 +979,12 @@ class _HomePageState extends State<HomePage> {
     while (_isExploring && mounted) {
       if (_engineEvals.isNotEmpty) {
         final bestEval = _engineEvals.first;
-        if (bestEval.mate != null ||
-            (bestEval.depth != null && bestEval.depth! >= 16)) {
+        if (bestEval.fen != null &&
+            Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(_controller.game.fen) &&
+            (bestEval.candidateMove == null ||
+                EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, bestEval.candidateMove!)) &&
+            (bestEval.mate != null ||
+                (bestEval.depth != null && bestEval.depth! >= 16))) {
           break;
         }
       }
@@ -1240,7 +1293,11 @@ class _HomePageState extends State<HomePage> {
     Widget content;
     final currentFen = _controller.game.fen;
     final validEngineEvals = _engineEvals
-        .where((e) => e.fen != null && Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen))
+        .where((e) =>
+            e.fen != null &&
+            Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen) &&
+            (e.candidateMove == null ||
+                EngineCache.isMoveColorConsistentWithFen(currentFen, e.candidateMove!)))
         .toList();
 
     print('[ENGINE-WIDGET] currentFen="$currentFen" totalEvals=${_engineEvals.length} validEvals=${validEngineEvals.length} candidates=${validEngineEvals.map((e) => "${e.candidateMove} (fen=${e.fen})").toList()}');

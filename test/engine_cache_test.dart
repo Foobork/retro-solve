@@ -279,5 +279,35 @@ void main() {
       expect(EngineCache.isMoveColorConsistentWithFen(chBlackFen, 'p@e5'), isTrue);
       expect(EngineCache.isMoveColorConsistentWithFen(chBlackFen, 'P@e5'), isFalse);
     });
+
+    test('handles FEN with crazyhouse promoted piece marker ~ and pocket brackets', () {
+      // FEN containing promoted piece ~ and pocket brackets
+      const chPromotedFen = 'r1b~q1rk1/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[P] b - - 0 1';
+      // Black rook on a8
+      expect(EngineCache.isMoveColorConsistentWithFen(chPromotedFen, 'a8b8'), isTrue);
+      // Black queen on d8
+      expect(EngineCache.isMoveColorConsistentWithFen(chPromotedFen, 'd8e8'), isTrue);
+      // White piece on rank 1 should be rejected when Black to move
+      expect(EngineCache.isMoveColorConsistentWithFen(chPromotedFen, 'g1f3'), isFalse);
+    });
+
+    test('put with force: true caches completed searches with depth below minCacheDepth', () {
+      final localCache = EngineCache(minCacheDepth: 16);
+      const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+      final evals = [
+        const EngineEvaluation(depth: 12, centipawns: 15, candidateMove: 'e7e5'),
+      ];
+
+      // Without force: true, should be rejected
+      localCache.put(DatasetVariant.standard, fen, evals, force: false);
+      expect(localCache.get(DatasetVariant.standard, fen, minDepth: 0), isNull);
+
+      // With force: true, should be cached
+      localCache.put(DatasetVariant.standard, fen, evals, force: true);
+      final retrieved = localCache.get(DatasetVariant.standard, fen, minDepth: 0);
+      expect(retrieved, isNotNull);
+      expect(retrieved!.first.depth, equals(12));
+      expect(retrieved.first.candidateMove, equals('e7e5'));
+    });
   });
 }

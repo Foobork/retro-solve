@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:retro_solve/chess/chess.dart';
 import 'package:retro_solve/retro_solve.dart';
 import 'package:retro_solve/dataset_variant.dart';
 import 'package:retro_solve/engine/fairy_stockfish_service.dart';
@@ -120,5 +121,73 @@ void main() {
 
     expect(vertex.assigned, equals(994.0));
     expect(find.text('+M3'), findsOneWidget);
+  });
+
+  testWidgets('move comparator sorts evaluated moves before unevaluated moves symmetrically', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: _NoopEngineService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+    final cmpWhite = state.compareMoves(PlayerColor.white);
+
+    final evalMove = MoveInfo('Bxd7', 972.0);
+    final noEvalMove = MoveInfo('Nxd7', null);
+
+    // Evaluated move must sort BEFORE un-evaluated move (-1)
+    expect(cmpWhite(evalMove, noEvalMove), equals(-1));
+    // Un-evaluated move must sort AFTER evaluated move (1)
+    expect(cmpWhite(noEvalMove, evalMove), equals(1));
+    // Two un-evaluated moves compare equal (0)
+    expect(cmpWhite(noEvalMove, MoveInfo('Qxd7', null)), equals(0));
+  });
+
+  testWidgets('unevaluated known moves are excluded from getEvaluatedMoveSans but included in getKnownMoveSans', (WidgetTester tester) async {
+    resetGraph();
+
+    const rootBfen = 'rnbqk1nr/pppN1ppp/8/8/8/8/PPPPPPPR/RNBQKB2 b - -';
+    const child1Bfen = 'rn1qk1nr/pppb1ppp/8/8/8/8/PPPPPPPR/RNBQKB2 w - -'; // Bxd7 (evaluated)
+    const child2Bfen = 'r1bqk1nr/pppn1ppp/8/8/8/8/PPPPPPPR/RNBQKB2 w - -'; // Nxd7 (unevaluated, has links)
+
+    final rootVertex = graph.addVertex(rootBfen);
+    rootVertex.inDatabase = true;
+
+    graph.addLink(rootBfen, child1Bfen);
+    graph.assign(child1Bfen, 972.0);
+
+    graph.addLink(rootBfen, child2Bfen);
+    // child2 has links but no evaluation
+    graph.addLink(child2Bfen, 'r1bqk1nr/pppn1ppR/8/8/8/8/PPPPPPP1/RNBQKB2 b - -');
+
+    graph.solveBfen(rootBfen);
+
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.antichess,
+        engineService: _NoopEngineService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+    state.controller.game.load('$rootBfen 0 1');
+    final ChessBoard board = tester.widget(find.byType(ChessBoard));
+    board.controller.value = board.controller.value.copy();
+    await tester.pump();
+
+    final knownSans = state.getKnownMoveSans();
+    final evaluatedSans = state.getEvaluatedMoveSans();
+
+    // Both moves are known in repertoire
+    expect(knownSans.contains('Bxd7'), isTrue);
+    expect(knownSans.contains('Nxd7'), isTrue);
+
+    // Only evaluated move is in getEvaluatedMoveSans
+    expect(evaluatedSans.contains('Bxd7'), isTrue);
+    expect(evaluatedSans.contains('Nxd7'), isFalse);
   });
 }

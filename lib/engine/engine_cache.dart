@@ -72,11 +72,16 @@ class EngineCache {
     }
 
     // Parse the board rank from FEN
-    final ranks = tokens[0].split('/');
+    var boardPart = tokens[0];
+    final bracketIdx = boardPart.indexOf('[');
+    if (bracketIdx != -1) {
+      boardPart = boardPart.substring(0, bracketIdx);
+    }
+    final ranks = boardPart.split('/');
     if (ranks.length != 8) return true;
 
     final fenRankIndex = 8 - rank; // 0 for rank 8, 7 for rank 1
-    final rankStr = ranks[fenRankIndex];
+    final rankStr = ranks[fenRankIndex].replaceAll('~', '');
 
     int col = 0;
     String? pieceAtFrom;
@@ -139,9 +144,15 @@ class EngineCache {
 
   /// Stores [evals] for [fen] under [variant].
   ///
-  /// Evaluations are only stored if they meet [minCacheDepth] or have a forced mate.
-  /// Deeper or mate evaluations will not be overwritten by shallower ones.
-  void put(DatasetVariant variant, String fen, List<EngineEvaluation> evals) {
+  /// Evaluations are only stored if they meet [minCacheDepth], have a forced mate,
+  /// or if [force] is true (e.g. completed searches).
+  /// Deeper or mate evaluations will not be overwritten by shallower ones unless [force] is true.
+  void put(
+    DatasetVariant variant,
+    String fen,
+    List<EngineEvaluation> evals, {
+    bool force = false,
+  }) {
     if (evals.isEmpty) return;
 
     // Reject evaluations whose candidate moves do not match the side to move of fen
@@ -154,7 +165,7 @@ class EngineCache {
 
     final best = evals.first;
     final depth = best.depth ?? 0;
-    if (best.mate == null && depth < minCacheDepth) {
+    if (!force && best.mate == null && depth < minCacheDepth) {
       return;
     }
 
@@ -169,7 +180,7 @@ class EngineCache {
         return;
       }
       // Do not downgrade depth unless replacing non-mate with mate
-      if (existingDepth > depth && (best.mate == null || existingBest.mate != null)) {
+      if (!force && existingDepth > depth && (best.mate == null || existingBest.mate != null)) {
         return;
       }
     }

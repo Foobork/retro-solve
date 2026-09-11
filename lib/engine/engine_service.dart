@@ -163,8 +163,8 @@ abstract class EngineService {
     return cache.get(variant, fen, minDepth: minDepth);
   }
 
-  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) {
-    cache.put(variant, fen, evals);
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals, {bool force = false}) {
+    cache.put(variant, fen, evals, force: force);
   }
 
   void clearCache() {

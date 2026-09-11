@@ -54,12 +54,12 @@ class HomePage extends StatefulWidget {
   final EngineService engineService;
 
   @override
-  _HomePageState createState() => _HomePageState();
+  HomePageState createState() => HomePageState();
 }
 
 enum _MoreAction { solve, export_, analyzeGame }
 
-class _HomePageState extends State<HomePage> {
+class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
   Timer? _evalTimer;
   List<EngineEvaluation>? _pendingEvals;
@@ -482,7 +482,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  _HomePageState() {
+  HomePageState() {
     _update();
     _controller.addListener(_chessBoardListener);
     graph.onNodeUpdated = (bfen, assigned, computed) {
@@ -507,40 +507,54 @@ class _HomePageState extends State<HomePage> {
         _evalTimer = Timer(const Duration(milliseconds: 150), () {
           if (!mounted || _pendingEvals == null) return;
           final currentFen = _controller.game.fen;
+          final currentKey = EngineCache.canonicalKey(_variant, currentFen);
           final whiteToMove = _controller.game.turn == white;
           final validEvals = _pendingEvals!
               .where((e) =>
                   (e.centipawns != null || e.mate != null) &&
                   e.fen != null &&
-                  Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen) &&
+                  EngineCache.canonicalKey(_variant, e.fen!) == currentKey &&
                   (e.candidateMove == null ||
                       EngineCache.isMoveColorConsistentWithFen(currentFen, e.candidateMove!)))
               .map((e) => e.asWhitePerspective(whiteToMove: whiteToMove))
               .toList();
 
           setState(() {
-            _engineEvalPending = false;
-            _engineEvals = validEvals;
+            _engineEvalPending = widget.engineService.isSearching;
+            if (validEvals.isNotEmpty) {
+              _engineEvals = validEvals;
+            }
 
             // Auto-populate node directly if not in database and depth is sufficient
             final bfen = _controller.game.bfen;
-            final fen = _controller.game.fen;
             if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
               final bestEval = _engineEvals.first;
               final bool isSufficient = bestEval.mate != null ||
                   (bestEval.depth != null && bestEval.depth! >= 16) ||
                   (!widget.engineService.isSearching && bestEval.depth != null);
               if (bestEval.fen != null &&
-                  Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(fen) &&
+                  EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
                   isSufficient) {
                 final score = _engineEvalToGraphScore(bestEval, _controller.game.turn == white);
                 if (score != null) {
                   graph.assign(bfen, score);
                   graph.v[bfen]?.inDatabase = true;
                   graph.solveBfen(bfen);
-                  // _export(); // Incremental via onNodeUpdated
-
-                  _update();
+                  _knownMovesToSan();
+                  final assigned = graph.v[bfen]?.assigned;
+                  final computed = graph.v[bfen]?.computed;
+                  if (computed != null) {
+                    final bool isSameAsAssigned =
+                        assigned != null && (computed - assigned).abs() < 1e-6;
+                    _eval = isSameAsAssigned
+                        ? _formatScore(assigned)
+                        : _formatScore(computed, wrapInParentheses: true);
+                  } else if (assigned != null) {
+                    _eval = _formatScore(assigned);
+                  }
+                  if (_evalController.text != _eval) {
+                    _evalController.text = _eval;
+                  }
                 }
               }
             }
@@ -671,9 +685,9 @@ class _HomePageState extends State<HomePage> {
   void _requestEngineEval() {
     if (!_engineAvailable) return;
     final fen = _controller.game.fen;
+    final whiteToMove = _controller.game.turn == white;
     final cached = widget.engineService.getCachedEvaluation(fen, minDepth: 16);
     if (cached != null && cached.isNotEmpty) {
-      final whiteToMove = _controller.game.turn == white;
       final validEvals = cached
           .where((e) =>
               (e.centipawns != null || e.mate != null) &&
@@ -713,9 +727,35 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
+    final shallower = widget.engineService.getCachedEvaluation(fen, minDepth: 0);
+    if (shallower != null && shallower.isNotEmpty) {
+      final validEvals = shallower
+          .where((e) =>
+              (e.centipawns != null || e.mate != null) &&
+              (e.candidateMove == null ||
+                  EngineCache.isMoveColorConsistentWithFen(fen, e.candidateMove!)))
+          .map((e) => e.copyWithFen(fen).asWhitePerspective(whiteToMove: whiteToMove))
+          .toList();
+      if (validEvals.isNotEmpty) {
+        setState(() {
+          _engineEvalPending = true;
+          _engineEvals = validEvals;
+        });
+        widget.engineService.startSearch(fen);
+        return;
+      }
+    }
+
+    final currentKey = EngineCache.canonicalKey(_variant, fen);
+    final isSameFen = _engineEvals.isNotEmpty &&
+        _engineEvals.any((e) =>
+            e.fen != null && EngineCache.canonicalKey(_variant, e.fen!) == currentKey);
+
     setState(() {
       _engineEvalPending = true;
-      _engineEvals = [];
+      if (!isSameFen) {
+        _engineEvals = [];
+      }
     });
     widget.engineService.startSearch(fen);
   }
@@ -729,7 +769,7 @@ class _HomePageState extends State<HomePage> {
                 ? 0
                 : 1
             : b == null
-                ? 0
+                ? -1
                 : turn == white
                     ? b.compareTo(a)
                     : a.compareTo(b);
@@ -835,7 +875,8 @@ class _HomePageState extends State<HomePage> {
       if (_engineEvals.isNotEmpty) {
         final bestEval = _engineEvals.first;
         final bool isCurrentPos = bestEval.fen == null ||
-            Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(_controller.game.fen);
+            EngineCache.canonicalKey(_variant, bestEval.fen!) ==
+                EngineCache.canonicalKey(_variant, _controller.game.fen);
         if (isCurrentPos &&
             (bestEval.mate != null ||
                 (bestEval.depth != null && bestEval.depth! >= 16) ||
@@ -882,9 +923,11 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
+      final evaluatedMoveSans = _getEvaluatedMoveSans();
+
       if (engineWinningMateSan != null &&
-          (knownMoveSans.contains(engineWinningMateSan) ||
-              knownMoveSans.contains(_controller.game.normalizeMoveString(engineWinningMateSan)))) {
+          (evaluatedMoveSans.contains(engineWinningMateSan) ||
+              evaluatedMoveSans.contains(_controller.game.normalizeMoveString(engineWinningMateSan)))) {
         print(
             '[explore] Winning move ($engineWinningMateSan) already explored from this position. Backing up.');
         return;
@@ -892,16 +935,24 @@ class _HomePageState extends State<HomePage> {
 
       bool hasUnexplored = false;
       if (engineWinningMateSan != null) {
-        hasUnexplored = !knownMoveSans.contains(engineWinningMateSan) &&
-            !knownMoveSans.contains(_controller.game.normalizeMoveString(engineWinningMateSan));
+        hasUnexplored = !evaluatedMoveSans.contains(engineWinningMateSan) &&
+            !evaluatedMoveSans.contains(_controller.game.normalizeMoveString(engineWinningMateSan));
       } else {
         for (final e in _engineEvals) {
           String san = _uciToSan(e.candidateMove);
           if (san != '—' &&
-              !knownMoveSans.contains(san) &&
-              !knownMoveSans.contains(_controller.game.normalizeMoveString(san))) {
+              !evaluatedMoveSans.contains(san) &&
+              !evaluatedMoveSans.contains(_controller.game.normalizeMoveString(san))) {
             hasUnexplored = true;
             break;
+          }
+        }
+        if (!hasUnexplored) {
+          for (final m in _knownMoves) {
+            if (m.eval == null) {
+              hasUnexplored = true;
+              break;
+            }
           }
         }
       }
@@ -914,7 +965,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     while (_isExploring && mounted) {
-      final currentKnownSans = _getKnownMoveSans();
+      final currentEvaluatedSans = _getEvaluatedMoveSans();
       final currentIsWhite = _controller.game.turn == white;
       final currentHasWinningMate = _knownMoves.any((m) =>
           m.eval != null && (currentIsWhite ? m.eval! >= 999.0 : m.eval! <= -999.0));
@@ -939,8 +990,8 @@ class _HomePageState extends State<HomePage> {
       }
 
       if (currentWinningMateSan != null) {
-        if (currentKnownSans.contains(currentWinningMateSan) ||
-            currentKnownSans.contains(_controller.game.normalizeMoveString(currentWinningMateSan))) {
+        if (currentEvaluatedSans.contains(currentWinningMateSan) ||
+            currentEvaluatedSans.contains(_controller.game.normalizeMoveString(currentWinningMateSan))) {
           print(
               '[explore] Winning move ($currentWinningMateSan) already explored. Skipping weaker alternatives.');
           break;
@@ -950,10 +1001,18 @@ class _HomePageState extends State<HomePage> {
         for (final e in _engineEvals) {
           String san = _uciToSan(e.candidateMove);
           if (san != '—' &&
-              !currentKnownSans.contains(san) &&
-              !currentKnownSans.contains(_controller.game.normalizeMoveString(san))) {
+              !currentEvaluatedSans.contains(san) &&
+              !currentEvaluatedSans.contains(_controller.game.normalizeMoveString(san))) {
             nextMoveToExplore = san;
             break;
+          }
+        }
+        if (nextMoveToExplore == null) {
+          for (final m in _knownMoves) {
+            if (m.eval == null) {
+              nextMoveToExplore = m.move;
+              break;
+            }
           }
         }
       }
@@ -995,10 +1054,11 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _waitForEngineStabilization() async {
     final currentFen = _controller.game.fen;
+    final currentKey = EngineCache.canonicalKey(_variant, currentFen);
     if (!_engineEvalPending && _engineEvals.isNotEmpty) {
       final bestEval = _engineEvals.first;
       if (bestEval.fen != null &&
-          Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(currentFen) &&
+          EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
           (bestEval.candidateMove == null ||
               EngineCache.isMoveColorConsistentWithFen(currentFen, bestEval.candidateMove!)) &&
           (bestEval.mate != null ||
@@ -1021,7 +1081,8 @@ class _HomePageState extends State<HomePage> {
       if (_engineEvals.isNotEmpty) {
         final bestEval = _engineEvals.first;
         final bool isCurrentPos = bestEval.fen != null &&
-            Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(_controller.game.fen) &&
+            EngineCache.canonicalKey(_variant, bestEval.fen!) ==
+                EngineCache.canonicalKey(_variant, _controller.game.fen) &&
             (bestEval.candidateMove == null ||
                 EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, bestEval.candidateMove!));
         if (isCurrentPos &&
@@ -1328,6 +1389,17 @@ class _HomePageState extends State<HomePage> {
     return set;
   }
 
+  Set<String> _getEvaluatedMoveSans() {
+    final set = <String>{};
+    for (final m in _knownMoves) {
+      if (m.eval != null) {
+        set.add(m.move);
+        set.add(_controller.game.normalizeMoveString(m.move));
+      }
+    }
+    return set;
+  }
+
   String _uciToSan(String? uci) {
     if (uci == null || uci.isEmpty) {
       print('[UCI-TO-SAN] uci is null or empty');
@@ -1352,17 +1424,18 @@ class _HomePageState extends State<HomePage> {
   Widget _engineWidget() {
     Widget content;
     final currentFen = _controller.game.fen;
+    final currentKey = EngineCache.canonicalKey(_variant, currentFen);
     final validEngineEvals = _engineEvals
         .where((e) =>
             e.fen != null &&
-            Chess.normalizeFen(e.fen!) == Chess.normalizeFen(currentFen) &&
+            EngineCache.canonicalKey(_variant, e.fen!) == currentKey &&
             (e.candidateMove == null ||
                 EngineCache.isMoveColorConsistentWithFen(currentFen, e.candidateMove!)))
         .toList();
 
     print('[ENGINE-WIDGET] currentFen="$currentFen" totalEvals=${_engineEvals.length} validEvals=${validEngineEvals.length} candidates=${validEngineEvals.map((e) => "${e.candidateMove} (fen=${e.fen})").toList()}');
 
-    if (_engineEvalPending || validEngineEvals.isEmpty) {
+    if (validEngineEvals.isEmpty) {
       content = Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -1380,7 +1453,7 @@ class _HomePageState extends State<HomePage> {
       );
     } else {
       final depth = validEngineEvals.first.depth;
-      final knownMoveSans = _getKnownMoveSans();
+      final evaluatedMoveSans = _getEvaluatedMoveSans();
       final rows = validEngineEvals.map((e) {
         String san = _uciToSan(e.candidateMove);
         String evalStr = 'unknown';
@@ -1409,9 +1482,9 @@ class _HomePageState extends State<HomePage> {
               : pawns.toStringAsFixed(2);
         }
 
-        final isKnown = knownMoveSans.contains(san) ||
-            knownMoveSans.contains(_controller.game.normalizeMoveString(san));
-        final bool shouldHighlight = !isKnown && san != '—';
+        final isEvaluated = evaluatedMoveSans.contains(san) ||
+            evaluatedMoveSans.contains(_controller.game.normalizeMoveString(san));
+        final bool shouldHighlight = !isEvaluated && san != '—';
         return _buildMoveRow(san, evalStr,
             color: shouldHighlight ? Colors.blue : null);
       }).toList();
@@ -1419,12 +1492,22 @@ class _HomePageState extends State<HomePage> {
       content = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (depth != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12.0),
-              child: Text('Depth $depth',
-                  style: const TextStyle(fontSize: 16, color: Colors.black54)),
-            ),
+          Row(
+            children: [
+              if (depth != null)
+                Text('Depth $depth',
+                    style: const TextStyle(fontSize: 16, color: Colors.black54)),
+              if (_engineEvalPending) ...[
+                const SizedBox(width: 8),
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 12),
           Table(
             columnWidths: const <int, TableColumnWidth>{
               0: IntrinsicColumnWidth(),
@@ -1600,6 +1683,15 @@ class _HomePageState extends State<HomePage> {
 
   @visibleForTesting
   double? parseScore(String text) => _parseScore(text);
+
+  @visibleForTesting
+  Set<String> getEvaluatedMoveSans() => _getEvaluatedMoveSans();
+
+  @visibleForTesting
+  Set<String> getKnownMoveSans() => _getKnownMoveSans();
+
+  @visibleForTesting
+  int Function(MoveInfo, MoveInfo) compareMoves(PlayerColor turn) => _compare(turn);
 
   Chess _createGameForVariant(DatasetVariant variant) {
     switch (variant) {

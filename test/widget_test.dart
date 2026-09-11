@@ -297,8 +297,8 @@ class MockEngineService implements EngineService {
   Future<void> newGame() async {}
 
   @override
-  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) =>
-      cache.put(variant, fen, evals);
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals, {bool force = false}) =>
+      cache.put(variant, fen, evals, force: force);
 
   @override
   Future<void> setVariant(DatasetVariant variant) async {}

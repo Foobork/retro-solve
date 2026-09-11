@@ -25,8 +25,8 @@ class FairyStockfishService implements EngineService {
       cache.get(_variant, fen, minDepth: minDepth);
 
   @override
-  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) =>
-      cache.put(_variant, fen, evals);
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals, {bool force = false}) =>
+      cache.put(_variant, fen, evals, force: force);
 
   @override
   void clearCache() => cache.clear();
@@ -168,7 +168,7 @@ class FairyStockfishService implements EngineService {
             !_waitingForReadyOk &&
             _activeFen.isNotEmpty &&
             _currentEvals.isNotEmpty) {
-          cache.put(_variant, _activeFen, _currentEvals);
+          cache.put(_variant, _activeFen, _currentEvals, force: true);
         }
         _isSearching = false;
         if (!_waitingForReadyOk && _currentEvals.isNotEmpty) {
@@ -311,7 +311,7 @@ class FairyStockfishService implements EngineService {
 
     _writeLine('setoption name MultiPV value 5');
     if (lastEval != null) {
-      cache.put(_variant, fen, [lastEval!.copyWithFen(fen)]);
+      cache.put(_variant, fen, [lastEval!.copyWithFen(fen)], force: true);
     }
     return lastEval;
   }
@@ -477,6 +477,14 @@ class FairyStockfishService implements EngineService {
       _currentEvals.clear();
       _currentEvals.addAll(cached.map((e) => e.copyWithFen(fen)));
       _evaluationController.add(List.from(_currentEvals));
+    } else {
+      final shallower = cache.get(_variant, fen, minDepth: 0);
+      if (shallower != null && shallower.isNotEmpty) {
+        _activeFen = fen;
+        _currentEvals.clear();
+        _currentEvals.addAll(shallower.map((e) => e.copyWithFen(fen)));
+        _evaluationController.add(List.from(_currentEvals));
+      }
     }
 
     if (!_isStarted || _process == null) {
@@ -491,8 +499,13 @@ class FairyStockfishService implements EngineService {
       _writeLine('isready');
       await _waitForLine('readyok');
 
+      final bool isSamePosition = _activeFen.isNotEmpty &&
+          EngineCache.canonicalKey(_variant, _activeFen) ==
+              EngineCache.canonicalKey(_variant, fen);
       _activeFen = fen;
-      if (cached == null || cached.isEmpty) {
+      if (!isSamePosition &&
+          (cached == null || cached.isEmpty) &&
+          (cache.get(_variant, fen, minDepth: 0)?.isEmpty ?? true)) {
         _currentEvals.clear();
         _evaluationController.add([]);
       }

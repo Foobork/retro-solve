@@ -24,8 +24,8 @@ class FairyStockfishService implements EngineService {
       cache.get(_variant, fen, minDepth: minDepth);
 
   @override
-  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) =>
-      cache.put(_variant, fen, evals);
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals, {bool force = false}) =>
+      cache.put(_variant, fen, evals, force: force);
 
   @override
   void clearCache() => cache.clear();

@@ -154,6 +154,7 @@ abstract class EngineService {
   DatasetVariant get variant;
   bool get isNNUE;
   bool get isEngineAvailable;
+  bool get isSearching;
   Stream<List<EngineEvaluation>> get evaluationStream;
 
   EngineCache get cache;

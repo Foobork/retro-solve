@@ -171,6 +171,9 @@ class FairyStockfishService implements EngineService {
           cache.put(_variant, _activeFen, _currentEvals);
         }
         _isSearching = false;
+        if (!_waitingForReadyOk && _currentEvals.isNotEmpty) {
+          _evaluationController.add(List.from(_currentEvals));
+        }
       }
     });
     _stderrSubscription = _process!.stderr
@@ -257,7 +260,9 @@ class FairyStockfishService implements EngineService {
 
   @override
   Future<void> startSearch(String fen) async {
-    _evalQueue = _evalQueue.then((_) => _startSearchImpl(fen));
+    _evalQueue = _evalQueue.then((_) => _startSearchImpl(fen)).catchError((e) {
+      print('[engine] Search error in queue: $e');
+    });
   }
 
   @override
@@ -439,7 +444,10 @@ class FairyStockfishService implements EngineService {
     if (!Platform.isWindows) return;
 
     // If the engine is already actively searching this exact position, let it continue.
-    if (_isSearching && _activeFen == fen) {
+    if (_isSearching &&
+        _activeFen.isNotEmpty &&
+        EngineCache.canonicalKey(_variant, _activeFen) ==
+            EngineCache.canonicalKey(_variant, fen)) {
       return;
     }
 
@@ -448,7 +456,7 @@ class FairyStockfishService implements EngineService {
       final best = cached.first;
       final hasReachedFullDepth = (best.depth != null && best.depth! >= 16);
       if (hasReachedFullDepth) {
-        if (_isStarted && _process != null) {
+        if (_isStarted && _process != null && _isSearching) {
           _waitingForReadyOk = true;
           _isSearching = false;
           try {
@@ -501,4 +509,7 @@ class FairyStockfishService implements EngineService {
   /// Whether the engine process is running and ready for commands.
   @override
   bool get isEngineAvailable => _isStarted && _process != null;
+
+  @override
+  bool get isSearching => _isSearching;
 }

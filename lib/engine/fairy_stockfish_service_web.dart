@@ -66,6 +66,9 @@ class FairyStockfishService implements EngineService {
   @override
   bool get isEngineAvailable => _isStarted && _worker != null;
 
+  @override
+  bool get isSearching => _isSearching;
+
   String _nnueFilenameForVariant(DatasetVariant v) {
     switch (v) {
       case DatasetVariant.koth:
@@ -156,6 +159,9 @@ class FairyStockfishService implements EngineService {
             cache.put(_variant, _activeFen, _currentEvals);
           }
           _isSearching = false;
+          if (!_waitingForReadyOk && _currentEvals.isNotEmpty) {
+            _evaluationController.add(List.from(_currentEvals));
+          }
         }
       }).toJS;
 
@@ -224,12 +230,17 @@ class FairyStockfishService implements EngineService {
 
   @override
   Future<void> startSearch(String fen) async {
-    _evalQueue = _evalQueue.then((_) => _startSearchImpl(fen));
+    _evalQueue = _evalQueue.then((_) => _startSearchImpl(fen)).catchError((e) {
+      print('[engine-web] Search error in queue: $e');
+    });
   }
 
   Future<void> _startSearchImpl(String fen) async {
     // If the engine is already actively searching this exact position, let it continue.
-    if (_isSearching && _activeFen == fen) {
+    if (_isSearching &&
+        _activeFen.isNotEmpty &&
+        EngineCache.canonicalKey(_variant, _activeFen) ==
+            EngineCache.canonicalKey(_variant, fen)) {
       return;
     }
 
@@ -238,7 +249,7 @@ class FairyStockfishService implements EngineService {
       final best = cached.first;
       final hasReachedFullDepth = (best.depth != null && best.depth! >= 16);
       if (hasReachedFullDepth) {
-        if (_isStarted && _worker != null) {
+        if (_isStarted && _worker != null && _isSearching) {
           _waitingForReadyOk = true;
           _isSearching = false;
           try {

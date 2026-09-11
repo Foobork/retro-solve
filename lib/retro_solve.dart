@@ -27,7 +27,7 @@ class RetroSolve extends StatelessWidget {
   }) : super(key: key);
 
   final DatasetVariant initialVariant;
-  final FairyStockfishService engineService;
+  final EngineService engineService;
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +51,7 @@ class HomePage extends StatefulWidget {
   }) : super(key: key);
 
   final DatasetVariant initialVariant;
-  final FairyStockfishService engineService;
+  final EngineService engineService;
 
   @override
   _HomePageState createState() => _HomePageState();
@@ -527,9 +527,12 @@ class _HomePageState extends State<HomePage> {
             final fen = _controller.game.fen;
             if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
               final bestEval = _engineEvals.first;
-              if (bestEval.fen == fen &&
-                  (bestEval.mate != null ||
-                      (bestEval.depth != null && bestEval.depth! >= 16))) {
+              final bool isSufficient = bestEval.mate != null ||
+                  (bestEval.depth != null && bestEval.depth! >= 16) ||
+                  (!widget.engineService.isSearching && bestEval.depth != null);
+              if (bestEval.fen != null &&
+                  Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(fen) &&
+                  isSufficient) {
                 final score = _engineEvalToGraphScore(bestEval, _controller.game.turn == white);
                 if (score != null) {
                   graph.assign(bfen, score);
@@ -686,8 +689,9 @@ class _HomePageState extends State<HomePage> {
           final bfen = _controller.game.bfen;
           if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
-            if (bestEval.mate != null ||
-                (bestEval.depth != null && bestEval.depth! >= 16)) {
+            final hasFull = bestEval.mate != null ||
+                (bestEval.depth != null && bestEval.depth! >= 16);
+            if (hasFull) {
               final score = _engineEvalToGraphScore(bestEval, whiteToMove);
               if (score != null) {
                 graph.assign(bfen, score);
@@ -698,6 +702,12 @@ class _HomePageState extends State<HomePage> {
             }
           }
         });
+        final bestCached = validEvals.first;
+        final hasFull = bestCached.mate != null ||
+            (bestCached.depth != null && bestCached.depth! >= 16);
+        if (hasFull) {
+          return;
+        }
         widget.engineService.startSearch(fen);
         return;
       }
@@ -812,18 +822,29 @@ class _HomePageState extends State<HomePage> {
     if (!_isExploring || !mounted) return;
 
     // Wait for the evaluation of the current position to stabilize at depth 16
+    final stabilizationStopwatch = Stopwatch()..start();
     while (_isExploring &&
         mounted &&
         (_engineEvalPending || _engineEvals.isEmpty)) {
+      if (stabilizationStopwatch.elapsedMilliseconds > 3000 && !widget.engineService.isSearching) {
+        break;
+      }
       await Future.delayed(const Duration(milliseconds: 100));
     }
     while (_isExploring && mounted) {
       if (_engineEvals.isNotEmpty) {
         final bestEval = _engineEvals.first;
-        if (bestEval.mate != null ||
-            (bestEval.depth != null && bestEval.depth! >= 16)) {
+        final bool isCurrentPos = bestEval.fen == null ||
+            Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(_controller.game.fen);
+        if (isCurrentPos &&
+            (bestEval.mate != null ||
+                (bestEval.depth != null && bestEval.depth! >= 16) ||
+                !widget.engineService.isSearching)) {
           break;
         }
+      }
+      if (stabilizationStopwatch.elapsedMilliseconds > 15000) {
+        break;
       }
       await Future.delayed(const Duration(milliseconds: 100));
     }
@@ -953,6 +974,7 @@ class _HomePageState extends State<HomePage> {
       while (_isExploring && mounted) {
         final bfen = _controller.game.bfen;
         if (graph.v[bfen]?.assigned != null || graph.v[bfen]?.computed != null) break;
+        if (!widget.engineService.isSearching && _engineEvals.isNotEmpty) break;
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
@@ -980,27 +1002,37 @@ class _HomePageState extends State<HomePage> {
           (bestEval.candidateMove == null ||
               EngineCache.isMoveColorConsistentWithFen(currentFen, bestEval.candidateMove!)) &&
           (bestEval.mate != null ||
-              (bestEval.depth != null && bestEval.depth! >= 16))) {
+              (bestEval.depth != null && bestEval.depth! >= 16) ||
+              !widget.engineService.isSearching)) {
         return;
       }
     }
-    await Future.delayed(const Duration(milliseconds: 200));
+    await Future.delayed(const Duration(milliseconds: 150));
+    final stopwatch = Stopwatch()..start();
     while (_isExploring &&
         mounted &&
         (_engineEvalPending || _engineEvals.isEmpty)) {
+      if (stopwatch.elapsedMilliseconds > 3000 && !widget.engineService.isSearching) {
+        break;
+      }
       await Future.delayed(const Duration(milliseconds: 100));
     }
     while (_isExploring && mounted) {
       if (_engineEvals.isNotEmpty) {
         final bestEval = _engineEvals.first;
-        if (bestEval.fen != null &&
+        final bool isCurrentPos = bestEval.fen != null &&
             Chess.normalizeFen(bestEval.fen!) == Chess.normalizeFen(_controller.game.fen) &&
             (bestEval.candidateMove == null ||
-                EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, bestEval.candidateMove!)) &&
+                EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, bestEval.candidateMove!));
+        if (isCurrentPos &&
             (bestEval.mate != null ||
-                (bestEval.depth != null && bestEval.depth! >= 16))) {
+                (bestEval.depth != null && bestEval.depth! >= 16) ||
+                !widget.engineService.isSearching)) {
           break;
         }
+      }
+      if (stopwatch.elapsedMilliseconds > 15000) {
+        break;
       }
       await Future.delayed(const Duration(milliseconds: 100));
     }
@@ -1542,6 +1574,9 @@ class _HomePageState extends State<HomePage> {
   @visibleForTesting
   String formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) =>
       _formatScore(score, wrapInParentheses: wrapInParentheses, isMoveScore: isMoveScore);
+
+  @visibleForTesting
+  Future<void> waitForEngineStabilization() => _waitForEngineStabilization();
 
   double? _parseScore(String text) {
     text = text.trim();

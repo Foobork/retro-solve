@@ -40,6 +40,9 @@ class FairyStockfishService implements EngineService {
   @override
   bool get isEngineAvailable => false;
 
+  @override
+  bool get isSearching => false;
+
   final StreamController<List<EngineEvaluation>> _evaluationController =
       StreamController<List<EngineEvaluation>>.broadcast();
 

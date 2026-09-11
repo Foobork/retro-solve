@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:retro_solve/chess/chess.dart';
@@ -217,4 +218,94 @@ void main() {
       expect(draggable.maxSimultaneousDrags, equals(0));
     }
   });
+
+  testWidgets('Engine stabilization does not freeze when search finishes before depth 16', (WidgetTester tester) async {
+    final mockService = MockEngineService(variant: DatasetVariant.antichess);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.antichess,
+        engineService: mockService,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    const antichessFen = 'rnbqkbn1/ppppp2r/8/5p2/8/5P2/PPPPP1PP/RNBQKB1R b - - 0 1';
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+    state.controller.loadFen(antichessFen);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Simulate search finished at depth 11 (isSearching = false)
+    mockService.setSearching(false);
+    state.setEngineEvalsForTesting([
+      const EngineEvaluation(depth: 11, centipawns: -12, candidateMove: 'h7h2', fen: antichessFen)
+    ]);
+    await tester.pump();
+
+    // Calling waitForEngineStabilization while pumping clock
+    final stabilizationFuture = state.waitForEngineStabilization();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 200));
+    await stabilizationFuture;
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class MockEngineService implements EngineService {
+  MockEngineService({required this.variant, EngineCache? cache}) : cache = cache ?? EngineCache();
+
+  @override
+  final DatasetVariant variant;
+
+  @override
+  final EngineCache cache;
+
+  @override
+  bool get isNNUE => false;
+
+  @override
+  bool get isEngineAvailable => true;
+
+  bool _isSearching = false;
+  @override
+  bool get isSearching => _isSearching;
+
+  void setSearching(bool searching) => _isSearching = searching;
+
+  final _evalController = StreamController<List<EngineEvaluation>>.broadcast();
+  @override
+  Stream<List<EngineEvaluation>> get evaluationStream => _evalController.stream;
+
+  @override
+  int get cacheSize => cache.size;
+
+  @override
+  void clearCache() => cache.clear();
+
+  @override
+  Future<void> dispose() async => _evalController.close();
+
+  @override
+  Future<EngineEvaluation?> evaluatePositionSync(String fen, {int depth = 16}) async => null;
+
+  @override
+  List<EngineEvaluation>? getCachedEvaluation(String fen, {int minDepth = 16}) =>
+      cache.get(variant, fen, minDepth: minDepth);
+
+  @override
+  Future<void> newGame() async {}
+
+  @override
+  void setCachedEvaluation(String fen, List<EngineEvaluation> evals) =>
+      cache.put(variant, fen, evals);
+
+  @override
+  Future<void> setVariant(DatasetVariant variant) async {}
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> startSearch(String fen) async {}
 }

@@ -242,6 +242,12 @@ class _HomePageState extends State<HomePage> {
   final _controller = ChessBoardController();
   @visibleForTesting
   ChessBoardController get controller => _controller;
+  @visibleForTesting
+  void setEngineEvalsForTesting(List<EngineEvaluation> evals) {
+    setState(() {
+      _engineEvals = evals;
+    });
+  }
   final _textStyle = const TextStyle(fontSize: 20);
 
   late DatasetVariant _variant;
@@ -1347,7 +1353,23 @@ class _HomePageState extends State<HomePage> {
         String san = _uciToSan(e.candidateMove);
         String evalStr = 'unknown';
         if (e.mate != null) {
-          evalStr = e.mate! > 0 ? '+M${e.mate!}' : '-M${e.mate!.abs()}';
+          if (e.mate == 0) {
+            double? termScore;
+            if (e.fen != null) {
+              final g = _createGameForVariant(_variant);
+              if (g.load(e.fen!)) {
+                termScore = g.terminalEvaluation;
+              }
+            }
+            termScore ??= _controller.game.terminalEvaluation;
+            if (termScore != null) {
+              evalStr = _formatScore(termScore);
+            } else {
+              evalStr = '+M0';
+            }
+          } else {
+            evalStr = e.mate! > 0 ? '+M${e.mate!}' : '-M${e.mate!.abs()}';
+          }
         } else if (e.centipawns != null) {
           final pawns = e.centipawns! / 100.0;
           evalStr = pawns > 0
@@ -1428,27 +1450,49 @@ class _HomePageState extends State<HomePage> {
   /// Converts an [EngineEvaluation] (in White's perspective) to a graph database score (+1000.0 to -1000.0).
   ///
   /// In UCI protocol (evaluated from the perspective of the side to move):
-  /// - Forced Win in M moves (`score mate +M` where M > 0):
-  ///   The side to move plays M times and opponent plays M-1 times.
-  ///   Plies to mate = 2 * M - 1 (e.g. mate +1 -> 1 ply, mate +2 -> 3 plies, mate +12 -> 23 plies).
-  /// - Forced Loss in M moves (`score mate -M` where M > 0):
-  ///   The side to move plays M times and opponent plays M times to deliver mate/win.
-  ///   Plies to mate = 2 * M (e.g. mate -1 -> 2 plies, mate -2 -> 4 plies, mate -12 -> 24 plies).
+  /// - Standard chess and other checkmate variants (Winner makes the final move):
+  ///   - Forced Win in M moves (`score mate +M` where M > 0):
+  ///     Plies to mate = 2 * M - 1 (e.g. mate +1 -> 1 ply, mate +2 -> 3 plies, mate +18 -> 35 plies).
+  ///   - Forced Loss in M moves (`score mate -M` where M > 0):
+  ///     Plies to mate = 2 * M (e.g. mate -1 -> 2 plies, mate -2 -> 4 plies, mate -18 -> 36 plies).
+  /// - Antichess / Giveaway (Loser makes the final move):
+  ///   - Forced Win in M moves (`score mate +M` where M > 0):
+  ///     The side to move gives away pieces and opponent makes the final capture on ply 2*M.
+  ///     Plies to mate = 2 * M (e.g. mate +1 -> 2 plies, mate +2 -> 4 plies, mate +18 -> 36 plies).
+  ///   - Forced Loss in M moves (`score mate -M` where M > 0):
+  ///     The losing side makes the final capture on ply 2*M - 1.
+  ///     Plies to mate = 2 * M - 1 (e.g. mate -1 -> 1 ply, mate -2 -> 3 plies, mate -18 -> 35 plies).
   ///
   /// Since [eval] has already been converted to White's perspective via [asWhitePerspective]:
   /// - When [whiteToMove] is true:
-  ///   - m > 0: White wins -> side to move is winning -> plies = 2*|m| - 1
-  ///   - m < 0: White loses -> side to move is losing  -> plies = 2*|m|
+  ///   - m > 0: White wins -> side to move is winning
+  ///   - m < 0: White loses -> side to move is losing
   /// - When [whiteToMove] is false:
-  ///   - m < 0: Black wins -> side to move is winning -> plies = 2*|m| - 1
-  ///   - m > 0: Black loses -> side to move is losing  -> plies = 2*|m|
-  double? _engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove) {
+  ///   - m < 0: Black wins -> side to move is winning
+  ///   - m > 0: Black loses -> side to move is losing
+  double? _engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove, {DatasetVariant? variant}) {
+    variant ??= _variant;
     if (eval.mate != null) {
       final m = eval.mate!;
-      if (m == 0) return null;
+      if (m == 0) {
+        double? termScore;
+        if (eval.fen != null) {
+          final g = _createGameForVariant(variant);
+          if (g.load(eval.fen!)) {
+            termScore = g.terminalEvaluation;
+          }
+        }
+        termScore ??= _controller.game.terminalEvaluation;
+        return termScore;
+      }
       final absM = m.abs();
       final sideToMoveIsWinning = whiteToMove ? (m > 0) : (m < 0);
-      final pliesToMate = sideToMoveIsWinning ? (2 * absM - 1) : (2 * absM);
+      final int pliesToMate;
+      if (variant == DatasetVariant.antichess) {
+        pliesToMate = sideToMoveIsWinning ? (2 * absM) : (2 * absM - 1);
+      } else {
+        pliesToMate = sideToMoveIsWinning ? (2 * absM - 1) : (2 * absM);
+      }
       return m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
     } else if (eval.centipawns != null) {
       return eval.centipawns! / 100.0;
@@ -1460,6 +1504,9 @@ class _HomePageState extends State<HomePage> {
     if (eval.candidateMove == null) return false;
     final score = _engineEvalToGraphScore(eval, isWhiteToMove);
     if (score == null) return false;
+    if (_variant == DatasetVariant.antichess) {
+      return isWhiteToMove ? score >= 998.0 : score <= -998.0;
+    }
     // Immediate mate in 1 on this turn requires +/-999.0 or +/-1000.0 (1 ply to checkmate)
     return isWhiteToMove ? score >= 999.0 : score <= -999.0;
   }
@@ -1489,8 +1536,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   @visibleForTesting
-  double? engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove) =>
-      _engineEvalToGraphScore(eval, whiteToMove);
+  double? engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove, {DatasetVariant? variant}) =>
+      _engineEvalToGraphScore(eval, whiteToMove, variant: variant);
 
   @visibleForTesting
   String formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) =>
@@ -1515,6 +1562,9 @@ class _HomePageState extends State<HomePage> {
     
     return double.tryParse(text);
   }
+
+  @visibleForTesting
+  double? parseScore(String text) => _parseScore(text);
 
   Chess _createGameForVariant(DatasetVariant variant) {
     switch (variant) {

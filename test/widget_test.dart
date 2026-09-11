@@ -74,6 +74,60 @@ void main() {
     // 4. Black to move, Black loses in 2 moves (mate -2 in UCI): 2*2 = 4 plies -> +996.0
     const bLose2 = EngineEvaluation(mate: -2);
     expect(state.engineEvalToGraphScore(bLose2.asWhitePerspective(whiteToMove: false), false), equals(996.0));
+
+    // Antichess: Loser makes the final move, so plies are inverted (Win: 2*M plies, Loss: 2*M - 1 plies)
+    // 5. Antichess White to move, White wins in 2 moves (mate +2 in UCI): 2*2 = 4 plies -> +996.0
+    expect(state.engineEvalToGraphScore(wWin2.asWhitePerspective(whiteToMove: true), true, variant: DatasetVariant.antichess), equals(996.0));
+
+    // 6. Antichess White to move, White loses in 2 moves (mate -2 in UCI): 2*2 - 1 = 3 plies -> -997.0
+    expect(state.engineEvalToGraphScore(wLose2.asWhitePerspective(whiteToMove: true), true, variant: DatasetVariant.antichess), equals(-997.0));
+
+    // 7. Antichess Black to move, Black wins in 2 moves (mate +2 in UCI): 2*2 = 4 plies -> -996.0
+    expect(state.engineEvalToGraphScore(bWin2.asWhitePerspective(whiteToMove: false), false, variant: DatasetVariant.antichess), equals(-996.0));
+
+    // 8. Antichess Black to move, Black loses in 2 moves (mate -2 in UCI): 2*2 - 1 = 3 plies -> +997.0
+    expect(state.engineEvalToGraphScore(bLose2.asWhitePerspective(whiteToMove: false), false, variant: DatasetVariant.antichess), equals(997.0));
+
+    // 9. Antichess user bug scenario: White to move plays Ne2; in child position Black to move is losing in 18 moves (-M18).
+    // Child position eval from Black's perspective: mate -18.
+    const bLose18 = EngineEvaluation(mate: -18);
+    final childScore = state.engineEvalToGraphScore(bLose18.asWhitePerspective(whiteToMove: false), false, variant: DatasetVariant.antichess);
+    expect(childScore, equals(965.0)); // 1000 - (2*18 - 1) = 965.0 (35 plies remaining in child)
+    // When displayed in the movelist for move Ne2, isMoveScore is true and must format to +M18 (not +M19)
+    expect(state.formatScore(childScore, isMoveScore: true), equals('+M18'));
+
+    // 10. Antichess terminal position: White has won on the board (White is stalemated with no legal moves).
+    // Engine reports score mate 0. Must resolve to +1000.0 (+M0) instead of -M0.
+    const antichessWinFen = '1n5r/2p4p/8/3k4/6b1/6P1/7r/8 w - - 0 1';
+    const mate0Eval = EngineEvaluation(mate: 0, fen: antichessWinFen);
+    final mate0Score = state.engineEvalToGraphScore(mate0Eval, true, variant: DatasetVariant.antichess);
+    expect(mate0Score, equals(1000.0));
+    expect(state.formatScore(mate0Score), equals('+M0'));
+  });
+
+  testWidgets('Antichess stalemated White win renders +M0 in engine evaluation display', (WidgetTester tester) async {
+    final engineService = FairyStockfishService(initialVariant: DatasetVariant.antichess);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.antichess,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const antichessWinFen = '1n5r/2p4p/8/3k4/6b1/6P1/7r/8 w - - 0 1';
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+    state.controller.loadFen(antichessWinFen);
+    await tester.pumpAndSettle();
+
+    // Directly supply an engine evaluation with mate: 0 (from Fairy-Stockfish terminal score)
+    const mate0Eval = EngineEvaluation(mate: 0, fen: antichessWinFen, depth: 0);
+    state.setEngineEvalsForTesting([mate0Eval]);
+    await tester.pump();
+
+    // Verify engine display row shows +M0, never -M0
+    expect(find.text('+M0'), findsAtLeastNWidgets(1));
+    expect(find.text('-M0'), findsNothing);
   });
 
   testWidgets('Crazyhouse layout renders board and pockets without overflow in wide and narrow layouts', (WidgetTester tester) async {

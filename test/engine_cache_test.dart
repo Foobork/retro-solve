@@ -154,6 +154,27 @@ void main() {
       expect(cache.get(DatasetVariant.standard, fen, minDepth: 16)!.first.candidateMove, equals('e7e5'));
     });
 
+    test('upgrades shallower mate evaluation with deeper mate evaluation and rejects downgrades', () {
+      const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      final mateDepth11 = [
+        const EngineEvaluation(depth: 11, mate: 18, candidateMove: 'g1e2'),
+      ];
+      final mateDepth16 = [
+        const EngineEvaluation(depth: 16, mate: 18, candidateMove: 'g1e2'),
+      ];
+
+      cache.put(DatasetVariant.antichess, fen, mateDepth11);
+      expect(cache.get(DatasetVariant.antichess, fen)!.first.depth, equals(11));
+
+      // Deeper mate at depth 16 should upgrade depth 11
+      cache.put(DatasetVariant.antichess, fen, mateDepth16);
+      expect(cache.get(DatasetVariant.antichess, fen)!.first.depth, equals(16));
+
+      // Shallower mate at depth 11 should be rejected
+      cache.put(DatasetVariant.antichess, fen, mateDepth11);
+      expect(cache.get(DatasetVariant.antichess, fen)!.first.depth, equals(16));
+    });
+
     test('evicts least recently used entry when maxEntries exceeded', () {
       cache = EngineCache(maxEntries: 2, minCacheDepth: 12);
       const pos1 = '8/8/8/8/8/8/8/K1k5 w - - 0 1';

@@ -5,7 +5,7 @@ import 'engine_service.dart';
 class FairyStockfishService implements EngineService {
   FairyStockfishService({
     String binaryName = 'fairy-stockfish_x86-64-modern.exe',
-    int searchDepth = 12,
+    int searchDepth = 16,
     Duration commandTimeout = const Duration(seconds: 5),
     DatasetVariant initialVariant = DatasetVariant.koth,
     EngineCache? cache,

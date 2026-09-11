@@ -9,7 +9,7 @@ import 'engine_service.dart';
 class EngineCache {
   EngineCache({
     this.maxEntries = 50000,
-    this.minCacheDepth = 12,
+    this.minCacheDepth = 16,
   });
 
   /// Maximum number of positions to keep in cache before evicting least-recently used.
@@ -168,8 +168,8 @@ class EngineCache {
       if (existingBest.mate != null && best.mate == null) {
         return;
       }
-      // Do not downgrade depth
-      if (existingDepth > depth && best.mate == null) {
+      // Do not downgrade depth unless replacing non-mate with mate
+      if (existingDepth > depth && (best.mate == null || existingBest.mate != null)) {
         return;
       }
     }

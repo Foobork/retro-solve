@@ -9,7 +9,7 @@ import 'engine_service.dart';
 class FairyStockfishService implements EngineService {
   FairyStockfishService({
     this.binaryName = 'fairy_stockfish_worker.js',
-    this.searchDepth = 12,
+    this.searchDepth = 16,
     this.commandTimeout = const Duration(seconds: 10),
     DatasetVariant initialVariant = DatasetVariant.koth,
     EngineCache? cache,
@@ -228,22 +228,37 @@ class FairyStockfishService implements EngineService {
   }
 
   Future<void> _startSearchImpl(String fen) async {
+    // If the engine is already actively searching this exact position, let it continue.
+    if (_isSearching && _activeFen == fen) {
+      return;
+    }
+
     final cached = cache.get(_variant, fen, minDepth: 16);
     if (cached != null && cached.isNotEmpty) {
-      if (_isStarted && _worker != null) {
-        _waitingForReadyOk = true;
-        _isSearching = false;
-        try {
-          _writeLine('stop');
-          _writeLine('isready');
-          await _waitForLine('readyok');
-        } catch (_) {}
+      final best = cached.first;
+      final hasReachedFullDepth = (best.depth != null && best.depth! >= 16);
+      if (hasReachedFullDepth) {
+        if (_isStarted && _worker != null) {
+          _waitingForReadyOk = true;
+          _isSearching = false;
+          try {
+            _writeLine('stop');
+            _writeLine('isready');
+            await _waitForLine('readyok');
+          } catch (_) {}
+        }
+        _activeFen = fen;
+        _currentEvals.clear();
+        _currentEvals.addAll(cached.map((e) => e.copyWithFen(fen)));
+        _evaluationController.add(List.from(_currentEvals));
+        return;
       }
+      // Shallow cached evaluation (e.g. mate found at depth < 16).
+      // Populate immediately for UI responsiveness, but proceed to search deeper.
       _activeFen = fen;
       _currentEvals.clear();
       _currentEvals.addAll(cached.map((e) => e.copyWithFen(fen)));
       _evaluationController.add(List.from(_currentEvals));
-      return;
     }
 
     if (!_isStarted || _worker == null) {
@@ -258,8 +273,10 @@ class FairyStockfishService implements EngineService {
       await _waitForLine('readyok');
 
       _activeFen = fen;
-      _currentEvals.clear();
-      _evaluationController.add([]);
+      if (cached == null || cached.isEmpty) {
+        _currentEvals.clear();
+        _evaluationController.add([]);
+      }
       _isSearching = true;
       _writeLine('setoption name MultiPV value 5');
       _writeLine('position fen $fen');

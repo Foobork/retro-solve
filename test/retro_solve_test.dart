@@ -190,4 +190,41 @@ void main() {
     expect(evaluatedSans.contains('Bxd7'), isTrue);
     expect(evaluatedSans.contains('Nxd7'), isFalse);
   });
+
+  testWidgets('handles mate in 200 in retrograde solving, input parsing, and UI rendering', (WidgetTester tester) async {
+    resetGraph();
+
+    const rootBfen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -';
+    const childBfen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -';
+
+    // Child has White winning in 200 moves (Black to move, 398 plies to mate: 1000 - 398 = 602.0)
+    final rootVertex = graph.addVertex(rootBfen);
+    rootVertex.inDatabase = true;
+    graph.addLink(rootBfen, childBfen);
+    graph.assign(childBfen, 602.0);
+    graph.solveBfen(rootBfen);
+
+    // Root (White to move) adjusts child score 602.0 by subtracting 1 ply -> 601.0 (399 plies = mate in 200)
+    expect(rootVertex.computed, equals(601.0));
+
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: _NoopEngineService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+    // Verify formatting at root position
+    expect(state.formatScore(rootVertex.computed!), equals('+M200'));
+
+    // Test typing +M200 directly
+    await tester.enterText(find.byType(TextField), '+M200');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(rootVertex.assigned, equals(600.0));
+    expect(state.formatScore(rootVertex.assigned!), equals('+M200'));
+  });
 }

@@ -8,6 +8,10 @@ typedef NodeUpdateCallback = void Function(
 typedef EdgeUpdateCallback = void Function(String fromBfen, String toBfen);
 
 class Graph {
+  /// Scores with absolute value >= mateThreshold represent forced mate evaluations.
+  /// A threshold of 200.0 supports mate distances up to 400 moves (800 plies: 1000.0 - 800.0 = 200.0).
+  static const double mateThreshold = 200.0;
+
   final Map<String, Vertex> v = {};
   NodeUpdateCallback? onNodeUpdated;
   EdgeUpdateCallback? onEdgeAdded;
@@ -169,11 +173,12 @@ class Graph {
   }
 
   double _adjustMateScore(double eval) {
-    const double mateThreshold = 900.0;
     if (eval > mateThreshold) {
-      return eval - 1.0; // Increase mate distance for white mates
+      final adjusted = eval - 1.0; // Increase mate distance for white mates
+      return adjusted > mateThreshold ? adjusted : mateThreshold + 0.1;
     } else if (eval < -mateThreshold) {
-      return eval + 1.0; // Increase mate distance for black mates
+      final adjusted = eval + 1.0; // Increase mate distance for black mates
+      return adjusted < -mateThreshold ? adjusted : -mateThreshold - 0.1;
     }
     return eval;
   }

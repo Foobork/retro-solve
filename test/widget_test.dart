@@ -104,6 +104,37 @@ void main() {
     final mate0Score = state.engineEvalToGraphScore(mate0Eval, true, variant: DatasetVariant.antichess);
     expect(mate0Score, equals(1000.0));
     expect(state.formatScore(mate0Score), equals('+M0'));
+
+    // 11. Mate in 50 (1000 - 99 = 901.0): formats as +M50
+    const wWin50 = EngineEvaluation(mate: 50);
+    final score50 = state.engineEvalToGraphScore(wWin50.asWhitePerspective(whiteToMove: true), true, variant: DatasetVariant.standard);
+    expect(score50, equals(901.0));
+    expect(state.formatScore(score50), equals('+M50'));
+
+    // 12. Mate in 51 (1000 - 101 = 899.0): formats as +M51 (previously failed due to 900.0 threshold)
+    const wWin51 = EngineEvaluation(mate: 51);
+    final score51 = state.engineEvalToGraphScore(wWin51.asWhitePerspective(whiteToMove: true), true, variant: DatasetVariant.standard);
+    expect(score51, equals(899.0));
+    expect(state.formatScore(score51), equals('+M51'));
+
+    // 13. Mate in 200 (1000 - 399 = 601.0): formats as +M200
+    const wWin200 = EngineEvaluation(mate: 200);
+    final score200 = state.engineEvalToGraphScore(wWin200.asWhitePerspective(whiteToMove: true), true, variant: DatasetVariant.standard);
+    expect(score200, equals(601.0));
+    expect(state.formatScore(score200), equals('+M200'));
+
+    // 14. Black winning in 200 moves (score -200 from Black's perspective): formats as -M200 from White perspective
+    final bWin200 = state.engineEvalToGraphScore(wWin200.asWhitePerspective(whiteToMove: false), false, variant: DatasetVariant.standard);
+    expect(bWin200, equals(-601.0));
+    expect(state.formatScore(bWin200), equals('-M200'));
+
+    // 15. Parsing mate inputs: +M200, -M200, +M51
+    expect(state.parseScore('+M200'), equals(600.0));
+    expect(state.formatScore(state.parseScore('+M200')!), equals('+M200'));
+    expect(state.parseScore('-M200'), equals(-600.0));
+    expect(state.formatScore(state.parseScore('-M200')!), equals('-M200'));
+    expect(state.parseScore('+M51'), equals(898.0));
+    expect(state.formatScore(state.parseScore('+M51')!), equals('+M51'));
   });
 
   testWidgets('Antichess stalemated White win renders +M0 in engine evaluation display', (WidgetTester tester) async {

@@ -1608,7 +1608,13 @@ class HomePageState extends State<HomePage> {
       } else {
         pliesToMate = sideToMoveIsWinning ? (2 * absM - 1) : (2 * absM);
       }
-      return m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
+      final double rawScore = m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
+      if (m > 0 && rawScore <= Graph.mateThreshold) {
+        return Graph.mateThreshold + 0.1;
+      } else if (m < 0 && rawScore >= -Graph.mateThreshold) {
+        return -Graph.mateThreshold - 0.1;
+      }
+      return rawScore;
     } else if (eval.centipawns != null) {
       return eval.centipawns! / 100.0;
     }
@@ -1627,7 +1633,7 @@ class HomePageState extends State<HomePage> {
   }
 
   String _formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) {
-    const double mateThreshold = 900.0;
+    const double mateThreshold = Graph.mateThreshold;
     String formatted;
     if (score.abs() >= mateThreshold) {
       final sign = score > 0 ? '+' : '-';
@@ -1675,7 +1681,13 @@ class HomePageState extends State<HomePage> {
       final sign = match.group(1) == '-' ? -1 : 1;
       final moves = int.parse(match.group(2)!);
       final plies = moves * 2;
-      return sign > 0 ? 1000.0 - plies : -1000.0 + plies;
+      final rawScore = sign > 0 ? 1000.0 - plies : -1000.0 + plies;
+      if (sign > 0 && rawScore <= Graph.mateThreshold) {
+        return Graph.mateThreshold + 0.1;
+      } else if (sign < 0 && rawScore >= -Graph.mateThreshold) {
+        return -Graph.mateThreshold - 0.1;
+      }
+      return rawScore;
     }
     
     return double.tryParse(text);

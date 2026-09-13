@@ -227,4 +227,43 @@ void main() {
     expect(rootVertex.assigned, equals(600.0));
     expect(state.formatScore(rootVertex.assigned!), equals('+M200'));
   });
+
+  testWidgets('explore terminates without infinite thrashing when candidates have no assignable score', (WidgetTester tester) async {
+    resetGraph();
+
+    final engineService = FairyStockfishService(initialVariant: DatasetVariant.antichess);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.antichess,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const antichessFen = '8/p1pkpp1p/7b/2p5/P4p2/1p6/7P/7R w - - 0 1';
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+    state.controller.loadFen(antichessFen);
+    await tester.pumpAndSettle();
+
+    // Set pseudo-mate candidates that do not auto-populate
+    const pseudoEvals = [
+      EngineEvaluation(candidateMove: 'h2h3', centipawns: -15265, fen: antichessFen, depth: 16),
+      EngineEvaluation(candidateMove: 'a4a5', centipawns: -15265, fen: antichessFen, depth: 16),
+      EngineEvaluation(candidateMove: 'h1a1', centipawns: -15265, fen: antichessFen, depth: 16),
+    ];
+    state.setEngineEvalsForTesting(pseudoEvals);
+    await tester.pump();
+
+    // Start exploration
+    final exploreFuture = state.startExploring();
+
+    // Advance clocks to let exploration attempt each candidate once and exit cleanly
+    for (int i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 300));
+      if (!state.isExploring) break;
+    }
+
+    await exploreFuture;
+    expect(state.isExploring, isFalse);
+  });
 }

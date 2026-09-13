@@ -168,6 +168,16 @@ class FairyStockfishService implements EngineService {
             !_waitingForReadyOk &&
             _activeFen.isNotEmpty &&
             _currentEvals.isNotEmpty) {
+          final best = _currentEvals.first;
+          if (best.isPseudoMate &&
+              best.mate == null &&
+              (best.depth ?? 0) < EngineService.maxPseudoMateDepth) {
+            print('[engine] Pseudo-mate without DTM at depth ${best.depth}. Deepening search to ${EngineService.maxPseudoMateDepth}...');
+            _writeLine('position fen $_activeFen');
+            _writeLine('go depth ${EngineService.maxPseudoMateDepth}');
+            _isSearching = true;
+            return;
+          }
           cache.put(_variant, _activeFen, _currentEvals, force: true);
         }
         _isSearching = false;
@@ -269,7 +279,13 @@ class FairyStockfishService implements EngineService {
   Future<EngineEvaluation?> evaluatePositionSync(String fen, {int depth = 16}) async {
     final cached = cache.get(_variant, fen, minDepth: depth);
     if (cached != null && cached.isNotEmpty) {
-      return cached.first.copyWithFen(fen);
+      final best = cached.first;
+      final hasReachedFullDepth = best.mate != null ||
+          (!best.isPseudoMate && (best.depth != null && best.depth! >= depth)) ||
+          (best.isPseudoMate && (best.depth != null && best.depth! >= EngineService.maxPseudoMateDepth));
+      if (hasReachedFullDepth) {
+        return best.copyWithFen(fen);
+      }
     }
 
     if (!_isStarted || _process == null) await start();
@@ -308,6 +324,14 @@ class FairyStockfishService implements EngineService {
     await completer.future;
     await sub.cancel();
     _isSearching = false;
+
+    if (lastEval != null &&
+        lastEval!.isPseudoMate &&
+        lastEval!.mate == null &&
+        depth < EngineService.maxPseudoMateDepth) {
+      final deepEval = await evaluatePositionSync(fen, depth: EngineService.maxPseudoMateDepth);
+      if (deepEval != null) return deepEval;
+    }
 
     _writeLine('setoption name MultiPV value 5');
     if (lastEval != null) {
@@ -454,7 +478,9 @@ class FairyStockfishService implements EngineService {
     final cached = cache.get(_variant, fen, minDepth: 16);
     if (cached != null && cached.isNotEmpty) {
       final best = cached.first;
-      final hasReachedFullDepth = (best.depth != null && best.depth! >= 16);
+      final hasReachedFullDepth = best.mate != null ||
+          (!best.isPseudoMate && (best.depth != null && best.depth! >= 16)) ||
+          (best.isPseudoMate && (best.depth != null && best.depth! >= EngineService.maxPseudoMateDepth));
       if (hasReachedFullDepth) {
         if (_isStarted && _process != null && _isSearching) {
           _waitingForReadyOk = true;
@@ -471,7 +497,7 @@ class FairyStockfishService implements EngineService {
         _evaluationController.add(List.from(_currentEvals));
         return;
       }
-      // Shallow cached evaluation (e.g. mate found at depth < 16).
+      // Shallow or pseudo-mate cached evaluation.
       // Populate immediately for UI responsiveness, but proceed to search deeper.
       _activeFen = fen;
       _currentEvals.clear();
@@ -512,7 +538,14 @@ class FairyStockfishService implements EngineService {
       _isSearching = true;
       _writeLine('setoption name MultiPV value 5');
       _writeLine('position fen $fen');
-      _writeLine('go depth 16');
+      final isKnownPseudoMate = (cached?.isNotEmpty == true && cached!.first.isPseudoMate && cached.first.mate == null) ||
+          (cache.get(_variant, fen, minDepth: 0)?.isNotEmpty == true &&
+              cache.get(_variant, fen, minDepth: 0)!.first.isPseudoMate &&
+              cache.get(_variant, fen, minDepth: 0)!.first.mate == null);
+      final targetDepth = isKnownPseudoMate
+          ? EngineService.maxPseudoMateDepth
+          : EngineService.defaultSearchDepth;
+      _writeLine('go depth $targetDepth');
     } catch (e) {
       print('[engine] Search start failed: $e');
       await _restart();

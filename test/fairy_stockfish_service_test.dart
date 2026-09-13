@@ -58,4 +58,23 @@ void main() {
     const e = EngineEvaluation(centipawns: 123);
     expect(e.toString(), equals('Eval: +1.23'));
   });
+
+  test('pseudo-mate evaluation identifies +-15000 cp and formats as +Mate/-Mate', () {
+    const pseudoLoss = EngineEvaluation(centipawns: -15265);
+    const pseudoWin = EngineEvaluation(centipawns: 15265);
+    const normal = EngineEvaluation(centipawns: 1200);
+
+    expect(pseudoLoss.isPseudoMate, isTrue);
+    expect(pseudoWin.isPseudoMate, isTrue);
+    expect(normal.isPseudoMate, isFalse);
+
+    expect(pseudoLoss.toString(), contains('-Mate'));
+    expect(pseudoWin.toString(), contains('+Mate'));
+    expect(pseudoLoss.toString(), isNot(contains('-152.65')));
+  });
+
+  test('EngineService default and max pseudo-mate search depths', () {
+    expect(EngineService.defaultSearchDepth, equals(16));
+    expect(EngineService.maxPseudoMateDepth, equals(36));
+  });
 }

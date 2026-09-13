@@ -60,15 +60,21 @@ class EngineEvaluation {
     );
   }
 
+  bool get isPseudoMate => centipawns != null && centipawns!.abs() >= 15000;
+
   @override
   String toString() {
     String evalStr = 'unknown';
     if (mate != null) {
       evalStr = 'mate ${mate! > 0 ? '+' : ''}$mate';
     } else if (centipawns != null) {
-      final pawns = centipawns! / 100.0;
-      evalStr =
-          pawns > 0 ? '+${pawns.toStringAsFixed(2)}' : pawns.toStringAsFixed(2);
+      if (isPseudoMate) {
+        evalStr = centipawns! > 0 ? '+Mate' : '-Mate';
+      } else {
+        final pawns = centipawns! / 100.0;
+        evalStr =
+            pawns > 0 ? '+${pawns.toStringAsFixed(2)}' : pawns.toStringAsFixed(2);
+      }
     }
 
     final parts = <String>[];
@@ -151,6 +157,9 @@ String uciVariantForDataset(DatasetVariant variant) {
 }
 
 abstract class EngineService {
+  static const int defaultSearchDepth = 16;
+  static const int maxPseudoMateDepth = 36;
+
   DatasetVariant get variant;
   bool get isNNUE;
   bool get isEngineAvailable;

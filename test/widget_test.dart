@@ -135,6 +135,47 @@ void main() {
     expect(state.formatScore(state.parseScore('-M200')!), equals('-M200'));
     expect(state.parseScore('+M51'), equals(898.0));
     expect(state.formatScore(state.parseScore('+M51')!), equals('+M51'));
+
+    // 16. Pseudo-mate from engine (e.g. +-15265 cp) is rejected from being treated as static eval
+    const pseudoLossEval = EngineEvaluation(centipawns: -15265);
+    const pseudoWinEval = EngineEvaluation(centipawns: 15265);
+    expect(pseudoLossEval.isPseudoMate, isTrue);
+    expect(pseudoWinEval.isPseudoMate, isTrue);
+    expect(state.engineEvalToGraphScore(pseudoLossEval, true), isNull);
+    expect(state.engineEvalToGraphScore(pseudoWinEval, true), isNull);
+    expect(pseudoLossEval.toString().contains('-Mate'), isTrue);
+    expect(pseudoWinEval.toString().contains('+Mate'), isTrue);
+    expect(state.formatScore(-152.65), equals('-Mate'));
+    expect(state.formatScore(152.65), equals('+Mate'));
+  });
+
+  testWidgets('Pseudo-mate evaluations render -Mate/+Mate and never -152.65 in engine widget', (WidgetTester tester) async {
+    final engineService = FairyStockfishService(initialVariant: DatasetVariant.antichess);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.antichess,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    const antichessFen = '8/p1pkpp1p/7b/2p5/P4p2/1p6/7P/7R w - - 0 1';
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+    state.controller.loadFen(antichessFen);
+    await tester.pumpAndSettle();
+
+    // Candidate moves with -15265 centipawns (pseudo-mate from engine)
+    const pseudoEvals = [
+      EngineEvaluation(candidateMove: 'h2h3', centipawns: -15265, fen: antichessFen, depth: 16),
+      EngineEvaluation(candidateMove: 'a4a5', centipawns: -15265, fen: antichessFen, depth: 16),
+      EngineEvaluation(candidateMove: 'h1a1', centipawns: -15265, fen: antichessFen, depth: 16),
+    ];
+    state.setEngineEvalsForTesting(pseudoEvals);
+    await tester.pump();
+
+    // Must display -Mate, never -152.65
+    expect(find.text('-Mate'), findsAtLeastNWidgets(1));
+    expect(find.text('-152.65'), findsNothing);
   });
 
   testWidgets('Antichess stalemated White win renders +M0 in engine evaluation display', (WidgetTester tester) async {

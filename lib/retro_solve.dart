@@ -530,8 +530,10 @@ class HomePageState extends State<HomePage> {
             if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
               final bestEval = _engineEvals.first;
               final bool isSufficient = bestEval.mate != null ||
-                  (bestEval.depth != null && bestEval.depth! >= 16) ||
-                  (!widget.engineService.isSearching && bestEval.depth != null);
+                  (!bestEval.isPseudoMate &&
+                      ((bestEval.depth != null && bestEval.depth! >= 16) ||
+                          (!widget.engineService.isSearching &&
+                              bestEval.depth != null)));
               if (bestEval.fen != null &&
                   EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
                   isSufficient) {
@@ -704,7 +706,9 @@ class HomePageState extends State<HomePage> {
           if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
             final hasFull = bestEval.mate != null ||
-                (bestEval.depth != null && bestEval.depth! >= 16);
+                (!bestEval.isPseudoMate &&
+                    bestEval.depth != null &&
+                    bestEval.depth! >= 16);
             if (hasFull) {
               final score = _engineEvalToGraphScore(bestEval, whiteToMove);
               if (score != null) {
@@ -718,7 +722,12 @@ class HomePageState extends State<HomePage> {
         });
         final bestCached = validEvals.first;
         final hasFull = bestCached.mate != null ||
-            (bestCached.depth != null && bestCached.depth! >= 16);
+            (!bestCached.isPseudoMate &&
+                bestCached.depth != null &&
+                bestCached.depth! >= 16) ||
+            (bestCached.isPseudoMate &&
+                bestCached.depth != null &&
+                bestCached.depth! >= EngineService.maxPseudoMateDepth);
         if (hasFull) {
           return;
         }
@@ -877,14 +886,19 @@ class HomePageState extends State<HomePage> {
         final bool isCurrentPos = bestEval.fen == null ||
             EngineCache.canonicalKey(_variant, bestEval.fen!) ==
                 EngineCache.canonicalKey(_variant, _controller.game.fen);
+        final bool hasReachedTarget = bestEval.mate != null ||
+            (!bestEval.isPseudoMate &&
+                bestEval.depth != null &&
+                bestEval.depth! >= 16) ||
+            (bestEval.isPseudoMate &&
+                bestEval.depth != null &&
+                bestEval.depth! >= EngineService.maxPseudoMateDepth);
         if (isCurrentPos &&
-            (bestEval.mate != null ||
-                (bestEval.depth != null && bestEval.depth! >= 16) ||
-                !widget.engineService.isSearching)) {
+            (hasReachedTarget || !widget.engineService.isSearching)) {
           break;
         }
       }
-      if (stabilizationStopwatch.elapsedMilliseconds > 15000) {
+      if (stabilizationStopwatch.elapsedMilliseconds > 30000) {
         break;
       }
       await Future.delayed(const Duration(milliseconds: 100));
@@ -964,6 +978,8 @@ class HomePageState extends State<HomePage> {
       }
     }
 
+    final attemptedMoves = <String>{};
+
     while (_isExploring && mounted) {
       final currentEvaluatedSans = _getEvaluatedMoveSans();
       final currentIsWhite = _controller.game.turn == white;
@@ -991,7 +1007,9 @@ class HomePageState extends State<HomePage> {
 
       if (currentWinningMateSan != null) {
         if (currentEvaluatedSans.contains(currentWinningMateSan) ||
-            currentEvaluatedSans.contains(_controller.game.normalizeMoveString(currentWinningMateSan))) {
+            currentEvaluatedSans.contains(_controller.game.normalizeMoveString(currentWinningMateSan)) ||
+            attemptedMoves.contains(currentWinningMateSan) ||
+            attemptedMoves.contains(_controller.game.normalizeMoveString(currentWinningMateSan))) {
           print(
               '[explore] Winning move ($currentWinningMateSan) already explored. Skipping weaker alternatives.');
           break;
@@ -1002,14 +1020,18 @@ class HomePageState extends State<HomePage> {
           String san = _uciToSan(e.candidateMove);
           if (san != '—' &&
               !currentEvaluatedSans.contains(san) &&
-              !currentEvaluatedSans.contains(_controller.game.normalizeMoveString(san))) {
+              !currentEvaluatedSans.contains(_controller.game.normalizeMoveString(san)) &&
+              !attemptedMoves.contains(san) &&
+              !attemptedMoves.contains(_controller.game.normalizeMoveString(san))) {
             nextMoveToExplore = san;
             break;
           }
         }
         if (nextMoveToExplore == null) {
           for (final m in _knownMoves) {
-            if (m.eval == null) {
+            if (m.eval == null &&
+                !attemptedMoves.contains(m.move) &&
+                !attemptedMoves.contains(_controller.game.normalizeMoveString(m.move))) {
               nextMoveToExplore = m.move;
               break;
             }
@@ -1024,16 +1046,21 @@ class HomePageState extends State<HomePage> {
         break;
       }
 
+      attemptedMoves.add(nextMoveToExplore);
+      attemptedMoves.add(_controller.game.normalizeMoveString(nextMoveToExplore));
+
       print(
           '[explore] Choosing to explore unexplored move: $nextMoveToExplore');
       _controller.makeMoveWithNormalNotation(nextMoveToExplore);
 
       await Future.delayed(const Duration(milliseconds: 200));
 
+      final waitStopwatch = Stopwatch()..start();
       while (_isExploring && mounted) {
         final bfen = _controller.game.bfen;
         if (graph.v[bfen]?.assigned != null || graph.v[bfen]?.computed != null) break;
         if (!widget.engineService.isSearching && _engineEvals.isNotEmpty) break;
+        if (waitStopwatch.elapsedMilliseconds > 30000) break;
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
@@ -1057,13 +1084,18 @@ class HomePageState extends State<HomePage> {
     final currentKey = EngineCache.canonicalKey(_variant, currentFen);
     if (!_engineEvalPending && _engineEvals.isNotEmpty) {
       final bestEval = _engineEvals.first;
+      final bool hasReachedTarget = bestEval.mate != null ||
+          (!bestEval.isPseudoMate &&
+              bestEval.depth != null &&
+              bestEval.depth! >= 16) ||
+          (bestEval.isPseudoMate &&
+              bestEval.depth != null &&
+              bestEval.depth! >= EngineService.maxPseudoMateDepth);
       if (bestEval.fen != null &&
           EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
           (bestEval.candidateMove == null ||
               EngineCache.isMoveColorConsistentWithFen(currentFen, bestEval.candidateMove!)) &&
-          (bestEval.mate != null ||
-              (bestEval.depth != null && bestEval.depth! >= 16) ||
-              !widget.engineService.isSearching)) {
+          (hasReachedTarget || !widget.engineService.isSearching)) {
         return;
       }
     }
@@ -1085,14 +1117,19 @@ class HomePageState extends State<HomePage> {
                 EngineCache.canonicalKey(_variant, _controller.game.fen) &&
             (bestEval.candidateMove == null ||
                 EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, bestEval.candidateMove!));
+        final bool hasReachedTarget = bestEval.mate != null ||
+            (!bestEval.isPseudoMate &&
+                bestEval.depth != null &&
+                bestEval.depth! >= 16) ||
+            (bestEval.isPseudoMate &&
+                bestEval.depth != null &&
+                bestEval.depth! >= EngineService.maxPseudoMateDepth);
         if (isCurrentPos &&
-            (bestEval.mate != null ||
-                (bestEval.depth != null && bestEval.depth! >= 16) ||
-                !widget.engineService.isSearching)) {
+            (hasReachedTarget || !widget.engineService.isSearching)) {
           break;
         }
       }
-      if (stopwatch.elapsedMilliseconds > 15000) {
+      if (stopwatch.elapsedMilliseconds > 30000) {
         break;
       }
       await Future.delayed(const Duration(milliseconds: 100));
@@ -1476,10 +1513,14 @@ class HomePageState extends State<HomePage> {
             evalStr = e.mate! > 0 ? '+M${e.mate!}' : '-M${e.mate!.abs()}';
           }
         } else if (e.centipawns != null) {
-          final pawns = e.centipawns! / 100.0;
-          evalStr = pawns > 0
-              ? '+${pawns.toStringAsFixed(2)}'
-              : pawns.toStringAsFixed(2);
+          if (e.isPseudoMate) {
+            evalStr = e.centipawns! > 0 ? '+Mate' : '-Mate';
+          } else {
+            final pawns = e.centipawns! / 100.0;
+            evalStr = pawns > 0
+                ? '+${pawns.toStringAsFixed(2)}'
+                : pawns.toStringAsFixed(2);
+          }
         }
 
         final isEvaluated = evaluatedMoveSans.contains(san) ||
@@ -1616,6 +1657,9 @@ class HomePageState extends State<HomePage> {
       }
       return rawScore;
     } else if (eval.centipawns != null) {
+      if (eval.isPseudoMate) {
+        return null;
+      }
       return eval.centipawns! / 100.0;
     }
     return null;
@@ -1650,6 +1694,8 @@ class HomePageState extends State<HomePage> {
         }
       }
       formatted = '$sign' 'M$moves';
+    } else if (score.abs() >= 150.0) {
+      formatted = score > 0 ? '+Mate' : '-Mate';
     } else {
       formatted = score > 0 ? '+${score.toStringAsFixed(2)}' : score.toStringAsFixed(2);
     }
@@ -1704,6 +1750,12 @@ class HomePageState extends State<HomePage> {
 
   @visibleForTesting
   int Function(MoveInfo, MoveInfo) compareMoves(PlayerColor turn) => _compare(turn);
+
+  @visibleForTesting
+  bool get isExploring => _isExploring;
+
+  @visibleForTesting
+  Future<void> startExploring() => _startExploring();
 
   Chess _createGameForVariant(DatasetVariant variant) {
     switch (variant) {

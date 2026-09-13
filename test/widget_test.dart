@@ -322,6 +322,93 @@ void main() {
     await stabilizationFuture;
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('ChessBoard highlights the last move played, updates on next move, and clears on undo/reset', (WidgetTester tester) async {
+    final mockService = MockEngineService(variant: DatasetVariant.standard);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: mockService,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+
+    // 1. Initially no last-move highlight
+    expect(find.byKey(const ValueKey('last-move-from-e2')), findsNothing);
+    expect(find.byKey(const ValueKey('last-move-to-e4')), findsNothing);
+
+    // 2. Make move e4
+    state.controller.makeMoveWithNormalNotation('e4');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const ValueKey('last-move-from-e2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('last-move-to-e4')), findsOneWidget);
+
+    // 3. Make move e5
+    state.controller.makeMoveWithNormalNotation('e5');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const ValueKey('last-move-from-e2')), findsNothing);
+    expect(find.byKey(const ValueKey('last-move-to-e4')), findsNothing);
+    expect(find.byKey(const ValueKey('last-move-from-e7')), findsOneWidget);
+    expect(find.byKey(const ValueKey('last-move-to-e5')), findsOneWidget);
+
+    // 4. Undo move e5
+    state.controller.undoMove();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const ValueKey('last-move-from-e2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('last-move-to-e4')), findsOneWidget);
+    expect(find.byKey(const ValueKey('last-move-from-e7')), findsNothing);
+    expect(find.byKey(const ValueKey('last-move-to-e5')), findsNothing);
+
+    // 5. Undo move e4
+    state.controller.undoMove();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const ValueKey('last-move-from-e2')), findsNothing);
+    expect(find.byKey(const ValueKey('last-move-to-e4')), findsNothing);
+  });
+
+  testWidgets('Crazyhouse drop highlights destination square without board origin square', (WidgetTester tester) async {
+    final mockService = MockEngineService(variant: DatasetVariant.crazyhouse);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.crazyhouse,
+        engineService: mockService,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+    // Load a position with a pawn in White's pocket:
+    const fenWithPocket = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[P] w KQkq - 0 1';
+    state.controller.loadFen(fenWithPocket);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    state.controller.makeMoveWithNormalNotation('P@e4');
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byKey(const ValueKey('last-move-to-e4')), findsOneWidget);
+    // There should be no origin square highlighted on the board
+    expect(find.byWidgetPredicate((widget) {
+      if (widget.key is ValueKey<String>) {
+        final keyVal = (widget.key as ValueKey<String>).value;
+        return keyVal.startsWith('last-move-from-');
+      }
+      return false;
+    }), findsNothing);
+  });
 }
 
 class MockEngineService implements EngineService {

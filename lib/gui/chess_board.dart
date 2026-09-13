@@ -66,6 +66,12 @@ class ChessBoard extends StatefulWidget {
 
   final List<BoardArrow> arrows;
 
+  /// Square of origin for the last move made (e.g. 'e2').
+  final String? lastMoveFrom;
+
+  /// Square of destination for the last move made (e.g. 'e4').
+  final String? lastMoveTo;
+
   const ChessBoard({
     Key? key,
     required this.controller,
@@ -75,6 +81,8 @@ class ChessBoard extends StatefulWidget {
     this.boardOrientation = white,
     this.onMove,
     this.arrows = const [],
+    this.lastMoveFrom,
+    this.lastMoveTo,
   }) : super(key: key);
 
   @override
@@ -102,6 +110,12 @@ class _ChessBoardState extends State<ChessBoard> {
                   var squareName = '$boardFile$boardRank';
                   var pieceOnSquare = game.get(squareName);
 
+                  final lastMove = game.history.isNotEmpty ? game.history.last.move : null;
+                  final effectiveLastMoveTo = widget.lastMoveTo ?? lastMove?.toAlgebraic;
+                  final effectiveLastMoveFrom = widget.lastMoveFrom ?? lastMove?.fromAlgebraic;
+                  final isLastMoveTo = squareName == effectiveLastMoveTo;
+                  final isLastMoveFrom = squareName == effectiveLastMoveFrom;
+
                   var piece = BoardPiece(
                     key: ValueKey('piece-$squareName-${pieceOnSquare?.color}-${pieceOnSquare?.type}'),
                     squareName: squareName,
@@ -117,7 +131,10 @@ class _ChessBoardState extends State<ChessBoard> {
                             color: Colors.transparent,
                             child: piece,
                           ),
-                          childWhenDragging: const SizedBox(),
+                          childWhenDragging: Opacity(
+                            opacity: 0.3,
+                            child: piece,
+                          ),
                           data: PieceMoveData(
                             squareName: squareName,
                             pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
@@ -128,46 +145,86 @@ class _ChessBoardState extends State<ChessBoard> {
 
                   var dragTarget = DragTarget<PieceMoveData>(
                     key: ValueKey('target-$squareName'),
-                    builder: (context, list, _) {
-                      return draggable;
-                    }, onWillAcceptWithDetails: (pieceMoveData) {
-                    return widget.enableUserMoves ? true : false;
-                  }, onAcceptWithDetails: (DragTargetDetails<PieceMoveData> dragTargetDetails) async {
-                    PieceMoveData pieceMoveData = dragTargetDetails.data;
-                    // A way to check if move occurred.
-                    PlayerColor moveColor = game.turn;
+                    builder: (context, candidateData, _) {
+                      final isHovered = candidateData.isNotEmpty;
 
-                    final isPawnPromotion = pieceMoveData.pieceType.toUpperCase() == "P" &&
-                        !pieceMoveData.squareName.startsWith('@') &&
-                        ((squareName[1] == "8" && pieceMoveData.pieceColor == white) ||
-                            (squareName[1] == "1" && pieceMoveData.pieceColor == black));
-
-                    if (isPawnPromotion) {
-                      var val = await _promotionDialog(
-                        context,
-                        color: pieceMoveData.pieceColor,
-                        isAntichess: game.isAntichess,
+                      return Stack(
+                        children: [
+                          if (isLastMoveTo)
+                            Positioned.fill(
+                              child: Container(
+                                key: ValueKey('last-move-to-$squareName'),
+                                decoration: BoxDecoration(
+                                  color: const Color(0x4D64FFDA),
+                                  border: Border.all(
+                                    color: const Color(0xCC64FFDA),
+                                    width: 2.5,
+                                  ),
+                                ),
+                              ),
+                            )
+                          else if (isLastMoveFrom)
+                            Positioned.fill(
+                              child: Container(
+                                key: ValueKey('last-move-from-$squareName'),
+                                color: const Color(0x2864FFDA),
+                              ),
+                            ),
+                          Positioned.fill(child: draggable),
+                          if (isHovered)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  color: const Color(0x5964FFDA),
+                                ),
+                              ),
+                            ),
+                        ],
                       );
+                    },
+                    onWillAcceptWithDetails: (details) {
+                      if (!widget.enableUserMoves) return false;
+                      return details.data.squareName != squareName;
+                    },
+                    onAcceptWithDetails: (DragTargetDetails<PieceMoveData> dragTargetDetails) async {
+                      PieceMoveData pieceMoveData = dragTargetDetails.data;
+                      if (pieceMoveData.squareName == squareName) return;
 
-                      if (val != null) {
-                        widget.controller.makeMoveWithPromotion(
+                      // A way to check if move occurred.
+                      PlayerColor moveColor = game.turn;
+
+                      final isPawnPromotion = pieceMoveData.pieceType.toUpperCase() == "P" &&
+                          !pieceMoveData.squareName.startsWith('@') &&
+                          ((squareName[1] == "8" && pieceMoveData.pieceColor == white) ||
+                              (squareName[1] == "1" && pieceMoveData.pieceColor == black));
+
+                      if (isPawnPromotion) {
+                        var val = await _promotionDialog(
+                          context,
+                          color: pieceMoveData.pieceColor,
+                          isAntichess: game.isAntichess,
+                        );
+
+                        if (val != null) {
+                          widget.controller.makeMoveWithPromotion(
+                            from: pieceMoveData.squareName,
+                            to: squareName,
+                            pieceToPromoteTo: val,
+                          );
+                        } else {
+                          return;
+                        }
+                      } else {
+                        widget.controller.makeMove(
                           from: pieceMoveData.squareName,
                           to: squareName,
-                          pieceToPromoteTo: val,
                         );
-                      } else {
-                        return;
                       }
-                    } else {
-                      widget.controller.makeMove(
-                        from: pieceMoveData.squareName,
-                        to: squareName,
-                      );
-                    }
-                    if (game.turn != moveColor) {
-                      widget.onMove?.call();
-                    }
-                  });
+                      if (game.turn != moveColor) {
+                        widget.onMove?.call();
+                      }
+                    },
+                  );
 
                   final isLightSquare = (row + column) % 2 == 0;
                   final squareColor = isLightSquare ? widget.boardColor.lightSquare : widget.boardColor.darkSquare;

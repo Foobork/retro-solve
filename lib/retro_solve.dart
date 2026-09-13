@@ -69,6 +69,10 @@ class HomePageState extends State<HomePage> {
     final bool isBoardDisabled =
         _isExploring || _isAnalyzingGame || _isBatchEvaluating || _isLoadingVariant || _isPickingFile;
 
+    final lastMove = _controller.game.history.isNotEmpty ? _controller.game.history.last.move : null;
+    final lastMoveFrom = lastMove?.fromAlgebraic;
+    final lastMoveTo = lastMove?.toAlgebraic;
+
     var chessboard = IgnorePointer(
       ignoring: isBoardDisabled,
       child: ChessBoard(
@@ -76,6 +80,8 @@ class HomePageState extends State<HomePage> {
         boardColor: BoardColor.brown,
         boardOrientation: _orientation,
         enableUserMoves: !isBoardDisabled,
+        lastMoveFrom: lastMoveFrom,
+        lastMoveTo: lastMoveTo,
       ),
     );
     var turn = Text(_turn, style: _textStyle);

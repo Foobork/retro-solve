@@ -1,10 +1,11 @@
 // ignore_for_file: avoid_print
 
-import 'dart:math';
+import 'position_eval.dart';
 import 'tarjan.dart';
+export 'position_eval.dart';
 
 typedef NodeUpdateCallback = void Function(
-    String bfen, double? assigned, double? computed);
+    String bfen, PositionEval? assigned, PositionEval? computed);
 typedef EdgeUpdateCallback = void Function(String fromBfen, String toBfen);
 
 class Graph {
@@ -20,10 +21,14 @@ class Graph {
     return v.putIfAbsent(bfen, () => Vertex(bfen));
   }
 
-  Vertex addFullVertex(String bfen, double? assigned, double? computed) {
+  Vertex addFullVertex(String bfen, dynamic assigned, dynamic computed) {
     Vertex pos = v.putIfAbsent(bfen, () => Vertex(bfen));
-    pos.assigned = assigned;
-    pos.computed = computed;
+    pos.assigned = assigned is PositionEval?
+        ? assigned
+        : PositionEval.fromLegacyScore(assigned as double?);
+    pos.computed = computed is PositionEval?
+        ? computed
+        : PositionEval.fromLegacyScore(computed as double?);
     pos.inDatabase = true;
     return pos;
   }
@@ -36,9 +41,13 @@ class Graph {
     }
   }
 
-  void assign(String bfen, double? eval) {
+  void assign(String bfen, dynamic eval) {
     final pos = addVertex(bfen);
-    pos.assigned = eval;
+    if (eval is PositionEval?) {
+      pos.assigned = eval;
+    } else if (eval is double?) {
+      pos.assigned = PositionEval.fromLegacyScore(eval);
+    }
     pos.computed = null;
     pos.inDatabase = true;
     onNodeUpdated?.call(bfen, pos.assigned, pos.computed);
@@ -72,26 +81,26 @@ class Graph {
   }
 
   void solveBfen(String bfen) {
-    var vertex = v[bfen];
-    if (vertex == null) return;
+    // Local retrograde solve for a single node's reachable subgraph
+    if (!v.containsKey(bfen)) return;
 
     // 1. Upstream BFS to find all affected ancestor nodes
-    Set<String> ancestors = {bfen};
-    List<String> queue = [bfen];
+    final upstreamNodes = <String>{bfen};
+    final queue = [bfen];
     while (queue.isNotEmpty) {
-      String current = queue.removeLast();
-      for (String backLink in v[current]!.backLinks) {
-        if (ancestors.add(backLink)) {
-          queue.add(backLink);
+      final curr = queue.removeLast();
+      for (var parent in v[curr]!.backLinks) {
+        if (upstreamNodes.add(parent)) {
+          queue.add(parent);
         }
       }
     }
 
     // 2. Build local subgraph of outEdges & reset computed values
     Map<String, Iterable<String>> subGraphOutEdges = {};
-    for (String node in ancestors) {
+    for (String node in upstreamNodes) {
       subGraphOutEdges[node] =
-          v[node]!.links.where((l) => ancestors.contains(l));
+          v[node]!.links.where((l) => upstreamNodes.contains(l));
 
       v[node]!._originalComputed = v[node]!.computed;
       if (v[node]!.assigned == null) {
@@ -116,7 +125,7 @@ class Graph {
         pos.computed = pos.assigned;
       } else {
         if (scc.length > 1) {
-          pos.computed = 0.0;
+          pos.computed = const PositionEval(result: GameResult.draw, cp: 0);
         } else {
           pos.computed = null;
         }
@@ -136,29 +145,30 @@ class Graph {
       for (var bfen in scc) {
         final pos = v[bfen]!;
 
-        double? eval;
+        PositionEval? bestCandidate;
         for (String link in pos.links) {
-          double? linkEval = v[link]?.computed ?? v[link]?.assigned;
-          if (linkEval == null) continue;
-          double adjustedLinkEval = _adjustMateScore(linkEval);
+          final child = v[link];
+          final childEval = child?.effectiveEval;
+          if (childEval == null) continue;
 
-          if (eval == null) {
-            eval = adjustedLinkEval;
+          final candidate = _adjustChildEval(pos, link, childEval);
+          if (bestCandidate == null) {
+            bestCandidate = candidate;
           } else {
-            eval = pos.whiteToMove
-                ? max(eval, adjustedLinkEval)
-                : min(eval, adjustedLinkEval);
+            if (PositionEval.compare(candidate, bestCandidate, pos.whiteToMove) < 0) {
+              bestCandidate = candidate;
+            }
           }
         }
 
-        eval ??= pos.assigned;
+        bestCandidate ??= pos.assigned;
 
-        if (scc.length > 1 && eval == null) {
-          eval = 0.0;
+        if (scc.length > 1 && bestCandidate == null) {
+          bestCandidate = const PositionEval(result: GameResult.draw, cp: 0);
         }
 
-        if (pos.computed != eval) {
-          pos.computed = eval;
+        if (pos.computed != bestCandidate) {
+          pos.computed = bestCandidate;
           changed = true;
         }
       }
@@ -172,28 +182,49 @@ class Graph {
     }
   }
 
-  double _adjustMateScore(double eval) {
-    if (eval > mateThreshold) {
-      final adjusted = eval - 1.0; // Increase mate distance for white mates
-      return adjusted > mateThreshold ? adjusted : mateThreshold + 0.1;
-    } else if (eval < -mateThreshold) {
-      final adjusted = eval + 1.0; // Increase mate distance for black mates
-      return adjusted < -mateThreshold ? adjusted : -mateThreshold - 0.1;
+  PositionEval _adjustChildEval(Vertex pos, String linkBfen, PositionEval childEval) {
+    int? newDtw = childEval.dtw != null ? childEval.dtw! + 1 : null;
+    int? newDtz;
+    if (childEval.dtz != null) {
+      final parentPieceCount =
+          pos.bfen.split(' ')[0].replaceAll(RegExp(r'[^a-zA-Z]'), '').length;
+      final childPieceCount =
+          linkBfen.split(' ')[0].replaceAll(RegExp(r'[^a-zA-Z]'), '').length;
+      if (childPieceCount < parentPieceCount) {
+        newDtz = 1;
+      } else {
+        newDtz = childEval.dtz! + 1;
+      }
     }
-    return eval;
+
+    return PositionEval(
+      result: childEval.result,
+      dtw: newDtw,
+      dtz: newDtz,
+      cp: childEval.cp,
+    );
   }
+
+
 }
 
 class Vertex {
+  final String bfen;
   late bool whiteToMove;
-  double? assigned;
-  double? computed;
-  double? _originalComputed;
+  PositionEval? assigned;
+  PositionEval? computed;
+  PositionEval? _originalComputed;
   bool inDatabase = false;
   Set<String> links = {};
   Set<String> backLinks = {};
 
-  Vertex(String bfen) {
+  PositionEval? get effectiveEval => computed ?? assigned;
+
+  /// Legacy double getters for backward compatibility
+  double? get assignedScore => assigned?.toLegacyScore();
+  double? get computedScore => computed?.toLegacyScore();
+
+  Vertex(this.bfen) {
     final parts = bfen.split(' ');
     if (parts.length > 1) {
       whiteToMove = parts[1] == 'w';

@@ -2,6 +2,7 @@ import 'dart:async';
 import '../dataset_variant.dart';
 import 'engine_cache.dart';
 export 'engine_cache.dart';
+export 'tablebase_service.dart';
 
 /// Represents an engine evaluation produced by UCI engines (such as Fairy-Stockfish).
 ///
@@ -18,6 +19,7 @@ export 'engine_cache.dart';
 class EngineEvaluation {
   final int? centipawns;
   final int? mate;
+  final int? dtz;
   final int? depth;
   final String? candidateMove;
   final int? multipv;
@@ -26,6 +28,7 @@ class EngineEvaluation {
   const EngineEvaluation({
     this.centipawns,
     this.mate,
+    this.dtz,
     this.depth,
     this.candidateMove,
     this.multipv,
@@ -42,6 +45,7 @@ class EngineEvaluation {
     return EngineEvaluation(
       centipawns: centipawns != null ? -centipawns! : null,
       mate: mate != null ? -mate! : null,
+      dtz: dtz,
       depth: depth,
       candidateMove: candidateMove,
       multipv: multipv,
@@ -53,6 +57,7 @@ class EngineEvaluation {
     return EngineEvaluation(
       centipawns: centipawns,
       mate: mate,
+      dtz: dtz,
       depth: depth,
       candidateMove: candidateMove,
       multipv: multipv,
@@ -69,7 +74,11 @@ class EngineEvaluation {
       evalStr = 'mate ${mate! > 0 ? '+' : ''}$mate';
     } else if (centipawns != null) {
       if (isPseudoMate) {
-        evalStr = centipawns! > 0 ? '+Mate' : '-Mate';
+        if (dtz != null) {
+          evalStr = centipawns! > 0 ? '+DTZ ${dtz!.abs()}' : '-DTZ ${dtz!.abs()}';
+        } else {
+          evalStr = centipawns! > 0 ? '+Mate' : '-Mate';
+        }
       } else {
         final pawns = centipawns! / 100.0;
         evalStr =

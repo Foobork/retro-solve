@@ -155,7 +155,7 @@ void main() {
       game.undo();
 
       testGraph.solve();
-      expect(testGraph.v[a]?.computed, equals(-999.0));
+      expect(testGraph.v[a]?.computedScore, equals(-999.0));
     });
 
     test('Qg5 in r2qkb1r/pp2p2p/2n3pn/3p3Q/3PP3/8/PPP2P1P/R3KB1R w KQkq - solves to +997.0 (+M2)', () {
@@ -200,8 +200,8 @@ void main() {
       final qg5Bfen = game.bfen;
       game.undo();
 
-      expect(testGraph.v[rootBfen]?.computed, equals(997.0));
-      expect(testGraph.v[qg5Bfen]?.computed, equals(998.0));
+      expect(testGraph.v[rootBfen]?.computedScore, equals(997.0));
+      expect(testGraph.v[qg5Bfen]?.computedScore, equals(998.0));
     });
 
     test('r2qkb1r/pp2p2p/2n3pn/3p4/3PP2Q/8/PPP2P1P/R3KB1R b KQkq - known moves and graph test', () {
@@ -248,7 +248,7 @@ void main() {
       game.undo();
       testGraph.solve();
 
-      expect(testGraph.v[rootBfen]?.computed, equals(996.0));
+      expect(testGraph.v[rootBfen]?.computedScore, equals(996.0));
       expect(testGraph.v[g5Bfen]?.computed, isNotNull);
     });
 
@@ -270,9 +270,9 @@ void main() {
       testGraph.solve();
 
       // Root should be -997.0 (3 plies to mate from root)
-      expect(testGraph.v[game.bfen]?.computed, equals(-997.0));
+      expect(testGraph.v[game.bfen]?.computedScore, equals(-997.0));
       // Resulting node is -998.0
-      expect(testGraph.v[qh4Bfen]?.assigned, equals(-998.0));
+      expect(testGraph.v[qh4Bfen]?.assignedScore, equals(-998.0));
     });
   });
 }

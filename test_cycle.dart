@@ -27,10 +27,10 @@ void main() {
 
   graph.solve();
 
-  assert(graph.v["A w"]?.computed == 0.0);
-  assert(graph.v["B b"]?.computed == 0.0);
-  assert(graph.v["C w"]?.computed == 0.0);
-  assert(graph.v["D b"]?.computed == 0.0);
+  assert(graph.v["A w"]?.computedScore == 0.0);
+  assert(graph.v["B b"]?.computedScore == 0.0);
+  assert(graph.v["C w"]?.computedScore == 0.0);
+  assert(graph.v["D b"]?.computedScore == 0.0);
   logger.info("Cycle test 1 passed! All values converged to 0.0");
 
   // Now, let's add an exit from C to E with an assured winning evaluation (+10.0)
@@ -43,10 +43,10 @@ void main() {
   // B (black) has to go to C, so takes 10.0
   // A (white) has to go to B, so takes 10.0
   // D (black) has to go to A, so takes 10.0
-  assert(graph.v["C w"]?.computed == 10.0, 'Expected C w to be 10.0, got ${graph.v["C w"]?.computed}');
-  assert(graph.v["B b"]?.computed == 10.0, 'Expected B b to be 10.0, got ${graph.v["B b"]?.computed}');
-  assert(graph.v["A w"]?.computed == 10.0, 'Expected A w to be 10.0, got ${graph.v["A w"]?.computed}');
-  assert(graph.v["D b"]?.computed == 10.0, 'Expected D b to be 10.0, got ${graph.v["D b"]?.computed}');
+  assert(graph.v["C w"]?.computedScore == 10.0, 'Expected C w to be 10.0, got ${graph.v["C w"]?.computedScore}');
+  assert(graph.v["B b"]?.computedScore == 10.0, 'Expected B b to be 10.0, got ${graph.v["B b"]?.computedScore}');
+  assert(graph.v["A w"]?.computedScore == 10.0, 'Expected A w to be 10.0, got ${graph.v["A w"]?.computedScore}');
+  assert(graph.v["D b"]?.computedScore == 10.0, 'Expected D b to be 10.0, got ${graph.v["D b"]?.computedScore}');
   
   logger.info("Cycle test 2 passed! All values successfully backed up the 10.0 exit.");
 }

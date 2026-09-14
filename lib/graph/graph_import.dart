@@ -45,10 +45,43 @@ Future<void> importGraph(String filename) async {
     if (nodes.isNotEmpty) {
       print("Loading ${nodes.length} nodes from database $dbPath");
       for (var node in nodes) {
+        PositionEval? assignedEval;
+        PositionEval? computedEval;
+        if (node.containsKey('assigned_result') || node.containsKey('assigned_cp')) {
+          assignedEval = PositionEval(
+            result: GameResult.fromInt(node['assigned_result'] as int?),
+            dtw: node['assigned_dtw'] as int?,
+            dtz: node['assigned_dtz'] as int?,
+            cp: node['assigned_cp'] as int?,
+          );
+          computedEval = PositionEval(
+            result: GameResult.fromInt(node['computed_result'] as int?),
+            dtw: node['computed_dtw'] as int?,
+            dtz: node['computed_dtz'] as int?,
+            cp: node['computed_cp'] as int?,
+          );
+          if (assignedEval.result == null &&
+              assignedEval.dtw == null &&
+              assignedEval.dtz == null &&
+              assignedEval.cp == null) {
+            assignedEval = null;
+          }
+          if (computedEval.result == null &&
+              computedEval.dtw == null &&
+              computedEval.dtz == null &&
+              computedEval.cp == null) {
+            computedEval = null;
+          }
+        } else {
+          assignedEval =
+              PositionEval.fromLegacyScore(node['assigned'] as double?);
+          computedEval =
+              PositionEval.fromLegacyScore(node['computed'] as double?);
+        }
         graph.addFullVertex(
           node['bfen'] as String,
-          node['assigned'] as double?,
-          node['computed'] as double?,
+          assignedEval,
+          computedEval,
         );
       }
       print("Nodes loaded: ${graph.v.length}. Loading edges...");

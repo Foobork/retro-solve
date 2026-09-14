@@ -66,6 +66,13 @@ class FairyStockfishService implements EngineService {
 
   @override
   Future<EngineEvaluation?> evaluatePositionSync(String fen, {int depth = 16}) async {
+    if (TablebaseService.isSupported(_variant, fen)) {
+      final tbEvals = await TablebaseService.instance.probe(_variant, fen);
+      if (tbEvals != null && tbEvals.isNotEmpty) {
+        cache.put(_variant, fen, tbEvals, force: true);
+        return tbEvals.first;
+      }
+    }
     return null;
   }
 

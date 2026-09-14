@@ -42,25 +42,25 @@ void main() {
     addLinks(g, game);
     expect(g.v.length, equals(21));
     g.solve();
-    expect(g.v[startBfen]?.computed, equals(null));
+    expect(g.v[startBfen]?.computedScore, equals(null));
 
     game.move("d4");
     addLinks(g, game);
     g.assign(game.bfen, 0.1);
     g.solve();
-    expect(g.v[startBfen]?.computed, equals(0.1));
+    expect(g.v[startBfen]?.computedScore, equals(0.1));
 
     game.move("d5");
     addLinks(g, game);
     g.assign(game.bfen, 0.2);
     g.solve();
-    expect(g.v[startBfen]?.computed, equals(0.2));
+    expect(g.v[startBfen]?.computedScore, equals(0.2));
 
     game.move("Nf3");
     addLinks(g, game);
     g.assign(game.bfen, 0.3);
     g.solve();
-    expect(g.v[startBfen]?.computed, equals(0.3));
+    expect(g.v[startBfen]?.computedScore, equals(0.3));
 
     game.reset();
     game.move("Nf3");
@@ -70,6 +70,6 @@ void main() {
     game.move("d5");
     addLinks(g, game);
     g.solve();
-    expect(g.v[nf3]?.computed, equals(0.3));
+    expect(g.v[nf3]?.computedScore, equals(0.3));
   });
 }

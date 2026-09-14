@@ -94,7 +94,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Verify that the assigned score is correctly parsed to 1000 - 6 = 994.0
-    expect(vertex.assigned, equals(994.0));
+    expect(vertex.assignedScore, equals(994.0));
     // Since child variation is solved (+M5), the backsolved computed evaluation takes precedence in display
     expect(find.text('(+M5)'), findsOneWidget);
   });
@@ -119,7 +119,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
-    expect(vertex.assigned, equals(994.0));
+    expect(vertex.assignedScore, equals(994.0));
     expect(find.text('+M3'), findsOneWidget);
   });
 
@@ -205,7 +205,7 @@ void main() {
     graph.solveBfen(rootBfen);
 
     // Root (White to move) adjusts child score 602.0 by subtracting 1 ply -> 601.0 (399 plies = mate in 200)
-    expect(rootVertex.computed, equals(601.0));
+    expect(rootVertex.computedScore, equals(601.0));
 
     await tester.pumpWidget(
       RetroSolve(
@@ -224,7 +224,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
-    expect(rootVertex.assigned, equals(600.0));
+    expect(rootVertex.assignedScore, equals(600.0));
     expect(state.formatScore(rootVertex.assigned!), equals('+M200'));
   });
 

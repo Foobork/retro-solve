@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:developer';
 import 'package:sqflite_common/sqlite_api.dart';
+import '../graph/position_eval.dart';
 import 'db_init.dart';
 
 class _NodeUpdate {
   final String bfen;
-  final double? assigned;
-  final double? computed;
+  final PositionEval? assigned;
+  final PositionEval? computed;
   _NodeUpdate(this.bfen, this.assigned, this.computed);
 }
 
@@ -43,13 +44,19 @@ class DatabaseService {
     _db = await factory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 3,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE nodes (
               bfen TEXT PRIMARY KEY,
-              assigned REAL,
-              computed REAL
+              assigned_result INTEGER,
+              assigned_dtw INTEGER,
+              assigned_dtz INTEGER,
+              assigned_cp INTEGER,
+              computed_result INTEGER,
+              computed_dtw INTEGER,
+              computed_dtz INTEGER,
+              computed_cp INTEGER
             )
           ''');
           await db.execute('''
@@ -70,16 +77,35 @@ class DatabaseService {
               )
             ''');
           }
+          if (oldVersion < 3) {
+            await _migrateToVersion3(db);
+          }
         },
       ),
     );
 
-    // Failsafe: Ensure tables always exist regardless of migration state (useful during dev)
+    // Failsafe migration check: ensure legacy REAL columns are migrated even if version was dirty
+    try {
+      final tableInfo = await _db!.rawQuery("PRAGMA table_info('nodes');");
+      final columnNames =
+          tableInfo.map((row) => (row['name'] as String?)?.toLowerCase()).toSet();
+      if (columnNames.contains('assigned') || columnNames.contains('computed')) {
+        await _migrateToVersion3(_db!);
+      }
+    } catch (_) {}
+
+    // Failsafe: Ensure tables always exist
     await _db!.execute('''
       CREATE TABLE IF NOT EXISTS nodes (
         bfen TEXT PRIMARY KEY,
-        assigned REAL,
-        computed REAL
+        assigned_result INTEGER,
+        assigned_dtw INTEGER,
+        assigned_dtz INTEGER,
+        assigned_cp INTEGER,
+        computed_result INTEGER,
+        computed_dtw INTEGER,
+        computed_dtz INTEGER,
+        computed_cp INTEGER
       )
     ''');
     await _db!.execute('''
@@ -99,9 +125,70 @@ class DatabaseService {
     }
   }
 
-  Future<void> upsertNode(String bfen, double? assigned, double? computed) async {
+  static Future<void> _migrateToVersion3(DatabaseExecutor db) async {
+    // 1. Create temporary v3 table with pure integer evaluation columns
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS nodes_v3 (
+        bfen TEXT PRIMARY KEY,
+        assigned_result INTEGER,
+        assigned_dtw INTEGER,
+        assigned_dtz INTEGER,
+        assigned_cp INTEGER,
+        computed_result INTEGER,
+        computed_dtw INTEGER,
+        computed_dtz INTEGER,
+        computed_cp INTEGER
+      );
+    ''');
+
+    // 2. Read legacy rows
+    try {
+      final legacyRows = await db.rawQuery('SELECT * FROM nodes;');
+      if (legacyRows.isNotEmpty) {
+        final batch = db.batch();
+        for (var row in legacyRows) {
+          final bfen = row['bfen'] as String;
+          final legacyAssigned = (row['assigned'] as num?)?.toDouble();
+          final legacyComputed = (row['computed'] as num?)?.toDouble();
+          final assignedEval = PositionEval.fromLegacyScore(legacyAssigned);
+          final computedEval = PositionEval.fromLegacyScore(legacyComputed);
+
+          batch.insert(
+            'nodes_v3',
+            {
+              'bfen': bfen,
+              'assigned_result': assignedEval?.result?.value,
+              'assigned_dtw': assignedEval?.dtw,
+              'assigned_dtz': assignedEval?.dtz,
+              'assigned_cp': assignedEval?.cp,
+              'computed_result': computedEval?.result?.value,
+              'computed_dtw': computedEval?.dtw,
+              'computed_dtz': computedEval?.dtz,
+              'computed_cp': computedEval?.cp,
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+        await batch.commit(noResult: true);
+      }
+
+      // 3. Drop legacy table and rename nodes_v3 -> nodes
+      await db.execute('DROP TABLE nodes;');
+      await db.execute('ALTER TABLE nodes_v3 RENAME TO nodes;');
+    } catch (e) {
+      log('Warning migrating nodes to version 3: $e');
+    }
+  }
+
+  Future<void> upsertNode(String bfen, dynamic assigned, dynamic computed) async {
     if (_db == null) return;
-    _updateQueue[bfen] = _NodeUpdate(bfen, assigned, computed);
+    final assignedEval = assigned is PositionEval?
+        ? assigned
+        : PositionEval.fromLegacyScore(assigned as double?);
+    final computedEval = computed is PositionEval?
+        ? computed
+        : PositionEval.fromLegacyScore(computed as double?);
+    _updateQueue[bfen] = _NodeUpdate(bfen, assignedEval, computedEval);
     _scheduleFlush();
   }
 
@@ -137,8 +224,14 @@ class DatabaseService {
             'nodes',
             {
               'bfen': update.bfen,
-              'assigned': update.assigned,
-              'computed': update.computed,
+              'assigned_result': update.assigned?.result?.value,
+              'assigned_dtw': update.assigned?.dtw,
+              'assigned_dtz': update.assigned?.dtz,
+              'assigned_cp': update.assigned?.cp,
+              'computed_result': update.computed?.result?.value,
+              'computed_dtw': update.computed?.dtw,
+              'computed_dtz': update.computed?.dtz,
+              'computed_cp': update.computed?.cp,
             },
             conflictAlgorithm: ConflictAlgorithm.replace,
           );
@@ -187,14 +280,18 @@ class DatabaseService {
     await _db!.delete('edges');
   }
 
-  Future<void> close() async {
+  Future<void> flush() async {
     while (_isFlushing || _updateQueue.isNotEmpty || _edgeQueue.isNotEmpty) {
       if (!_isFlushing && (_updateQueue.isNotEmpty || _edgeQueue.isNotEmpty)) {
         await _flushQueue();
       } else {
-        await Future.delayed(const Duration(milliseconds: 50));
+        await Future.delayed(const Duration(milliseconds: 20));
       }
     }
+  }
+
+  Future<void> close() async {
+    await flush();
     await _db?.close();
     _db = null;
   }

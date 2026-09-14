@@ -139,6 +139,7 @@ class FairyStockfishService implements EngineService {
           _currentEvals[idx - 1] = EngineEvaluation(
             centipawns: parsedInfo.centipawns,
             mate: parsedInfo.mate,
+            dtz: existing.dtz,
             depth: parsedInfo.depth ?? existing.depth,
             candidateMove: parsedInfo.candidateMove ?? existing.candidateMove,
             multipv: parsedInfo.multipv ?? existing.multipv,
@@ -284,6 +285,27 @@ class FairyStockfishService implements EngineService {
       _evaluationController.add(List.from(_currentEvals));
     }
 
+    if (TablebaseService.isSupported(_variant, fen)) {
+      final tbEvals = await TablebaseService.instance.probe(_variant, fen);
+      if (tbEvals != null && tbEvals.isNotEmpty) {
+        if (_isStarted && _worker != null && _isSearching) {
+          _waitingForReadyOk = true;
+          _isSearching = false;
+          try {
+            _writeLine('stop');
+            _writeLine('isready');
+            await _waitForLine('readyok');
+          } catch (_) {}
+        }
+        _activeFen = fen;
+        _currentEvals.clear();
+        _currentEvals.addAll(tbEvals);
+        cache.put(_variant, fen, tbEvals, force: true);
+        _evaluationController.add(List.from(_currentEvals));
+        return;
+      }
+    }
+
     if (!_isStarted || _worker == null) {
       await start();
       if (!_isStarted || _worker == null) return;
@@ -327,6 +349,14 @@ class FairyStockfishService implements EngineService {
           (best.isPseudoMate && (best.depth != null && best.depth! >= EngineService.maxPseudoMateDepth));
       if (hasReachedFullDepth) {
         return best.copyWithFen(fen);
+      }
+    }
+
+    if (TablebaseService.isSupported(_variant, fen)) {
+      final tbEvals = await TablebaseService.instance.probe(_variant, fen);
+      if (tbEvals != null && tbEvals.isNotEmpty) {
+        cache.put(_variant, fen, tbEvals, force: true);
+        return tbEvals.first;
       }
     }
 

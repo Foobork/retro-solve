@@ -323,7 +323,7 @@ class HomePageState extends State<HomePage> {
     var rows = _knownMoves.map((MoveInfo info) {
       String evalStr = "";
       if (info.eval != null) {
-        evalStr = _formatScore(info.eval!, isMoveScore: true);
+        evalStr = info.eval!.format(isMove: true);
       }
       return _buildMoveRow(info.move, evalStr);
     }).toList();
@@ -536,6 +536,9 @@ class HomePageState extends State<HomePage> {
             if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
               final bestEval = _engineEvals.first;
               final bool isSufficient = bestEval.mate != null ||
+                  (bestEval.isPseudoMate &&
+                      bestEval.depth != null &&
+                      bestEval.depth! >= 100) ||
                   (!bestEval.isPseudoMate &&
                       ((bestEval.depth != null && bestEval.depth! >= 16) ||
                           (!widget.engineService.isSearching &&
@@ -543,22 +546,21 @@ class HomePageState extends State<HomePage> {
               if (bestEval.fen != null &&
                   EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
                   isSufficient) {
-                final score = _engineEvalToGraphScore(bestEval, _controller.game.turn == white);
-                if (score != null) {
-                  graph.assign(bfen, score);
+                final posEval = _engineEvalToPositionEval(bestEval, _controller.game.turn == white);
+                if (posEval != null) {
+                  graph.assign(bfen, posEval);
                   graph.v[bfen]?.inDatabase = true;
                   graph.solveBfen(bfen);
                   _knownMovesToSan();
                   final assigned = graph.v[bfen]?.assigned;
                   final computed = graph.v[bfen]?.computed;
                   if (computed != null) {
-                    final bool isSameAsAssigned =
-                        assigned != null && (computed - assigned).abs() < 1e-6;
+                    final bool isSameAsAssigned = assigned != null && computed == assigned;
                     _eval = isSameAsAssigned
-                        ? _formatScore(assigned)
-                        : _formatScore(computed, wrapInParentheses: true);
+                        ? assigned.format()
+                        : '(${computed.format()})';
                   } else if (assigned != null) {
-                    _eval = _formatScore(assigned);
+                    _eval = assigned.format();
                   }
                   if (_evalController.text != _eval) {
                     _evalController.text = _eval;
@@ -665,13 +667,12 @@ class HomePageState extends State<HomePage> {
       final assigned = vertex.assigned;
       final computed = vertex.computed;
       if (computed != null) {
-        final bool isSameAsAssigned =
-            assigned != null && (computed - assigned).abs() < 1e-6;
+        final bool isSameAsAssigned = assigned != null && computed == assigned;
         _eval = isSameAsAssigned
-            ? _formatScore(assigned)
-            : _formatScore(computed, wrapInParentheses: true);
+            ? assigned.format()
+            : '(${computed.format()})';
       } else if (assigned != null) {
-        _eval = _formatScore(assigned);
+        _eval = assigned.format();
       } else {
         _eval = "";
       }
@@ -712,13 +713,16 @@ class HomePageState extends State<HomePage> {
           if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
             final hasFull = bestEval.mate != null ||
+                (bestEval.isPseudoMate &&
+                    bestEval.depth != null &&
+                    bestEval.depth! >= 100) ||
                 (!bestEval.isPseudoMate &&
                     bestEval.depth != null &&
                     bestEval.depth! >= 16);
             if (hasFull) {
-              final score = _engineEvalToGraphScore(bestEval, whiteToMove);
-              if (score != null) {
-                graph.assign(bfen, score);
+              final posEval = _engineEvalToPositionEval(bestEval, whiteToMove);
+              if (posEval != null) {
+                graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
                 graph.solveBfen(bfen);
                 _knownMovesToSan();
@@ -776,18 +780,7 @@ class HomePageState extends State<HomePage> {
   }
 
   _compare(PlayerColor turn) => (MoveInfo i, MoveInfo j) {
-        var a = i.eval;
-        var b = j.eval;
-
-        return a == null
-            ? b == null
-                ? 0
-                : 1
-            : b == null
-                ? -1
-                : turn == white
-                    ? b.compareTo(a)
-                    : a.compareTo(b);
+        return PositionEval.compare(i.eval, j.eval, turn == white);
       };
 
   void _knownMovesToSan() {
@@ -804,7 +797,7 @@ class HomePageState extends State<HomePage> {
     var vertex = graph.v[scratch.bfen];
     if (vertex == null) return;
     if (!vertex.inDatabase && vertex.assigned == null && vertex.computed == null && vertex.links.isEmpty) return;
-    _knownMoves.add(MoveInfo(game.moveToSan(move), vertex.computed ?? vertex.assigned));
+    _knownMoves.add(MoveInfo(game.moveToSan(move), vertex.effectiveEval));
   }
 
   void _back() {
@@ -915,7 +908,7 @@ class HomePageState extends State<HomePage> {
     final knownMoveSans = _getKnownMoveSans();
     final isWhite = _controller.game.turn == white;
     final hasKnownWinningMate = _knownMoves.any((m) =>
-        m.eval != null && (isWhite ? m.eval! >= 999.0 : m.eval! <= -999.0));
+        m.score != null && (isWhite ? m.score! >= 999.0 : m.score! <= -999.0));
 
     // If the side to move already has a winning mate in 1 in known moves, skip exploring weaker alternatives
     if (hasKnownWinningMate) {
@@ -990,7 +983,7 @@ class HomePageState extends State<HomePage> {
       final currentEvaluatedSans = _getEvaluatedMoveSans();
       final currentIsWhite = _controller.game.turn == white;
       final currentHasWinningMate = _knownMoves.any((m) =>
-          m.eval != null && (currentIsWhite ? m.eval! >= 999.0 : m.eval! <= -999.0));
+          m.score != null && (currentIsWhite ? m.score! >= 999.0 : m.score! <= -999.0));
 
       if (currentHasWinningMate) {
         print('[explore] Position resolved with winning move for side to move. Skipping weaker alternatives.');
@@ -1364,9 +1357,9 @@ class HomePageState extends State<HomePage> {
       if (evalRaw != null) {
         final isWhiteToMove = graph.v[bfen]!.whiteToMove;
         final eval = evalRaw.asWhitePerspective(whiteToMove: isWhiteToMove);
-        final score = _engineEvalToGraphScore(eval, isWhiteToMove);
-        if (score != null) {
-          graph.assign(bfen, score);
+        final posEval = _engineEvalToPositionEval(eval, isWhiteToMove);
+        if (posEval != null) {
+          graph.assign(bfen, posEval);
         }
       }
       final currentElapsed = stopwatch.elapsedMilliseconds;
@@ -1520,7 +1513,11 @@ class HomePageState extends State<HomePage> {
           }
         } else if (e.centipawns != null) {
           if (e.isPseudoMate) {
-            evalStr = e.centipawns! > 0 ? '+Mate' : '-Mate';
+            if (e.dtz != null) {
+              evalStr = e.centipawns! > 0 ? '+DTZ ${e.dtz!.abs()}' : '-DTZ ${e.dtz!.abs()}';
+            } else {
+              evalStr = e.centipawns! > 0 ? '+Mate' : '-Mate';
+            }
           } else {
             final pawns = e.centipawns! / 100.0;
             evalStr = pawns > 0
@@ -1587,7 +1584,7 @@ class HomePageState extends State<HomePage> {
 
   _updateEval(String newEval) {
     String bfen = _controller.game.bfen;
-    graph.assign(bfen, _parseScore(newEval));
+    graph.assign(bfen, _parsePositionEval(newEval));
     graph.v[bfen]?.inDatabase = true;
     graph.solveBfen(bfen);
     if (mounted) {
@@ -1632,7 +1629,7 @@ class HomePageState extends State<HomePage> {
   /// - When [whiteToMove] is false:
   ///   - m < 0: Black wins -> side to move is winning
   ///   - m > 0: Black loses -> side to move is losing
-  double? _engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove, {DatasetVariant? variant}) {
+  PositionEval? _engineEvalToPositionEval(EngineEvaluation eval, bool whiteToMove, {DatasetVariant? variant}) {
     variant ??= _variant;
     if (eval.mate != null) {
       final m = eval.mate!;
@@ -1645,7 +1642,7 @@ class HomePageState extends State<HomePage> {
           }
         }
         termScore ??= _controller.game.terminalEvaluation;
-        return termScore;
+        return PositionEval.fromLegacyScore(termScore);
       }
       final absM = m.abs();
       final sideToMoveIsWinning = whiteToMove ? (m > 0) : (m < 0);
@@ -1655,34 +1652,48 @@ class HomePageState extends State<HomePage> {
       } else {
         pliesToMate = sideToMoveIsWinning ? (2 * absM - 1) : (2 * absM);
       }
-      final double rawScore = m > 0 ? (1000.0 - pliesToMate) : (-1000.0 + pliesToMate);
-      if (m > 0 && rawScore <= Graph.mateThreshold) {
-        return Graph.mateThreshold + 0.1;
-      } else if (m < 0 && rawScore >= -Graph.mateThreshold) {
-        return -Graph.mateThreshold - 0.1;
-      }
-      return rawScore;
+      final result = m > 0 ? GameResult.whiteWins : GameResult.blackWins;
+      return PositionEval(result: result, dtw: pliesToMate);
     } else if (eval.centipawns != null) {
       if (eval.isPseudoMate) {
+        if (eval.depth != null && eval.depth! >= 100) {
+          final isWhiteWin = eval.centipawns! > 0;
+          final result = isWhiteWin ? GameResult.whiteWins : GameResult.blackWins;
+          final dtz = eval.dtz?.abs();
+          return PositionEval(result: result, dtz: dtz);
+        }
         return null;
       }
-      return eval.centipawns! / 100.0;
+      return PositionEval(cp: eval.centipawns);
     }
     return null;
   }
 
+  double? _engineEvalToGraphScore(EngineEvaluation eval, bool whiteToMove, {DatasetVariant? variant}) =>
+      _engineEvalToPositionEval(eval, whiteToMove, variant: variant)?.toLegacyScore();
+
   bool _isWinningMateInOne(EngineEvaluation eval, bool isWhiteToMove) {
     if (eval.candidateMove == null) return false;
-    final score = _engineEvalToGraphScore(eval, isWhiteToMove);
-    if (score == null) return false;
+    if (eval.isPseudoMate || eval.mate == null) return false;
+    final posEval = _engineEvalToPositionEval(eval, isWhiteToMove);
+    if (posEval == null) return false;
     if (_variant == DatasetVariant.antichess) {
-      return isWhiteToMove ? score >= 998.0 : score <= -998.0;
+      return isWhiteToMove
+          ? (posEval.result == GameResult.whiteWins && posEval.dtw != null && posEval.dtw! <= 2)
+          : (posEval.result == GameResult.blackWins && posEval.dtw != null && posEval.dtw! <= 2);
     }
-    // Immediate mate in 1 on this turn requires +/-999.0 or +/-1000.0 (1 ply to checkmate)
-    return isWhiteToMove ? score >= 999.0 : score <= -999.0;
+    return isWhiteToMove
+        ? (posEval.result == GameResult.whiteWins && posEval.dtw != null && posEval.dtw! <= 1)
+        : (posEval.result == GameResult.blackWins && posEval.dtw != null && posEval.dtw! <= 1);
   }
 
-  String _formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) {
+  String _formatScore(dynamic scoreOrEval, {bool wrapInParentheses = false, bool isMoveScore = false}) {
+    if (scoreOrEval is PositionEval) {
+      final formatted = scoreOrEval.format(isMove: isMoveScore);
+      return wrapInParentheses ? '($formatted)' : formatted;
+    }
+    if (scoreOrEval is! num) return '';
+    final double score = scoreOrEval.toDouble();
     const double mateThreshold = Graph.mateThreshold;
     String formatted;
     if (score.abs() >= mateThreshold) {
@@ -1713,40 +1724,79 @@ class HomePageState extends State<HomePage> {
       _engineEvalToGraphScore(eval, whiteToMove, variant: variant);
 
   @visibleForTesting
-  String formatScore(double score, {bool wrapInParentheses = false, bool isMoveScore = false}) =>
+  PositionEval? engineEvalToPositionEval(EngineEvaluation eval, bool whiteToMove, {DatasetVariant? variant}) =>
+      _engineEvalToPositionEval(eval, whiteToMove, variant: variant);
+
+  @visibleForTesting
+  String formatScore(dynamic score, {bool wrapInParentheses = false, bool isMoveScore = false}) =>
       _formatScore(score, wrapInParentheses: wrapInParentheses, isMoveScore: isMoveScore);
 
   @visibleForTesting
   Future<void> waitForEngineStabilization() => _waitForEngineStabilization();
 
-  double? _parseScore(String text) {
+  PositionEval? _parsePositionEval(String text) {
     text = text.trim();
     if (text.isEmpty) return null;
-    
+
     if (text.startsWith('(') && text.endsWith(')')) {
       text = text.substring(1, text.length - 1).trim();
     }
-    
+
     final mateRegex = RegExp(r'^([+-]?)M(\d+)$', caseSensitive: false);
     final match = mateRegex.firstMatch(text);
     if (match != null) {
       final sign = match.group(1) == '-' ? -1 : 1;
       final moves = int.parse(match.group(2)!);
       final plies = moves * 2;
-      final rawScore = sign > 0 ? 1000.0 - plies : -1000.0 + plies;
-      if (sign > 0 && rawScore <= Graph.mateThreshold) {
-        return Graph.mateThreshold + 0.1;
-      } else if (sign < 0 && rawScore >= -Graph.mateThreshold) {
-        return -Graph.mateThreshold - 0.1;
-      }
-      return rawScore;
+      return PositionEval(
+        result: sign > 0 ? GameResult.whiteWins : GameResult.blackWins,
+        dtw: plies,
+      );
     }
-    
-    return double.tryParse(text);
+
+    final dtzRegex = RegExp(r'^([+-]?)DTZ\s*(\d+)$', caseSensitive: false);
+    final dtzMatch = dtzRegex.firstMatch(text);
+    if (dtzMatch != null) {
+      final sign = dtzMatch.group(1) == '-' ? -1 : 1;
+      final dtz = int.tryParse(dtzMatch.group(2)!);
+      return PositionEval(
+        result: sign > 0 ? GameResult.whiteWins : GameResult.blackWins,
+        dtz: dtz,
+      );
+    }
+
+    final pseudoMateRegex =
+        RegExp(r'^([+-]?)Mate(?:\s*\(?DTZ\s*(\d+)\)?)?$', caseSensitive: false);
+    final pseudoMatch = pseudoMateRegex.firstMatch(text);
+    if (pseudoMatch != null) {
+      final sign = pseudoMatch.group(1) == '-' ? -1 : 1;
+      final dtzStr = pseudoMatch.group(2);
+      final dtz = dtzStr != null ? int.tryParse(dtzStr) : null;
+      return PositionEval(
+        result: sign > 0 ? GameResult.whiteWins : GameResult.blackWins,
+        dtz: dtz,
+      );
+    }
+
+    if (text == '0' || text == '0.0' || text == '0.00') {
+      return const PositionEval(result: GameResult.draw, cp: 0);
+    }
+
+    final parsed = double.tryParse(text);
+    if (parsed != null) {
+      return PositionEval.fromLegacyScore(parsed);
+    }
+
+    return null;
   }
+
+  double? _parseScore(String text) => _parsePositionEval(text)?.toLegacyScore();
 
   @visibleForTesting
   double? parseScore(String text) => _parseScore(text);
+
+  @visibleForTesting
+  PositionEval? parsePositionEval(String text) => _parsePositionEval(text);
 
   @visibleForTesting
   Set<String> getEvaluatedMoveSans() => _getEvaluatedMoveSans();
@@ -1788,7 +1838,15 @@ class HomePageState extends State<HomePage> {
 
 class MoveInfo {
   String move;
-  double? eval;
+  PositionEval? eval;
 
-  MoveInfo(this.move, this.eval);
+  MoveInfo(this.move, dynamic evalOrScore) {
+    if (evalOrScore is PositionEval?) {
+      eval = evalOrScore;
+    } else if (evalOrScore is num?) {
+      eval = PositionEval.fromLegacyScore(evalOrScore?.toDouble());
+    }
+  }
+
+  double? get score => eval?.toLegacyScore();
 }

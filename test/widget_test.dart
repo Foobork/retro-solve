@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:retro_solve/chess/chess.dart';
 import 'package:retro_solve/dataset_variant.dart';
 import 'package:retro_solve/engine/fairy_stockfish_service.dart';
+import 'package:retro_solve/graph/graph.dart';
 import 'package:retro_solve/gui/chess_board.dart';
 import 'package:retro_solve/gui/chess_board_controller.dart';
 import 'package:retro_solve/retro_solve.dart';
@@ -147,6 +148,24 @@ void main() {
     expect(pseudoWinEval.toString().contains('+Mate'), isTrue);
     expect(state.formatScore(-152.65), equals('-Mate'));
     expect(state.formatScore(152.65), equals('+Mate'));
+
+    // 17. Tablebase pseudo-mate with depth 100 receives decisive mate score
+    const tbWinEval = EngineEvaluation(centipawns: 20000, depth: 100, dtz: 1);
+    const tbLossEval = EngineEvaluation(centipawns: -20000, depth: 100, dtz: 3);
+    final tbWinScore = state.engineEvalToGraphScore(tbWinEval, true);
+    final tbLossScore = state.engineEvalToGraphScore(tbLossEval, true);
+    expect(tbWinScore, isNotNull);
+    expect(tbWinScore!, greaterThan(Graph.mateThreshold));
+    expect(tbLossScore, isNotNull);
+    expect(tbLossScore!, lessThan(-Graph.mateThreshold));
+
+    // 18. Parsing pseudo-mate and DTZ inputs: +Mate, -Mate, +DTZ 1, -DTZ 3, +Mate (DTZ 1), -Mate (DTZ 3)
+    expect(state.parseScore('+Mate'), equals(950.0));
+    expect(state.parseScore('-Mate'), equals(-950.0));
+    expect(state.parseScore('+DTZ 1'), equals(949.0));
+    expect(state.parseScore('-DTZ 3'), equals(-947.0));
+    expect(state.parseScore('+Mate (DTZ 1)'), equals(949.0));
+    expect(state.parseScore('-Mate (DTZ 3)'), equals(-947.0));
   });
 
   testWidgets('Pseudo-mate evaluations render -Mate/+Mate and never -152.65 in engine widget', (WidgetTester tester) async {

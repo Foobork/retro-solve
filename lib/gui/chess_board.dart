@@ -99,49 +99,56 @@ class _ChessBoardState extends State<ChessBoard> {
           children: [
             AspectRatio(
               aspectRatio: 1.0,
-              child: GridView.builder(
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 8),
-                itemBuilder: (context, index) {
-                  var row = index ~/ 8;
-                  var column = index % 8;
-                  var boardRank = widget.boardOrientation == black ? '${row + 1}' : '${(7 - row) + 1}';
-                  var boardFile = widget.boardOrientation == white ? _files[column] : _files[7 - column];
+              child: LayoutBuilder(
+                builder: (context, boxConstraints) {
+                  final squareSize = boxConstraints.maxWidth / 8;
+                  return GridView.builder(
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 8),
+                    itemBuilder: (context, index) {
+                      var row = index ~/ 8;
+                      var column = index % 8;
+                      var boardRank = widget.boardOrientation == black ? '${row + 1}' : '${(7 - row) + 1}';
+                      var boardFile = widget.boardOrientation == white ? _files[column] : _files[7 - column];
 
-                  var squareName = '$boardFile$boardRank';
-                  var pieceOnSquare = game.get(squareName);
+                      var squareName = '$boardFile$boardRank';
+                      var pieceOnSquare = game.get(squareName);
 
-                  final lastMove = game.history.isNotEmpty ? game.history.last.move : null;
-                  final effectiveLastMoveTo = widget.lastMoveTo ?? lastMove?.toAlgebraic;
-                  final effectiveLastMoveFrom = widget.lastMoveFrom ?? lastMove?.fromAlgebraic;
-                  final isLastMoveTo = squareName == effectiveLastMoveTo;
-                  final isLastMoveFrom = squareName == effectiveLastMoveFrom;
+                      final lastMove = game.history.isNotEmpty ? game.history.last.move : null;
+                      final effectiveLastMoveTo = widget.lastMoveTo ?? lastMove?.toAlgebraic;
+                      final effectiveLastMoveFrom = widget.lastMoveFrom ?? lastMove?.fromAlgebraic;
+                      final isLastMoveTo = squareName == effectiveLastMoveTo;
+                      final isLastMoveFrom = squareName == effectiveLastMoveFrom;
 
-                  var piece = BoardPiece(
-                    key: ValueKey('piece-$squareName-${pieceOnSquare?.color}-${pieceOnSquare?.type}'),
-                    squareName: squareName,
-                    game: game,
-                  );
+                      var piece = BoardPiece(
+                        key: ValueKey('piece-$squareName-${pieceOnSquare?.color}-${pieceOnSquare?.type}'),
+                        squareName: squareName,
+                        game: game,
+                      );
 
-                  var draggable = game.get(squareName) != null
-                      ? Draggable<PieceMoveData>(
-                          key: ValueKey('drag-$squareName'),
-                          maxSimultaneousDrags: widget.enableUserMoves ? 1 : 0,
-                          child: piece,
-                          feedback: Material(
-                            color: Colors.transparent,
-                            child: piece,
-                          ),
-                          childWhenDragging: Opacity(
-                            opacity: 0.3,
-                            child: piece,
-                          ),
-                          data: PieceMoveData(
-                            squareName: squareName,
-                            pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
-                            pieceColor: pieceOnSquare?.color ?? white,
-                          ),
-                        )
-                      : Container();
+                      var draggable = game.get(squareName) != null
+                          ? Draggable<PieceMoveData>(
+                              key: ValueKey('drag-$squareName'),
+                              maxSimultaneousDrags: widget.enableUserMoves ? 1 : 0,
+                              child: piece,
+                              feedback: Material(
+                                color: Colors.transparent,
+                                child: SizedBox(
+                                  width: squareSize,
+                                  height: squareSize,
+                                  child: piece,
+                                ),
+                              ),
+                              childWhenDragging: Opacity(
+                                opacity: 0.3,
+                                child: piece,
+                              ),
+                              data: PieceMoveData(
+                                squareName: squareName,
+                                pieceType: pieceOnSquare?.type.toUpperCase() ?? 'P',
+                                pieceColor: pieceOnSquare?.color ?? white,
+                              ),
+                            )
+                          : Container();
 
                   var dragTarget = DragTarget<PieceMoveData>(
                     key: ValueKey('target-$squareName'),
@@ -237,8 +244,10 @@ class _ChessBoardState extends State<ChessBoard> {
                 itemCount: 64,
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
-              ),
-            ),
+              );
+            },
+          ),
+        ),
             if (widget.arrows.isNotEmpty)
               IgnorePointer(
                 child: AspectRatio(
@@ -285,7 +294,7 @@ class _ChessBoardState extends State<ChessBoard> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildPocket(game, topColor, pocketHeight),
+                      _buildPocket(game, topColor, pocketHeight, boardSize / 8),
                       const SizedBox(height: 4.0),
                       SizedBox(
                         width: boardSize,
@@ -293,7 +302,7 @@ class _ChessBoardState extends State<ChessBoard> {
                         child: boardWidget,
                       ),
                       const SizedBox(height: 4.0),
-                      _buildPocket(game, bottomColor, pocketHeight),
+                      _buildPocket(game, bottomColor, pocketHeight, boardSize / 8),
                     ],
                   ),
                 ),
@@ -324,7 +333,7 @@ class _ChessBoardState extends State<ChessBoard> {
     );
   }
 
-  Widget _buildPocket(CrazyhouseChess game, PlayerColor color, double height) {
+  Widget _buildPocket(CrazyhouseChess game, PlayerColor color, double height, [double? squareSize]) {
     final pocket = game.pockets[color]!;
     final types = [PieceType.queen, PieceType.rook, PieceType.bishop, PieceType.knight, PieceType.pawn];
     final pieceSize = (height - 8.0).clamp(16.0, 36.0);
@@ -393,8 +402,8 @@ class _ChessBoardState extends State<ChessBoard> {
                     feedback: Material(
                       color: Colors.transparent,
                       child: SizedBox(
-                        width: 50,
-                        height: 50,
+                        width: squareSize ?? 50,
+                        height: squareSize ?? 50,
                         child: _getPieceVector(type, color),
                       ),
                     ),
@@ -449,48 +458,62 @@ class _ChessBoardState extends State<ChessBoard> {
   /// Show dialog when pawn reaches last square
   Future<String?> _promotionDialog(BuildContext context, {PlayerColor color = white, bool isAntichess = false}) async {
     final isWhite = color == white;
+
+    Widget promoButton(String code, Widget pieceWidget, String label) {
+      return Tooltip(
+        message: label,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => Navigator.of(context).pop(code),
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: const Color(0x14FFFFFF),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white24),
+            ),
+            child: SizedBox(
+              width: 48,
+              height: 48,
+              child: pieceWidget,
+            ),
+          ),
+        ),
+      );
+    }
+
     return showDialog<String>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('Choose promotion'),
-          content: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: <Widget>[
-              InkWell(
-                child: isWhite ? WhiteQueen() : BlackQueen(),
-                onTap: () {
-                  Navigator.of(context).pop("q");
-                },
-              ),
-              InkWell(
-                child: isWhite ? WhiteRook() : BlackRook(),
-                onTap: () {
-                  Navigator.of(context).pop("r");
-                },
-              ),
-              InkWell(
-                child: isWhite ? WhiteBishop() : BlackBishop(),
-                onTap: () {
-                  Navigator.of(context).pop("b");
-                },
-              ),
-              InkWell(
-                child: isWhite ? WhiteKnight() : BlackKnight(),
-                onTap: () {
-                  Navigator.of(context).pop("n");
-                },
-              ),
-              if (isAntichess)
-                InkWell(
-                  child: isWhite ? WhiteKing() : BlackKing(),
-                  onTap: () {
-                    Navigator.of(context).pop("k");
-                  },
-                ),
-            ],
+          content: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                promoButton('q', isWhite ? WhiteQueen() : BlackQueen(), 'Queen'),
+                const SizedBox(width: 8),
+                promoButton('r', isWhite ? WhiteRook() : BlackRook(), 'Rook'),
+                const SizedBox(width: 8),
+                promoButton('b', isWhite ? WhiteBishop() : BlackBishop(), 'Bishop'),
+                const SizedBox(width: 8),
+                promoButton('n', isWhite ? WhiteKnight() : BlackKnight(), 'Knight'),
+                if (isAntichess) ...[
+                  const SizedBox(width: 8),
+                  promoButton('k', isWhite ? WhiteKing() : BlackKing(), 'King'),
+                ],
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancel'),
+            ),
+          ],
         );
       },
     );

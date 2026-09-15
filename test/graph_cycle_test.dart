@@ -39,4 +39,22 @@ void main() {
     print('A.computed = ${g.v['A w']?.computed}');
     print('B.computed = ${g.v['B b']?.computed}');
   }, timeout: const Timeout(Duration(seconds: 5)));
+
+  test('cycle with decisive evaluations terminates quickly without unbounded iterations', () {
+    final g = Graph();
+    // A(white) -> B(black) -> A(white)
+    // A also has an exit to a decisive loss E
+    g.addFullVertex('A w', null, null);
+    g.addFullVertex('B b', null, null);
+    g.addFullVertex('E b', const PositionEval(result: GameResult.blackWins, dtz: 1), null);
+    g.addLink('A w', 'B b');
+    g.addLink('B b', 'A w');
+    g.addLink('A w', 'E b');
+
+    g.solve();
+
+    expect(g.v['A w']?.computed, isNotNull);
+    expect(g.v['B b']?.computed, isNotNull);
+  });
 }
+

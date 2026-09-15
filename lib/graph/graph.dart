@@ -1,5 +1,7 @@
 // ignore_for_file: avoid_print
 
+import 'dart:math';
+
 import 'position_eval.dart';
 import 'tarjan.dart';
 export 'position_eval.dart';
@@ -134,11 +136,11 @@ class Graph {
 
     bool changed = true;
     int iterations = 0;
+    final int maxIterations = scc.length > 1 ? max(scc.length * 2, 20) : 5;
     while (changed) {
       changed = false;
       iterations++;
-      if (iterations > 1000) {
-        print("Warning: SCC local loop exceeded 1000 iterations! Breaking.");
+      if (iterations >= maxIterations) {
         break;
       }
 

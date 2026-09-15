@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:retro_solve/config.dart';
 import 'package:retro_solve/dataset_variant.dart';
 import 'package:retro_solve/engine/tablebase_service.dart';
 
@@ -236,7 +237,7 @@ void main() {
         );
       });
 
-      final service = TablebaseService(client: mockClient);
+      final service = TablebaseService(client: mockClient, enabled: true);
       final evals = await service.probe(DatasetVariant.antichess, fen);
 
       expect(evals, isNotNull);
@@ -251,9 +252,21 @@ void main() {
         return http.Response('Server Error', 500);
       });
 
-      final service = TablebaseService(client: errorClient);
+      final service = TablebaseService(client: errorClient, enabled: true);
       final evals = await service.probe(DatasetVariant.antichess, fen);
       expect(evals, isNull);
+    });
+
+    test('probe returns null when tablebase is disabled', () async {
+      const fen = '8/8/8/8/8/8/p7/2B1B1B1 w - - 0 1';
+      final service = TablebaseService(enabled: false);
+      final evals = await service.probe(DatasetVariant.antichess, fen);
+      expect(evals, isNull);
+    });
+
+    test('TablebaseService.instance respects Config.enableRemoteTablebase', () {
+      expect(TablebaseService.instance.isEnabled, equals(Config.enableRemoteTablebase));
+      expect(TablebaseService.instance.isEnabled, isFalse);
     });
 
     test('parseTablebaseResponse handles 6-piece position with DTZ and null DTW without claiming mate in 1', () {

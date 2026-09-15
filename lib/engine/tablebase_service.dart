@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+import '../config.dart';
 import '../dataset_variant.dart';
 import 'engine_service.dart';
 
@@ -12,12 +13,20 @@ import 'engine_service.dart';
 /// - Atomic: endgames with 6 or fewer pieces.
 /// - Standard Chess: endgames with 7 or fewer pieces.
 class TablebaseService {
-  TablebaseService({http.Client? client, this.baseUrl = defaultBaseUrl})
-      : _client = client ?? http.Client();
+  TablebaseService({
+    http.Client? client,
+    this.baseUrl = defaultBaseUrl,
+    bool? enabled,
+  })  : _client = client ?? http.Client(),
+        _enabled = enabled;
 
   final http.Client _client;
   static const String defaultBaseUrl = 'https://tablebase.lichess.ovh';
   final String baseUrl;
+  final bool? _enabled;
+
+  /// Whether tablebase probing is enabled.
+  bool get isEnabled => _enabled ?? Config.enableRemoteTablebase;
 
   /// Default singleton instance.
   static final TablebaseService instance = TablebaseService();
@@ -69,7 +78,7 @@ class TablebaseService {
     String fen, {
     Duration timeout = const Duration(seconds: 3),
   }) async {
-    if (!isSupported(variant, fen)) return null;
+    if (!isEnabled || !isSupported(variant, fen)) return null;
 
     final endpoint = endpointForVariant(variant);
     if (endpoint == null) return null;

@@ -289,7 +289,7 @@ class FairyStockfishService implements EngineService {
       }
     }
 
-    if (TablebaseService.isSupported(_variant, fen)) {
+    if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
       final tbEvals = await TablebaseService.instance.probe(_variant, fen);
       if (tbEvals != null && tbEvals.isNotEmpty) {
         cache.put(_variant, fen, tbEvals, force: true);
@@ -522,7 +522,7 @@ class FairyStockfishService implements EngineService {
       }
     }
 
-    if (TablebaseService.isSupported(_variant, fen)) {
+    if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
       final tbEvals = await TablebaseService.instance.probe(_variant, fen);
       if (tbEvals != null && tbEvals.isNotEmpty) {
         if (_isStarted && _process != null && _isSearching) {

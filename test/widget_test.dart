@@ -428,6 +428,97 @@ void main() {
       return false;
     }), findsNothing);
   });
+
+  testWidgets('Antichess promotion dialog shows King on the left beside Queen and promotes to King', (WidgetTester tester) async {
+    final game = AntichessChess();
+    game.load('8/P7/8/8/8/8/8/7b w - - 0 1');
+    final controller = ChessBoardController.fromGame(game);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 400,
+              height: 400,
+              child: ChessBoard(controller: controller),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final a7Finder = find.byKey(const ValueKey('drag-a7'));
+    final a8Finder = find.byKey(const ValueKey('target-a8'));
+    expect(a7Finder, findsOneWidget);
+    expect(a8Finder, findsOneWidget);
+
+    final a7Center = tester.getCenter(a7Finder);
+    final a8Center = tester.getCenter(a8Finder);
+
+    final gesture = await tester.startGesture(a7Center);
+    await tester.pump();
+    await gesture.moveTo(a8Center);
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Choose promotion'), findsOneWidget);
+
+    final kingPromoFinder = find.byKey(const ValueKey('promo-k'));
+    final queenPromoFinder = find.byKey(const ValueKey('promo-q'));
+    expect(kingPromoFinder, findsOneWidget);
+    expect(queenPromoFinder, findsOneWidget);
+
+    final kingX = tester.getTopLeft(kingPromoFinder).dx;
+    final queenX = tester.getTopLeft(queenPromoFinder).dx;
+    expect(kingX, lessThan(queenX));
+
+    await tester.tap(kingPromoFinder);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Choose promotion'), findsNothing);
+    expect(controller.game.get('a8')?.type.name, equals('k'));
+  });
+
+  testWidgets('Standard chess promotion dialog does not show King button', (WidgetTester tester) async {
+    final game = Chess();
+    game.load('8/P7/8/8/8/8/8/7k w - - 0 1');
+    final controller = ChessBoardController.fromGame(game);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 400,
+              height: 400,
+              child: ChessBoard(controller: controller),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final a7Center = tester.getCenter(find.byKey(const ValueKey('drag-a7')));
+    final a8Center = tester.getCenter(find.byKey(const ValueKey('target-a8')));
+
+    final gesture = await tester.startGesture(a7Center);
+    await tester.pump();
+    await gesture.moveTo(a8Center);
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Choose promotion'), findsOneWidget);
+    expect(find.byKey(const ValueKey('promo-k')), findsNothing);
+    expect(find.byKey(const ValueKey('promo-q')), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+  });
 }
 
 class MockEngineService implements EngineService {

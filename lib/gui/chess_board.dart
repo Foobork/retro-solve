@@ -463,6 +463,7 @@ class _ChessBoardState extends State<ChessBoard> {
       return Tooltip(
         message: label,
         child: InkWell(
+          key: ValueKey('promo-$code'),
           borderRadius: BorderRadius.circular(8),
           onTap: () => Navigator.of(context).pop(code),
           child: Container(
@@ -494,6 +495,10 @@ class _ChessBoardState extends State<ChessBoard> {
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
+                if (isAntichess) ...[
+                  promoButton('k', isWhite ? WhiteKing() : BlackKing(), 'King'),
+                  const SizedBox(width: 8),
+                ],
                 promoButton('q', isWhite ? WhiteQueen() : BlackQueen(), 'Queen'),
                 const SizedBox(width: 8),
                 promoButton('r', isWhite ? WhiteRook() : BlackRook(), 'Rook'),
@@ -501,10 +506,6 @@ class _ChessBoardState extends State<ChessBoard> {
                 promoButton('b', isWhite ? WhiteBishop() : BlackBishop(), 'Bishop'),
                 const SizedBox(width: 8),
                 promoButton('n', isWhite ? WhiteKnight() : BlackKnight(), 'Knight'),
-                if (isAntichess) ...[
-                  const SizedBox(width: 8),
-                  promoButton('k', isWhite ? WhiteKing() : BlackKing(), 'King'),
-                ],
               ],
             ),
           ),

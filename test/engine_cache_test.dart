@@ -269,15 +269,36 @@ void main() {
       expect(EngineCache.isMoveColorConsistentWithFen(blackFen, 'd2d4'), isFalse);
     });
 
-    test('handles crazyhouse drops correctly based on piece case', () {
-      const chWhiteFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1';
-      const chBlackFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] b KQkq - 0 1';
+    test('handles crazyhouse drops correctly based on pocket and side to move', () {
+      const chWhiteFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[P] w KQkq - 0 1';
+      const chBlackFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[p] b KQkq - 0 1';
 
+      // White to move with P in hand: drops on empty squares allowed
       expect(EngineCache.isMoveColorConsistentWithFen(chWhiteFen, 'P@e4'), isTrue);
-      expect(EngineCache.isMoveColorConsistentWithFen(chWhiteFen, 'p@e4'), isFalse);
+      expect(EngineCache.isMoveColorConsistentWithFen(chWhiteFen, 'p@e4'), isTrue);
+      expect(EngineCache.isMoveColorConsistentWithFen(chWhiteFen, 'N@e4'), isFalse);
 
+      // Black to move with p in hand: UCI uppercase drop (P@e5) and lowercase (p@e5) allowed
+      expect(EngineCache.isMoveColorConsistentWithFen(chBlackFen, 'P@e5'), isTrue);
       expect(EngineCache.isMoveColorConsistentWithFen(chBlackFen, 'p@e5'), isTrue);
-      expect(EngineCache.isMoveColorConsistentWithFen(chBlackFen, 'P@e5'), isFalse);
+      expect(EngineCache.isMoveColorConsistentWithFen(chBlackFen, 'N@e5'), isFalse);
+
+      // Cannot drop on occupied squares
+      expect(EngineCache.isMoveColorConsistentWithFen(chWhiteFen, 'P@e2'), isFalse);
+
+      // Cannot drop pawns on 1st or 8th rank
+      expect(EngineCache.isMoveColorConsistentWithFen(chWhiteFen, 'P@e1'), isFalse);
+      expect(EngineCache.isMoveColorConsistentWithFen(chWhiteFen, 'P@e8'), isFalse);
+
+      // Cannot drop with empty pocket
+      const chEmptyFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1';
+      expect(EngineCache.isMoveColorConsistentWithFen(chEmptyFen, 'P@e4'), isFalse);
+
+      // User bug position: Black to move, pocket has [PPnnp], N@f8 and Bf8 (e7f8) available
+      const bugFen = 'r1bnQ1k1/1pp1bp1r/p6B/3pP3/3Pn3/2PQ4/P1P1BPPP/R4RK1[PPnnp] b - -';
+      expect(EngineCache.isMoveColorConsistentWithFen(bugFen, 'N@f8'), isTrue);
+      expect(EngineCache.isMoveColorConsistentWithFen(bugFen, 'e7f8'), isTrue);
+      expect(EngineCache.isMoveColorConsistentWithFen(bugFen, 'B@f8'), isFalse); // Black has no bishop in hand
     });
 
     test('handles FEN with crazyhouse promoted piece marker ~ and pocket brackets', () {

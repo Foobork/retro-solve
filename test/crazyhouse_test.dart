@@ -217,5 +217,38 @@ void main() {
       expect(game.moveToSan(rMove), equals('Ra4'));
       expect(game.moveToSan(rDrop), equals('R@a4'));
     });
+
+    test('Black in check can interpose with drop move N@f8 or board move Bf8', () {
+      final game = CrazyhouseChess();
+      const fen = 'r1bnQ1k1/1pp1bp1r/p6B/3pP3/3Pn3/2PQ4/P1P1BPPP/R4RK1[PPnnp] b - - 0 1';
+      expect(game.load(fen), isTrue);
+
+      expect(game.inCheck, isTrue);
+      expect(game.pockets[PlayerColor.black]![PieceType.knight], equals(2));
+      expect(game.pockets[PlayerColor.black]![PieceType.pawn], equals(1));
+      expect(game.pockets[PlayerColor.white]![PieceType.pawn], equals(2));
+
+      final moves = game.generateMoves();
+      final moveSans = moves.map((m) => game.moveToSan(m)).toList();
+
+      expect(moveSans.contains('N@f8'), isTrue);
+      expect(moveSans.contains('Bf8'), isTrue);
+
+      // Verify N@f8 can be played and resolves the check
+      final gameDrop = game.copy();
+      expect(gameDrop.move('N@f8'), isTrue);
+      expect(gameDrop.inCheck, isFalse);
+      expect(gameDrop.get('f8')?.type, equals(PieceType.knight));
+      expect(gameDrop.get('f8')?.color, equals(PlayerColor.black));
+      expect(gameDrop.pockets[PlayerColor.black]![PieceType.knight], equals(1));
+
+      // Verify Bf8 can be played and resolves the check
+      final gameMove = game.copy();
+      expect(gameMove.move('Bf8'), isTrue);
+      expect(gameMove.inCheck, isFalse);
+      expect(gameMove.get('f8')?.type, equals(PieceType.bishop));
+      expect(gameMove.get('f8')?.color, equals(PlayerColor.black));
+      expect(gameMove.get('e7'), isNull);
+    });
   });
 }

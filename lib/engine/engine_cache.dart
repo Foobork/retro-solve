@@ -54,12 +54,70 @@ class EngineCache {
     final turn = tokens[1].toLowerCase();
     if (turn != 'w' && turn != 'b') return true;
 
-    // Check crazyhouse drops, e.g. P@e4 or p@e4
+    // Parse the board rank from FEN
+    var boardPart = tokens[0];
+    final bracketIdx = boardPart.indexOf('[');
+    if (bracketIdx != -1) {
+      boardPart = boardPart.substring(0, bracketIdx);
+    }
+    final ranks = boardPart.split('/');
+    if (ranks.length != 8) return true;
+
+    String? getPieceAt(int file, int rank) {
+      if (file < 0 || file > 7 || rank < 1 || rank > 8) return null;
+      final fenRankIndex = 8 - rank; // 0 for rank 8, 7 for rank 1
+      final rankStr = ranks[fenRankIndex].replaceAll('~', '');
+      int col = 0;
+      for (int i = 0; i < rankStr.length; i++) {
+        final c = rankStr[i];
+        final digit = int.tryParse(c);
+        if (digit != null) {
+          col += digit;
+        } else {
+          if (col == file) return c;
+          col++;
+        }
+        if (col > file) break;
+      }
+      return null;
+    }
+
+    // Check crazyhouse drops, e.g. N@f8, P@e4, p@e4
     final rawTrim = candidateMove.trim();
-    if (rawTrim.length >= 3 && rawTrim[1] == '@') {
-      final pieceChar = rawTrim[0];
-      final isWhitePiece = pieceChar == pieceChar.toUpperCase() && pieceChar != pieceChar.toLowerCase();
-      return turn == (isWhitePiece ? 'w' : 'b');
+    if (rawTrim.length >= 4 && rawTrim[1] == '@') {
+      final dropPieceChar = rawTrim[0].toLowerCase();
+      const validDropPieces = {'p', 'n', 'b', 'r', 'q'};
+      if (!validDropPieces.contains(dropPieceChar)) return false;
+
+      final targetFile = rawTrim.codeUnitAt(2) - 'a'.codeUnitAt(0);
+      final targetRank = int.tryParse(rawTrim[3]);
+      if (targetRank == null || targetFile < 0 || targetFile > 7 || targetRank < 1 || targetRank > 8) {
+        return false;
+      }
+
+      // Pawns cannot be dropped on the 1st or 8th rank
+      if (dropPieceChar == 'p' && (targetRank == 1 || targetRank == 8)) {
+        return false;
+      }
+
+      // Target square must be empty
+      if (getPieceAt(targetFile, targetRank) != null) {
+        return false;
+      }
+
+      // Check pocket if present in FEN
+      final bracketStart = fen.indexOf('[');
+      final bracketEnd = fen.indexOf(']');
+      if (bracketStart != -1 && bracketEnd > bracketStart) {
+        final pocketStr = fen.substring(bracketStart + 1, bracketEnd);
+        if (turn == 'w') {
+          return pocketStr.contains(dropPieceChar.toUpperCase());
+        } else {
+          return pocketStr.contains(dropPieceChar.toLowerCase());
+        }
+      }
+
+      return true;
     }
 
     // Standard move: fromSquare is first 2 chars, e.g. 'e2'
@@ -71,35 +129,7 @@ class EngineCache {
       return true;
     }
 
-    // Parse the board rank from FEN
-    var boardPart = tokens[0];
-    final bracketIdx = boardPart.indexOf('[');
-    if (bracketIdx != -1) {
-      boardPart = boardPart.substring(0, bracketIdx);
-    }
-    final ranks = boardPart.split('/');
-    if (ranks.length != 8) return true;
-
-    final fenRankIndex = 8 - rank; // 0 for rank 8, 7 for rank 1
-    final rankStr = ranks[fenRankIndex].replaceAll('~', '');
-
-    int col = 0;
-    String? pieceAtFrom;
-    for (int i = 0; i < rankStr.length; i++) {
-      final c = rankStr[i];
-      final digit = int.tryParse(c);
-      if (digit != null) {
-        col += digit;
-      } else {
-        if (col == file) {
-          pieceAtFrom = c;
-          break;
-        }
-        col++;
-      }
-      if (col > file) break;
-    }
-
+    final pieceAtFrom = getPieceAt(file, rank);
     if (pieceAtFrom == null) {
       // Source square is empty; a move cannot originate from an empty square.
       return false;

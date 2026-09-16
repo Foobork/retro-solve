@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:retro_solve/chess/chess.dart';
+import 'package:retro_solve/chess/pgn_parser.dart';
 
 void main() {
   group('Crazyhouse Chess Variant Tests', () {
@@ -249,6 +251,86 @@ void main() {
       expect(gameMove.get('f8')?.type, equals(PieceType.bishop));
       expect(gameMove.get('f8')?.color, equals(PlayerColor.black));
       expect(gameMove.get('e7'), isNull);
+    });
+
+    test('normalizeDropNotation normalizes Chess.com, UCI, and standard drop notations', () {
+      // Chess.com notation with player identifiers
+      expect(Chess.normalizeDropNotation('@0_rPd5'), equals('P@d5'));
+      expect(Chess.normalizeDropNotation('B@2_yBd4'), equals('B@d4'));
+      expect(Chess.normalizeDropNotation('B@0_rBb3'), equals('B@b3'));
+      expect(Chess.normalizeDropNotation('@2_yPe6'), equals('P@e6'));
+      expect(Chess.normalizeDropNotation('N@0_rNg5'), equals('N@g5'));
+      expect(Chess.normalizeDropNotation('@0_rPd7'), equals('P@d7'));
+      expect(Chess.normalizeDropNotation('B@0_rBe6'), equals('B@e6'));
+      expect(Chess.normalizeDropNotation('R@0_rRd7'), equals('R@d7'));
+      expect(Chess.normalizeDropNotation('@0_rPb4'), equals('P@b4'));
+      expect(Chess.normalizeDropNotation('Q@2_yQh1'), equals('Q@h1'));
+      expect(Chess.normalizeDropNotation('Q@2_yQh1#'), equals('Q@h1#'));
+      expect(Chess.normalizeDropNotation('B@0_rBb3+'), equals('B@b3+'));
+
+      // Pawn drop without piece letter
+      expect(Chess.normalizeDropNotation('@d5'), equals('P@d5'));
+      expect(Chess.normalizeDropNotation('@e6+'), equals('P@e6+'));
+
+      // UCI lowercase drop notation
+      expect(Chess.normalizeDropNotation('p@d5'), equals('P@d5'));
+      expect(Chess.normalizeDropNotation('b@d4'), equals('B@d4'));
+      expect(Chess.normalizeDropNotation('n@g5'), equals('N@g5'));
+      expect(Chess.normalizeDropNotation('r@d7'), equals('R@d7'));
+      expect(Chess.normalizeDropNotation('q@h1'), equals('Q@h1'));
+
+      // Standard SAN drops remain unchanged
+      expect(Chess.normalizeDropNotation('P@d5'), equals('P@d5'));
+      expect(Chess.normalizeDropNotation('B@d4'), equals('B@d4'));
+
+      // Normal non-drop moves remain unchanged
+      expect(Chess.normalizeDropNotation('e4'), equals('e4'));
+      expect(Chess.normalizeDropNotation('Nf3'), equals('Nf3'));
+      expect(Chess.normalizeDropNotation('O-O'), equals('O-O'));
+    });
+
+    test('Replays Chess.com Crazyhouse PGN file successfully to checkmate', () {
+      final pgnFile = File('test/data/jesuslovesyouforreal vs 2071 Crazyhouse 2026-09-15.pgn');
+      expect(pgnFile.existsSync(), isTrue);
+
+      final pgnText = pgnFile.readAsStringSync();
+      final games = PgnParser.parse(pgnText);
+      expect(games.length, equals(1));
+
+      final gameObj = games.first;
+      expect(gameObj.variant, equals('Crazyhouse'));
+      expect(gameObj.headers['White'], equals('jesuslovesyouforreal'));
+      expect(gameObj.headers['Black'], equals('Party_Of_One'));
+      expect(gameObj.headers['Result'], equals('0-1'));
+
+      final game = CrazyhouseChess();
+      expect(game.isCrazyhouse, isTrue);
+
+      // Collect all moves in sequence
+      final moveSans = <String>[];
+      PgnNode? curr = gameObj.root;
+      while (curr != null && curr.children.isNotEmpty) {
+        final next = curr.children.first;
+        if (next.san != null) {
+          moveSans.add(next.san!);
+        }
+        curr = next;
+      }
+
+      expect(moveSans.length, equals(44)); // 22 full moves = 44 half-moves
+      expect(moveSans[10], equals('P@d5'));
+      expect(moveSans[11], equals('B@d4'));
+      expect(moveSans[43], equals('Q@h1'));
+
+      for (int i = 0; i < moveSans.length; i++) {
+        final san = moveSans[i];
+        final success = game.move(san);
+        expect(success, isTrue, reason: 'Move #$i ($san) failed from FEN ${game.fen}');
+      }
+
+      // 22... Q@h1# is checkmate
+      expect(game.inCheckmate, isTrue);
+      expect(game.turn, equals(PlayerColor.white));
     });
   });
 }

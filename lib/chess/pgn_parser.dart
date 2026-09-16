@@ -1,3 +1,5 @@
+import 'chess.dart';
+
 class PgnNode {
   final String? san;
   final List<PgnNode> children = [];
@@ -19,7 +21,7 @@ class PgnGame {
 
   PgnGame({required this.headers, required this.root});
 
-  String? get variant => headers['Variant'];
+  String? get variant => headers['Variant'] ?? headers['RuleVariants'];
   String? get fen => headers['FEN'];
   String? get event => headers['Event'];
   String? get chapterName => headers['ChapterName'];
@@ -80,8 +82,9 @@ class PgnParser {
     // 2. Remove line comments: ; ...
     cleaned = cleaned.replaceAll(RegExp(r';[^\r\n]*'), ' ');
 
-    // 3. Separate parentheses with spaces for clean tokenization
+    // 3. Separate parentheses with spaces for clean tokenization, and ensure space after move numbers
     cleaned = cleaned.replaceAll('(', ' ( ').replaceAll(')', ' ) ');
+    cleaned = cleaned.replaceAllMapped(RegExp(r'(\d+)\.([^\s\.])'), (m) => '${m[1]}. ${m[2]}');
 
     // 4. Tokenize by whitespace
     final rawTokens = cleaned.split(RegExp(r'\s+'));
@@ -102,8 +105,8 @@ class PgnParser {
       if (nagRegex.hasMatch(t)) continue;
       if (resultTokens.contains(t)) continue;
 
-      // Clean trailing NAGs/annotations like !, ?, !?, ?!
-      final cleanMove = t.replaceAll(RegExp(r'[!?]+$'), '');
+      // Clean trailing NAGs/annotations like !, ?, !?, ?! and normalize drop notation
+      final cleanMove = Chess.normalizeDropNotation(t.replaceAll(RegExp(r'[!?]+$'), ''));
       if (cleanMove.isNotEmpty) {
         tokens.add(cleanMove);
       }

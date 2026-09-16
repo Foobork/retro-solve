@@ -1511,7 +1511,7 @@ class Chess {
     }
 
     Move? getMoveObj(move) {
-      return moveFromSan(trim(move));
+      return moveFromSan(normalizeDropNotation(trim(move)));
     }
 
     Map<String, String> parsePgnHeader(header, [Map? options]) {
@@ -1624,6 +1624,7 @@ class Chess {
     final moves = generateMoves();
 
     if (move is String) {
+      move = normalizeDropNotation(move);
       final cleanMove = move.trim().replaceAll('-', '').toLowerCase();
       /* convert the move string to a move object */
       for (var i = 0; i < moves.length; i++) {
@@ -1634,9 +1635,10 @@ class Chess {
       }
 
       if (moveObj == null) {
+        final normMove = normalizeMoveString(move);
         for (var i = 0; i < moves.length; i++) {
           String n = normalizeMoveString(moveToSan(moves[i]));
-          if (move == n) {
+          if (normMove == n) {
             moveObj = moves[i];
             break;
           }
@@ -1646,9 +1648,10 @@ class Chess {
       if (moveObj == null) {
         // try again with ambiguated move
         final amb = ambiguate(move);
+        final normAmb = normalizeMoveString(amb);
         for (var i = 0; i < moves.length; i++) {
           String n = normalizeMoveString(moveToSan(moves[i]));
-          if (normalizeMoveString(amb) == n) {
+          if (normAmb == n) {
             moveObj = moves[i];
             break;
           }
@@ -1702,6 +1705,52 @@ class Chess {
 
   String normalizeMoveString(String s) {
     return s.replaceAll(RegExp(r"[x+=#]"), "");
+  }
+
+  /// Normalizes drop notation from various platforms (e.g. Chess.com, UCI, standard PGN)
+  /// to standard SAN (e.g. P@d5, B@d4).
+  static String normalizeDropNotation(String s) {
+    if (!s.contains('@')) return s;
+
+    // 1. Chess.com crazyhouse drop notation with player info:
+    // Examples:
+    //   @0_rPd5 -> P@d5
+    //   B@2_yBd4 -> B@d4
+    //   P@0_rPd5 -> P@d5
+    //   @2_yPe6 -> P@e6
+    //   Q@2_yQh1# -> Q@h1#
+    final chessComDropRegex = RegExp(r'^([PNBRQKpnbrqk])?@\d+_[a-zA-Z]+([PNBRQKpnbrqk])?([a-h][1-8])([+#]?)$');
+    final match = chessComDropRegex.firstMatch(s);
+    if (match != null) {
+      final piece = (match.group(1) ?? match.group(2) ?? 'P').toUpperCase();
+      final square = match.group(3)!;
+      final check = match.group(4) ?? '';
+      return '$piece@$square$check';
+    }
+
+    // 2. Pawn drop without piece prefix:
+    // Examples:
+    //   @d5 -> P@d5
+    //   @e6+ -> P@e6+
+    final pawnDropRegex = RegExp(r'^@([a-h][1-8])([+#]?)$');
+    final pawnMatch = pawnDropRegex.firstMatch(s);
+    if (pawnMatch != null) {
+      final square = pawnMatch.group(1)!;
+      final check = pawnMatch.group(2) ?? '';
+      return 'P@$square$check';
+    }
+
+    // 3. Lowercase piece drop (e.g. uci-like p@d5, b@d4):
+    final uciDropRegex = RegExp(r'^([pnbrqk])@([a-h][1-8])([+#]?)$');
+    final uciMatch = uciDropRegex.firstMatch(s);
+    if (uciMatch != null) {
+      final piece = uciMatch.group(1)!.toUpperCase();
+      final square = uciMatch.group(2)!;
+      final check = uciMatch.group(3) ?? '';
+      return '$piece@$square$check';
+    }
+
+    return s;
   }
 
   /// Takeback the last half-move, returning a move Map if successful, otherwise null.

@@ -1,0 +1,36 @@
+[GameNr "108663047"]
+[TimeControl "3+2"]
+[Variant "Crazyhouse"]
+[RuleVariants "Crazyhouse EnPassant Play4Mate"]
+[White "jesuslovesyouforreal"]
+[WhiteElo "1996"]
+[Black "Party_Of_One"]
+[BlackElo "2071"]
+[Result "0-1"]
+[Termination "Checkmate • 0-1"]
+[Site "www.chess.com/variants/crazyhouse/game/108663047"]
+[Date "Tue Sep 15 2026 15:13:30 GMT+0000 (Coordinated Universal Time)"]
+
+
+1. e2e4 Nb8c6
+2. Ng1f3 Ng8f6
+3. Nb1c3 e7e5
+4. Bf1c4 Bf8e7
+5. Bc4f7 Ke8f7
+6. @0_rPd5 B@2_yBd4
+7. d5c6 d7c6
+8. Ke1g1 Rh8f8
+9. d2d3 Bc8g4
+10. Nf3d4 Qd8d4
+11. B@0_rBb3 @2_yPe6
+12. N@0_rNg5 Kf7e8
+13. Qd1g4 Nf6g4
+14. Ng5e6 Ng4f2
+15. Ne6g7 Ke8d8
+16. Ng7e6 Kd8c8
+17. @0_rPd7 Kc8d7
+18. Ne6f8 Ra8f8
+19. B@0_rBe6 Kd7d6
+20. R@0_rRd7 Kd6c5
+21. @0_rPb4 Kc5b4
+22. Bc1e3 Q@2_yQh1 0-1

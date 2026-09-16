@@ -1183,7 +1183,9 @@ class HomePageState extends State<HomePage> {
       final pgnVar = firstGame.variant!.toLowerCase();
       DatasetVariant? targetVariant;
       for (final v in DatasetVariant.values) {
-        if (v.name.toLowerCase() == pgnVar || v.label.toLowerCase() == pgnVar) {
+        final vName = v.name.toLowerCase();
+        final vLabel = v.label.toLowerCase();
+        if (vName == pgnVar || vLabel == pgnVar || pgnVar.contains(vName) || pgnVar.contains(vLabel)) {
           targetVariant = v;
           break;
         }
@@ -1230,7 +1232,9 @@ class HomePageState extends State<HomePage> {
           final pgnVar = game.variant!.toLowerCase();
           DatasetVariant? targetVariant;
           for (final v in DatasetVariant.values) {
-            if (v.name.toLowerCase() == pgnVar || v.label.toLowerCase() == pgnVar) {
+            final vName = v.name.toLowerCase();
+            final vLabel = v.label.toLowerCase();
+            if (vName == pgnVar || vLabel == pgnVar || pgnVar.contains(vName) || pgnVar.contains(vLabel)) {
               targetVariant = v;
               break;
             }

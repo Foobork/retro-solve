@@ -78,5 +78,39 @@ void main() {
       expect(root.children[0].san, equals('Nf3'));
       expect(root.totalNodes, greaterThanOrEqualTo(5));
     });
+
+    test('parses Chess.com Crazyhouse PGN normalizing drop notation in tree', () {
+      final path = File('test/data/jesuslovesyouforreal vs 2071 Crazyhouse 2026-09-15.pgn').existsSync()
+          ? 'test/data/jesuslovesyouforreal vs 2071 Crazyhouse 2026-09-15.pgn'
+          : 'data/jesuslovesyouforreal vs 2071 Crazyhouse 2026-09-15.pgn';
+      final file = File(path);
+      expect(file.existsSync(), isTrue);
+
+      final games = PgnParser.parse(file.readAsStringSync());
+      expect(games.length, equals(1));
+      final game = games.first;
+      expect(game.variant, equals('Crazyhouse'));
+
+      final moves = <String>[];
+      PgnNode? curr = game.root;
+      while (curr != null && curr.children.isNotEmpty) {
+        final next = curr.children.first;
+        if (next.san != null) moves.add(next.san!);
+        curr = next;
+      }
+
+      expect(moves.length, equals(44));
+      // Drops are normalized to standard SAN
+      expect(moves[10], equals('P@d5')); // was @0_rPd5
+      expect(moves[11], equals('B@d4')); // was B@2_yBd4
+      expect(moves[20], equals('B@b3')); // was B@0_rBb3
+      expect(moves[21], equals('P@e6')); // was @2_yPe6
+      expect(moves[22], equals('N@g5')); // was N@0_rNg5
+      expect(moves[32], equals('P@d7')); // was @0_rPd7
+      expect(moves[36], equals('B@e6')); // was B@0_rBe6
+      expect(moves[38], equals('R@d7')); // was R@0_rRd7
+      expect(moves[40], equals('P@b4')); // was @0_rPb4
+      expect(moves[43], equals('Q@h1')); // was Q@2_yQh1
+    });
   });
 }

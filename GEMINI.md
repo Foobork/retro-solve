@@ -10,4 +10,5 @@
 
 ## Git & Deployment
 - **Do not create any code commits (`git commit`) unless the user explicitly asks to or gives permission.**
+- **Git commit messages must be concise (single-line summary, avoid verbose multi-line descriptions).**
 - **Do not push commits to remote (`git push`) until the user has tested the changes and explicitly requested or approved pushing.**

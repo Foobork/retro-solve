@@ -1,7 +1,7 @@
 # Design Document: Repertoire Graph Storage & Solving Optimization
 
 **Author:** Antigravity & Pair Programmer  
-**Date:** September 15, 2026  
+**Date:** September 16, 2026  
 **Status:** Proposed  
 **Scope:** `retro-solve` persistence, memory graph management, and solving lifecycle
 
@@ -11,19 +11,38 @@
 
 In `retro-solve`, opening repertoire and endgame analysis are modeled as a directed graph of positions (`nodes`) and legal moves (`edges`), evaluated using retrograde analysis and Tarjan's Strongly Connected Components (SCC) algorithm.
 
-As the databases have grown, the `edges` table has become a critical bottleneck:
-- **Massive Storage Bloat**: In all 8 variant databases, the `edges` table accounts for **~95% of total disk usage**. For standard chess (`Standard.db`), the database has grown to **2.15 GB** containing **7.2 million edges** for 202,000 positions.
-- **String & Index Duplication**: Storing full 40-character Board FEN (`bfen`) strings in composite primary keys (`source`, `target`) in standard SQLite tables causes every move to be stored multiple times across table data and index B-trees (~209 bytes/edge).
-- **Frontier Node Inflation**: Over 90% of target positions in `edges` are unexplored frontier leaves with no evaluations, bloating the graph without contributing evaluated retrograde values.
-- **Redundant Startup Solving**: The application currently loads all millions of edges and re-executes `graph.solve()` on every launch—even though converged evaluations are already persisted in the `nodes` table.
+The core motivation of the project is **global retrograde soundness**: deciding whether to play a move at the root (e.g., `1. e4` vs. `1. d4` vs. `1. Nf3`) requires **complete, mathematically sound information** across all transposing lines. If an improvement or refutation is found along `1. Nf3 c5 2. e4`, that knowledge must immediately reflect in `1. e4 c5 2. Nf3` and propagate back to `1. e4` and the root without requiring manual navigation.
 
-This document synthesizes our empirical findings across all 8 variants, analyzes the trade-offs of various storage and generation strategies, and presents a phased recommendation to reduce storage by **90%+**, achieve **sub-second startup**, and maintain instant interactive retrograde solving.
+However, as variant databases have grown, the current storage model has created severe bottlenecks:
+- **Massive Storage Bloat**: In `Standard.db`, the database has grown to **2.15 GB** containing **7.2 million edges** for 202,000 positions. Over 95% of total disk space is consumed by the `edges` table.
+- **String & Index Duplication**: Storing full 40-character Board FEN (`bfen`) strings in composite primary keys `(source, target)` in rowid-backed SQLite tables stores every move multiple times across table data and index B-trees (~209 bytes/edge).
+- **Startup Inefficiency**: On startup, decoding 14.4 million strings into Dart memory and running Tarjan's SCC solver from scratch introduces heavy latency, even though converged retrograde scores are already persisted.
+
+This document establishes the system **Goals** and **Non-Goals**, details the **Normalized SQLite Integer ID (`WITHOUT ROWID`)** solution that achieves an **~85% disk reduction** while preserving full parallel SQL access and complete transposition awareness, clarifies that **solve-on-startup is an orthogonal option**, and documents the **Alternatives Considered**.
 
 ---
 
-## 2. Current State & Empirical Analysis
+## 2. Goals & Non-Goals
 
-### 2.1 Database Inventory Across All Variants
+### Goals
+1. **Preserve Complete Information at the Root**: Retain the complete 1-ply forward frontier ($\partial S$) in persistence so that transpositions across distinct branches are pre-wired. Evaluating a position anywhere in the graph must immediately propagate retrograde values through all parents back to the root.
+2. **Drastic Storage Reduction**: Reduce `Standard.db` from **2.15 GB to ~300 MB** (~85% reduction) and all 8 variant databases from ~3.57 GB to ~500 MB by eliminating string duplication in edge storage.
+3. **Preserve Full SQL Capabilities & Parallel Access**: Retain SQLite as the underlying storage engine, utilizing WAL (Write-Ahead Logging) mode to support concurrent read isolates while a background engine isolate writes, with full ACID transaction safety.
+4. **Sub-Second Startup Latency**: Eliminate the multi-second/multi-minute freeze caused by decoding millions of Dart `String` objects on application launch.
+5. **Orthogonal Startup Solving Option**: Make "solve on startup" an independent configuration choice. The system should be capable of instantly trusting persisted converged evaluations on launch, while retaining the ability to trigger a full graph solve on demand.
+6. **Zero-Collision Identity**: Maintain 100% exact board identity with zero risk of hash collision corrupting distinct opening lines.
+
+### Non-Goals
+1. **Non-Goal: Pruning the 1-Ply Frontier from Storage**: We explicitly reject dropping un-evaluated frontier edges. Pruning them leaves ancestor positions (and the root) with incomplete information until a user happens to manually traverse every transposing branch.
+2. **Non-Goal: Custom Flat Binary Files (`.bin` / `.dat`)**: We explicitly reject moving away from SQLite to raw binary files. Custom binary files forfeit WAL concurrency, atomic commits, crash resilience, and database tooling.
+3. **Non-Goal: Lossy Hashing for Primary Identity**: We will not rely on 64-bit Zobrist hashes as the sole persistent position identifier due to birthday paradox collision risks ($P \approx 10^{-7}$) in a database of record.
+4. **Non-Goal: Dynamic Backward Move Generation**: We will not attempt on-the-fly un-move generation, which is mathematically ill-conditioned and intractable for complex chess variants (e.g. Crazyhouse drops, Atomic explosions).
+
+---
+
+## 3. Current State & Empirical Analysis
+
+### 3.1 Database Inventory Across All Variants
 
 | Database | File Size | Nodes (Positions) | Edges (Transitions) | Branching Factor |
 | :--- | :--- | :--- | :--- | :--- |
@@ -37,182 +56,188 @@ This document synthesizes our empirical findings across all 8 variants, analyzes
 | **Horde.db** | **37.54 MB** | **6,004** | **110,704** | **~18.4** |
 | **Total** | **~3.57 GB** | **377,908** | **12,204,365** | **~32.3** |
 
-### 2.2 Deep Dive: `Antichess.db`
-An in-depth inspection of `Antichess.db` revealed the following structural details:
+### 3.2 Deep Dive: `Antichess.db`
+An in-depth inspection of `Antichess.db` revealed the root cause of the storage bloat:
 - **`nodes` Table**: 31,339 rows. Raw payload is **1.46 MB** (~46.7 bytes/row). With SQLite B-tree page overhead and primary key indexing, it occupies **3.66 MB** (~116.8 bytes/row).
 - **`edges` Table**: 342,154 rows. Occupies **71.47 MB** (~208.9 bytes/row).
 - **Text Duplication**: Because `CREATE TABLE edges (source TEXT, target TEXT, PRIMARY KEY (source, target))` is a rowid-backed table, SQLite maintains:
   1. A data B-tree storing `(rowid, source, target)`.
   2. An index B-tree (`sqlite_autoindex_edges_1`) storing `(source, target, rowid)`.
-  Each edge stores both ~40-byte strings twice on disk.
-- **Frontier Asymmetry**:
+  Each edge stores two ~40-byte strings twice on disk.
+- **Frontier Distribution**:
   - Distinct `source` positions in `edges`: 31,014 (96.9% present in `nodes`).
   - Distinct `target` positions in `edges`: 319,372 (only 9.8% present in `nodes`).
-  - **288,120 target positions are un-evaluated frontier leaves** that have no evaluations stored in `nodes`.
-
-### 2.3 The Architectural Role of the 1-Ply Frontier (Transposition Discovery)
-A critical finding is that these 288,120 un-evaluated target edges were not generated by accident; they form the **1-ply forward frontier** ($\partial S$) of the evaluated repertoire ($S$):
-1. **Convergence at the Frontier**: When two distinct repertoire positions $A_1$ and $A_2$ (reached via different move orders) legally move to the same resulting position $B$, both edges $A_1 \rightarrow B$ and $A_2 \rightarrow B$ exist in the graph. In memory, node $B$ immediately possesses `backLinks: {A1, A2}` even before $B$ has been assigned an evaluation.
-2. **Instant Multi-Parent Back-Propagation**: As soon as position $B$ is evaluated during exploration (via engine search or tablebase probe), `graph.solveBfen(B)` walks `B.backLinks` upstream and immediately updates the retrograde evaluations of $A_1$, $A_2$, and all their respective ancestors in a single pass.
-3. **Exploration Deduplication**: When the exploration algorithm encounters $B$ along a second transposition path, it recognizes $B$ as already evaluated and avoids redundant engine searches.
-
-Therefore, any optimization strategy must decide whether to retain this 1-ply frontier (which enables instant transposition wiring) or synthesize it lazily.
-
-### 2.4 Move Generation Benchmarks
-We measured pure Dart move generation (`AntichessChess.generateMoves()`):
-- **Antichess (31,339 positions, 331K moves generated)**: **5.28 seconds** in pure Dart.
-- **Standard Chess Projection (202,248 positions, ~7.2M moves)**:
-  Standard chess has an average branching factor of ~35.6 (compared to ~10.9 in Antichess where forced captures truncate branching).
-  At ~40,000–50,000 moves/sec in Dart, generating 7.2 million moves and inserting them into memory graph sets would take **2.5 to 5 minutes** at startup.
+  - **288,120 target positions are the 1-ply forward frontier** ($\partial S$) of the evaluated repertoire.
 
 ---
 
-## 3. Analysis of Explored Architectural Options
+## 4. The Solution: Normalized SQLite Integer IDs (`WITHOUT ROWID`)
 
-### Option A: Normalize to Integer IDs + `WITHOUT ROWID`
-- **Concept**: Store all positions in `positions (id INTEGER PRIMARY KEY, bfen TEXT UNIQUE, ...)` and store edges as `(source_id INT, target_id INT) WITHOUT ROWID`.
-- **Empirical Test Result (`Antichess.db`)**:
-  - Positions table + unique index: 35.45 MB (expanded to store all 319,460 positions).
-  - Edges table: 4.06 MB (shrunk by 94.3% from 71.47 MB).
-  - Total DB: **39.61 MB** (down from 75.36 MB, a **47.4% reduction**).
-- **Verdict**: Substantial savings, but storing all un-evaluated frontier positions prevents achieving a 90%+ reduction.
+To preserve the complete 1-ply frontier, retain parallel SQL access, and shrink disk usage by ~85%, we normalize the schema to integer primary keys and utilize SQLite's index-organized table feature (`WITHOUT ROWID`).
 
-### Option B: Delete `edges` Table & Regenerate Graph on Startup
-- **Concept**: Remove `edges` table entirely. Keep only `nodes` table (3.66 MB for Antichess, ~25 MB for Standard). On app launch, iterate through all nodes and call `generateMoves()` to reconstruct `pos.links` and `pos.backLinks` in memory.
-- **Performance**:
-  - Acceptable for small/restrictive variants (Antichess takes ~5s).
-  - **Unacceptable for large variants**: For `Standard.db` (202K nodes, 7.2M edges), startup would freeze for 2.5–5 minutes while generating millions of moves and allocating millions of strings and sets.
-- **Verdict**: Not viable as a general solution across all variants.
+### 4.1 Schema Specification
 
-### Option C: Pure "On-the-Fly" Forward & Backward Move Generation
-- **Forward Moves**: Trivial and instantaneous. Calling `game.generateMoves()` for the current board takes < 0.05 ms. Forward edges do not need to be stored in the database.
-- **Backward Moves (Retro-Moves)**:
-  - From a position $P$, generating all legal previous positions $P_{prev}$ requires inverse chess move generation (un-moves, un-captures, un-promotions).
-  - In standard chess, a single position has 100–200+ legal un-moves.
-  - In variants (e.g. Crazyhouse pocket drops, Atomic explosions, Three-Check check tracking), implementing a sound retrograde move generator is exceedingly complex and error-prone.
-  - Over 99% of generated un-moves would produce positions that are not in the user's repertoire.
-- **Verdict**: Pure retrograde un-move generation is mathematically ill-conditioned and unnecessary. Backward edges are simply the inverse of forward edges ($A \rightarrow B \iff B \leftarrow A$).
+```sql
+-- All distinct positions (both evaluated repertoire nodes and 1-ply frontier targets)
+CREATE TABLE positions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  bfen TEXT UNIQUE NOT NULL,
+  assigned_result INTEGER,
+  assigned_dtw INTEGER,
+  assigned_dtz INTEGER,
+  assigned_cp INTEGER,
+  computed_result INTEGER,
+  computed_dtw INTEGER,
+  computed_dtz INTEGER,
+  computed_cp INTEGER
+);
+
+-- Edge connections stored purely as compact integer pairs in an index-organized table
+CREATE TABLE edges (
+  source_id INTEGER NOT NULL,
+  target_id INTEGER NOT NULL,
+  PRIMARY KEY (source_id, target_id)
+) WITHOUT ROWID;
+
+-- Reverse index for instant upstream retrograde back-propagation
+CREATE INDEX idx_edges_target ON edges (target_id, source_id);
+```
+
+### 4.2 Why this Solves the Storage Problem in SQL
+
+1. **Elimination of String Duplication**: Full BFEN strings are stored exactly **once** in the `positions` table.
+2. **`WITHOUT ROWID` Efficiency**:
+   - In a standard SQLite table, an edge entry stores `(rowid, source, target)` in the table data and `(source, target, rowid)` in the index.
+   - In `WITHOUT ROWID`, SQLite stores the table directly as a single B-tree indexed by `(source_id, target_id)`.
+   - SQLite uses variable-length integers (varints) for row IDs. Small-to-medium integer IDs take only 2–3 bytes each.
+   - An edge entry shrinks from **~209 bytes** down to **~12 bytes** (including B-tree cell and page overhead).
+3. **Empirical Verification (`Antichess.db`)**:
+   - Rebuilding `Antichess.db` with this schema shrunk the `edges` table from **71.47 MB to 4.06 MB** (a **94.3% reduction**).
+4. **Projected `Standard.db` Impact**:
+   - 7.2 million edges $\times$ ~12 bytes $\approx$ **~86 MB**.
+   - 2 million distinct positions (202K evaluated + 1.8M frontier) $\approx$ **~200–220 MB**.
+   - **Total database size: ~290–320 MB** (down from 2,150 MB, an **~85% reduction**), with **zero data pruned**.
+
+### 4.3 Parallel Access & Concurrency Benefits
+
+By remaining within SQLite:
+- **WAL Mode Concurrency**: Background engine worker isolates can write new evaluations and discovered edges via `BEGIN IMMEDIATE` / `COMMIT` transactions without locking out the UI isolate. The UI isolate reads positions and child moves concurrently without blocking.
+- **ACID Crash Safety**: Unfinished engine batch searches roll back safely if interrupted, preventing database corruption.
+- **Standard SQL Tooling**: Databases remain inspectable, queryable, and verifiable using standard SQLite tools and extensions.
 
 ---
 
-## 4. Recommended Architecture: The Hybrid Solution
+## 5. Startup Optimization & The Orthogonal "Solve on Startup" Option
 
-The optimal architecture combines:
-1. **Trusting saved evaluations** at startup (eliminating startup solving).
-2. **Pruning un-evaluated frontier edges** from persistence.
-3. **Generating frontier forward edges on the fly**.
-4. **Using compact edge storage** for in-repertoire connections.
+A critical architectural distinction is that **startup solving is completely orthogonal to the database schema**. 
+
+### 5.1 Solving on Startup is an Orthogonal Option
+In the current implementation, every launch executes:
+```dart
+graph.solve(); // Runs Tarjan's SCC over millions of edges
+```
+This re-computation was occurring even though converged values (`computed_result`, `computed_cp`, `computed_dtz`, `computed_dtw`) were already stored in the database.
+
+Because converged retrograde evaluations are persisted in the database:
+- **Option 1: Zero-Solve Startup (Instant Launch - Default)**
+  - Load the positions and their persisted `computed_*` evaluations directly.
+  - Bypass `graph.solve()` entirely on startup.
+  - Startup drops from minutes to **< 200 milliseconds**, regardless of graph size.
+  - Incremental `graph.solveBfen(p)` calls continue to propagate local changes whenever evaluations are modified or added.
+- **Option 2: Full Solve on Startup (Optional / Maintenance)**
+  - Provided as a user preference, CLI flag, or background maintenance task (e.g. after bulk PGN imports or engine batch analysis).
+  - Validates and re-converges the entire graph globally.
+
+Separating the solving policy from storage guarantees that database optimization does not compromise solving flexibility.
+
+### 5.2 Eliminating String Allocation on Launch
+Even when edges are loaded into memory for active graph navigation, reading `(int, int)` pairs from SQLite FFI directly into typed integer arrays (`Int32List`) eliminates the allocation of 14.4 million Dart `String` objects, avoiding garbage collection pressure.
+
+---
+
+## 6. Alternatives Considered
 
 ```mermaid
 flowchart TD
-    subgraph Storage [Storage Layer]
-        DB_Nodes["nodes table\n(Evaluated Repertoire Only)\n~25 MB for Standard"]
-        DB_Edges["in-repertoire edges\n(Evaluated -> Evaluated)\n~10-20 MB binary / integer IDs"]
+    subgraph Solutions [Architectural Options]
+        Current["Current SQLite (Raw Strings)\n• 2.15 GB disk\n• Multi-minute startup\n• 100% complete info"]
+        Opt_Norm["Selected: Normalized SQLite (Integer IDs)\n• ~300 MB disk (85% reduction)\n• Sub-second startup\n• 100% complete info\n• Full SQL & WAL parallel access"]
+        Opt_Bin["Alt 1: Custom Flat Binary Files\n• ~100 MB disk\n• < 100 ms startup\n• Sacrifices parallel access & ACID"]
+        Opt_Prune["Alt 2: Pruned Frontier\n• ~35 MB disk\n• Incomplete info at root\n• Violates core project goal"]
+        Opt_Hash["Alt 3: 64-bit Zobrist Frontier\n• ~100 MB disk\n• Collision risk (1 in 9M)\n• Graph corruption risk"]
     end
-
-    subgraph Startup [App Startup (< 200 ms)]
-        LoadNodes["1. Load nodes & persisted computed eval"]
-        LoadEdges["2. Load compact in-repertoire edges"]
-        Ready["3. App Ready (No full solve needed)"]
-        LoadNodes --> LoadEdges --> Ready
-    end
-
-    subgraph Runtime [Runtime / Exploration]
-        Board["Current Board Position P"]
-        EngineGen["game.generateMoves()\n(On-the-fly in < 0.1 ms)"]
-        Children["Frontier Candidate Moves\n(Look up scores in loaded repertoire)"]
-        Board --> EngineGen --> Children
-        
-        NewEval["New Eval Assigned / Found"]
-        SolveBfen["graph.solveBfen(P)\n(Local Upstream Propagation)"]
-        NewEval --> SolveBfen
-    end
-
-    DB_Nodes --> LoadNodes
-    DB_Edges --> LoadEdges
 ```
 
-### Key Principles of the Recommended Design
+### Alternative 1: Custom Flat Binary Files (`positions.dat` + `edges.bin`)
+- **Description**: Store edges as raw sequential `(uint32_t, uint32_t)` pairs in an external binary file (`57.6 MB` for 7.2M edges) and positions as a line-delimited flat text dictionary (~70 MB).
+- **Advantages**: Extreme compactness (~100–130 MB total) and blazing memory loading (~50–100 ms via `Uint32List.view`).
+- **Why Rejected**:
+  - **Sacrifices Parallel Access**: Multiple Dart isolates (e.g. background engine analysis isolates and GUI thread) cannot safely write and read flat files concurrently without complex custom locking protocols.
+  - **No ACID Crash Protection**: A crash or power loss during engine exploration risks corrupting raw binary offsets.
+  - **No Partial Updates**: Inserting or removing edges in a packed binary file requires complex free-lists or full file compaction.
 
-#### 1. Zero-Solve Startup
-The `nodes` table already persists converged evaluations (`computed_result`, `computed_cp`, `computed_dtz`, `computed_dtw`).
-- On app launch, **do not wipe `computed` values** and **do not call `graph.solve()`**.
-- Load the positions and their pre-computed evaluations into memory (or query on demand).
-- Startup drops from minutes to **under 200 milliseconds**, regardless of database size.
+### Alternative 2: Pruning the 1-Ply Frontier to In-Repertoire Edges
+- **Description**: Only store edges where both the source and target positions exist in `nodes` ($A \in \text{nodes} \wedge B \in \text{nodes}$), generating frontier moves strictly on-the-fly when a board is rendered.
+- **Advantages**: Maximum storage reduction (~30–35 MB total for `Standard.db`).
+- **Why Rejected (Core Design Violation)**:
+  - Suppose the database contains `1. e4 c5` (with un-evaluated candidate `2. Nf3`).
+  - The user then deeply analyzes `1. Nf3 c5 2. e4` ($T$) in a separate session.
+  - Under a pruned frontier, the edge `(1. e4 c5) -> T` was never persisted.
+  - `1. e4 c5` remains unaware of $T$, and its score does not update.
+  - **At the root, the evaluation of `1. e4` is incomplete and misleading.** The user cannot accurately decide whether to play `1. e4` without manually traversing every transposing variation. This directly violates the original motivation for `retro-solve`.
 
-#### 2. In-Repertoire Edge Pruning
-Currently, when a position $A$ is explored, all 35 legal moves $B_1, \dots, B_{35}$ are written to `edges`, even if 34 of them are never evaluated or explored.
-- **Change**: The persistent move graph only needs to store edges where **both source and target are in the repertoire** ($A \in \text{nodes} \wedge B \in \text{nodes}$).
-- Frontier transitions to un-evaluated positions are generated on the fly by the chess engine when the user views or analyzes that position.
-- This immediately eliminates ~90% of the edges in the database:
-  - Antichess edges drop from 342,000 to **~54,000**.
-  - Standard chess edges drop from 7.2 million to an estimated **~600,000–800,000**.
+### Alternative 3: 64-bit Zobrist Hash Frontier
+- **Description**: Store un-evaluated frontier nodes purely as 64-bit integers rather than full BFEN strings.
+- **Advantages**: Compact (~20 MB for 2.5 million positions).
+- **Why Rejected**:
+  - By the Birthday Paradox, the collision probability for $2 \times 10^6$ positions is $P \approx 1.08 \times 10^{-7}$ (~1 in 9.2 million).
+  - In a permanent database of record, even an infinitesimal collision risk can cause two distinct opening lines (e.g. a French Defense and a Sicilian Defense) to coalesce into the same node, permanently corrupting minimax values.
+  - Integer IDs mapped to exact BFEN strings provide **0.000% collision risk**.
 
-#### 2. Trade-Off: Pruning vs. Full-Frontier Binary Storage
-There are two viable paths forward for the 1-ply frontier:
-- **Path A: Keep Full 1-Ply Frontier in Flat Binary (Preserves 100% Transposition Detection)**:
-  Because binary representation is so compact (8 bytes per edge), we do not strictly *need* to prune the 7.2 million edges to solve the disk problem:
-  $$7{,}206{,}173 \text{ edges} \times 8 \text{ bytes} = \mathbf{57.6\text{ MB}}$$
-  Storing all 7.2 million edges in a raw `edges.bin` file achieves a **97.3% reduction** (2.15 GB $\rightarrow$ 57.6 MB) while **preserving 100% of transposition detection and immediate multi-parent back-propagation**.
-- **Path B: Prune Frontier Edges to In-Repertoire Connections Only**:
-  If maximum storage minimization is desired, store only edges where both ends are in `nodes` ($A \in \text{nodes} \wedge B \in \text{nodes}$).
-  - Drops edge count by ~90% (from 7.2M to ~800K).
-  - Transpositions are detected once a child position is evaluated and entered into `nodes`.
-
-#### 3. Compact Move Storage
-Regardless of whether Path A or Path B is selected, raw string composite keys in SQLite should be replaced:
-
-- **Option 3A: SQLite Integer ID Schema (`WITHOUT ROWID`)**
-  ```sql
-  CREATE TABLE positions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    bfen TEXT UNIQUE,
-    assigned_result INTEGER, assigned_dtw INTEGER, assigned_dtz INTEGER, assigned_cp INTEGER,
-    computed_result INTEGER, computed_dtw INTEGER, computed_dtz INTEGER, computed_cp INTEGER
-  );
-
-  CREATE TABLE edges (
-    source_id INTEGER,
-    target_id INTEGER,
-    PRIMARY KEY (source_id, target_id)
-  ) WITHOUT ROWID;
-  ```
-  - Estimated `Standard.db` size: **~40–80 MB** (down from 2,149 MB, a **96%+ reduction**).
-
-- **Option 3B: Binary Edge File (`edges.bin`)**
-  - Store the edge graph as raw `(uint32_t, uint32_t)` pairs in an accompanying flat binary file.
-  - Even with all 7.2M edges: $7.2\text{M} \times 8\text{ bytes} = \mathbf{57.6\text{ MB}}$.
-  - Dart reads a 57.6 MB binary file directly into `Uint32List` in **~50–80 milliseconds**.
+### Alternative 4: Pure On-the-Fly Backward Move Generation
+- **Description**: Generate backward edges dynamically using inverse chess move generation rather than storing them.
+- **Advantages**: Backward edges consume 0 bytes of storage.
+- **Why Rejected**:
+  - Un-move generation in standard chess has a high branching factor (100–200+ un-moves per position).
+  - In variants with special rules (Crazyhouse piece drops, Atomic explosions, Three-Check check counts), implementing a mathematically sound inverse move generator is intractable and error-prone.
+  - Over 99% of generated inverse moves produce positions outside the user's repertoire.
 
 ---
 
-## 5. Comparative Impact Summary
+## 7. Comparative Summary Matrix
 
-| Metric | Current System | Proposed Hybrid System | Improvement |
-| :--- | :--- | :--- | :--- |
-| **`Standard.db` File Size** | 2,149 MB (2.15 GB) | **~40–60 MB** | **~97.5% reduction** |
-| **`Antichess.db` File Size** | 71.9 MB | **~4–6 MB** | **~92% reduction** |
-| **All 8 DBs Combined Size** | ~3.57 GB | **~120–160 MB** | **~96% reduction** |
-| **Standard Chess Startup Time** | Several minutes (7.2M row query + solve) | **< 200 ms** | **100x+ faster** |
-| **Startup Memory Footprint** | Gigabytes (millions of `String`/`Map` objects) | **< 100 MB** | **~90% reduction** |
-| **Frontier Navigation Speed** | Read from SQLite disk | Generated on-the-fly (< 0.1 ms) | Instantaneous |
-| **Retrograde Solving Accuracy** | Unchanged | Unchanged | Bit-for-bit identical |
+| Metric | Current System | **Normalized SQLite (`WITHOUT ROWID`)** | Flat Binary Files (`.bin`) | Pruned Frontier |
+| :--- | :--- | :--- | :--- | :--- |
+| **Storage Technology** | SQLite (Raw Strings) | **SQLite (Integer IDs)** | Custom Binary Arrays | SQLite (Evaluated Only) |
+| **`Standard.db` Disk Size** | 2,149 MB (2.15 GB) | **~300 MB (~85% reduction)** | ~100–130 MB | ~35 MB |
+| **All 8 DBs Combined Size** | ~3,570 MB (3.57 GB) | **~500 MB (~86% reduction)** | ~150–200 MB | ~60 MB |
+| **Parallel Concurrency** | Yes (WAL Mode) | **Yes (WAL Mode, Parallel Reads/Writes)** | No (Requires Custom Locks) | Yes (WAL Mode) |
+| **Transaction / Crash Safety** | Full ACID | **Full ACID** | Custom / Fragile | Full ACID |
+| **Startup Solve Policy** | Forced Full Solve | **Orthogonal (Zero-Solve Default)** | Orthogonal | Orthogonal |
+| **Startup Load Latency** | Minutes (14M strings) | **< 200 ms** | < 100 ms | < 50 ms |
+| **Transposition Soundness** | 100% Pre-Wired | **100% Pre-Wired** | 100% Pre-Wired | Incomplete at Root |
+| **Collision Probability** | 0.000% | **0.000%** | 0.000% | 0.000% |
 
 ---
 
-## 6. Implementation & Migration Roadmap
+## 8. Implementation & Migration Roadmap
 
-### Phase 1: Eliminate Redundant Startup Solve (Immediate / Zero Schema Change)
-1. In `lib/graph/graph_import.dart`, inspect whether loaded nodes already possess valid `computedEval` data.
-2. If `computed` evaluations exist, bypass `graph.solve()` on startup.
-3. Only trigger local `graph.solveBfen(bfen)` when a position's evaluation is actively modified or assigned.
+### Phase 1: Orthogonal Startup Solving Option (Immediate)
+1. Add an application setting / configuration flag: `solveOnStartup` (default: `false`).
+2. In `lib/graph/graph_import.dart`, inspect if loaded nodes contain persisted `computed_*` evaluations.
+3. If persisted computed values exist and `solveOnStartup == false`, bypass full `graph.solve()` on launch.
+4. Verify instant startup across all 8 variants without altering database files.
 
-### Phase 2: Edge Pruning Script & Policy
-1. Update `onEdgeAdded` / `upsertEdge`: only persist an edge $(A, B)$ when both $A$ and $B$ exist in `nodes`.
-2. Provide a migration script (`prune_unlinked_edges`) that deletes edges where `target NOT IN (SELECT bfen FROM nodes)`.
-3. Run `VACUUM` on all variant databases.
+### Phase 2: Schema Migration Script
+1. Create a migration script (`migrate_to_integer_ids.dart`):
+   - Read distinct positions from existing `nodes` and `edges`.
+   - Populate `positions` table with auto-incrementing `id` and BFEN strings.
+   - Insert all 7.2 million transitions into `edges (source_id, target_id) WITHOUT ROWID`.
+   - Rebuild the reverse index `idx_edges_target`.
+2. Run migration on `Antichess.db` and verify that all graph solving tests pass bit-for-bit.
+3. Execute migration on `Standard.db` and run `VACUUM`.
 
-### Phase 3: Schema Normalization (Integer IDs / Binary Format)
-1. Add an auto-increment integer ID to `nodes` / `positions`.
-2. Migrate `edges` to integer IDs with `WITHOUT ROWID` (or export to `edges.bin`).
-3. Update `Graph` in Dart to index internally by integer IDs where beneficial for solving throughput.
+### Phase 3: Engine & DAO Integration
+1. Update `DatabaseService` to query positions and edges using integer IDs.
+2. In `Graph`, maintain an internal integer-keyed graph structure to accelerate Tarjan SCC passes and retrograde propagation.
+3. Enable SQLite WAL mode by default on all databases to support concurrent analysis isolates.

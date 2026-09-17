@@ -150,6 +150,14 @@ class AtomicChess extends Chess {
   }
 
   @override
+  bool get inStalemate {
+    if (kings[white] < 0 || kings[black] < 0) {
+      return false;
+    }
+    return super.inStalemate;
+  }
+
+  @override
   bool get inDraw {
     if (kings[white] < 0 || kings[black] < 0) {
       return false;

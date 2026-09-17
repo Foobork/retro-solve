@@ -12,7 +12,16 @@ class KothChess extends Chess {
   }
 
   @override
-  bool get gameOver => super.gameOver || isKothGameOver;
+  bool get gameOver => isKothGameOver || super.gameOver;
+
+  @override
+  bool get inStalemate => isKothGameOver ? false : super.inStalemate;
+
+  @override
+  bool get inDraw => isKothGameOver ? false : super.inDraw;
+
+  @override
+  bool get inCheckmate => isKothGameOver ? false : super.inCheckmate;
 
   @override
   List<Move> generateMoves([Map? options]) {

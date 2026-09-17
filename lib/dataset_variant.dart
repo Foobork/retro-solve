@@ -78,3 +78,17 @@ class DatasetVariantStore {
     await prefs.setString(_key, variant.preferenceValue);
   }
 }
+
+class SolveOnStartupStore {
+  static const _key = 'solve_on_startup';
+
+  static Future<bool> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_key) ?? false;
+  }
+
+  static Future<void> save(bool solveOnStartup) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_key, solveOnStartup);
+  }
+}

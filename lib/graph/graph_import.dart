@@ -1,6 +1,7 @@
 // ignore_for_file: avoid_print
 
 import 'package:flutter/services.dart' show rootBundle, AssetManifest;
+import 'package:retro_solve/dataset_variant.dart';
 import 'package:retro_solve/graph/graph.dart';
 import 'package:retro_solve/persistence/database_service.dart';
 import 'package:retro_solve/persistence/db_init.dart';
@@ -85,9 +86,18 @@ Future<void> importGraph(String filename) async {
         );
       }
       print("Nodes loaded: ${graph.v.length}. Loading edges...");
-      final edges = await DatabaseService.instance.loadEdges();
+      final oldOnEdgeAdded = graph.onEdgeAdded;
+      graph.onEdgeAdded = null;
+      int edgeCount = 0;
+      await DatabaseService.instance.loadEdges(
+        onEdge: (source, target) {
+          graph.addLink(source, target);
+          edgeCount++;
+        },
+      );
+      graph.onEdgeAdded = oldOnEdgeAdded;
 
-      if (edges.isEmpty && nodes.isNotEmpty) {
+      if (edgeCount == 0 && nodes.isNotEmpty) {
         print("Legacy DB detected (0 edges). Regenerating edges...");
         final bfens = graph.v.keys.toList();
         int count = 0;
@@ -102,17 +112,18 @@ Future<void> importGraph(String filename) async {
         while (DatabaseService.instance.getEdgeQueueLength() > 0) {
           await Future.delayed(const Duration(milliseconds: 200));
         }
-      } else {
-        final oldOnEdgeAdded = graph.onEdgeAdded;
-        graph.onEdgeAdded = null;
-        for (var edge in edges) {
-          graph.addLink(edge['source'] as String, edge['target'] as String);
-        }
-        graph.onEdgeAdded = oldOnEdgeAdded;
       }
 
-      print("importGraph done (from DB). Final vertices count: ${graph.v.length}. Solving graph...");
-      graph.solve();
+      final shouldSolve = await SolveOnStartupStore.load();
+      final hasComputedEvaluations = nodes.any((n) =>
+          (n['computed_result'] != null || n['computed_cp'] != null || n['computed'] != null));
+
+      if (shouldSolve || !hasComputedEvaluations) {
+        print("importGraph done (from DB). Final vertices count: ${graph.v.length}. Solving graph...");
+        graph.solve();
+      } else {
+        print("importGraph done (from DB). Final vertices count: ${graph.v.length}. Fast startup (using persisted evaluations, bypassing full solve).");
+      }
       return;
     }
 

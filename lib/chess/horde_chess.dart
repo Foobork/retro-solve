@@ -47,6 +47,12 @@ class HordeChess extends Chess {
   }
 
   @override
+  bool get inStalemate => _hasNoPieces(white) ? false : super.inStalemate;
+
+  @override
+  bool get inDraw => _hasNoPieces(white) ? false : super.inDraw;
+
+  @override
   bool get gameOver {
     return _hasNoPieces(white) || super.gameOver;
   }

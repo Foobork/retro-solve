@@ -8,6 +8,15 @@ class ThreeCheckChess extends Chess {
   bool get isThreeCheckGameOver => checksCount[white] <= 0 || checksCount[black] <= 0;
 
   @override
+  bool get inStalemate => isThreeCheckGameOver ? false : super.inStalemate;
+
+  @override
+  bool get inDraw => isThreeCheckGameOver ? false : super.inDraw;
+
+  @override
+  bool get inCheckmate => isThreeCheckGameOver ? false : super.inCheckmate;
+
+  @override
   bool load(String fen) {
     final success = super.load(fen);
     if (!success) return false;

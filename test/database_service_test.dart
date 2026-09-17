@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:retro_solve/graph/position_eval.dart';
 import 'package:retro_solve/persistence/database_service.dart';
@@ -35,7 +35,7 @@ void main() {
     }
   });
 
-  test('DatabaseService creates version 3 pure integer schema on fresh init', () async {
+  test('DatabaseService creates version 4 normalized schema on fresh init', () async {
     final dbService = DatabaseService.instance;
     await dbService.init(dbPath);
     await dbService.close();
@@ -43,30 +43,47 @@ void main() {
     final factory = getPlatformDatabaseFactory();
     final db = await factory.openDatabase(dbPath);
 
-    final tableInfo = await db.rawQuery("PRAGMA table_info('nodes');");
-    final columns = {
-      for (var col in tableInfo) (col['name'] as String).toLowerCase(): (col['type'] as String).toUpperCase()
+    // Verify positions table
+    final posInfo = await db.rawQuery("PRAGMA table_info('positions');");
+    final posCols = {
+      for (var col in posInfo) (col['name'] as String).toLowerCase(): (col['type'] as String).toUpperCase()
     };
+    expect(posCols['id'], equals('INTEGER'));
+    expect(posCols['bfen'], equals('TEXT'));
+    expect(posCols['assigned_result'], equals('INTEGER'));
+    expect(posCols['assigned_dtw'], equals('INTEGER'));
+    expect(posCols['assigned_dtz'], equals('INTEGER'));
+    expect(posCols['assigned_cp'], equals('INTEGER'));
+    expect(posCols['computed_result'], equals('INTEGER'));
+    expect(posCols['computed_dtw'], equals('INTEGER'));
+    expect(posCols['computed_dtz'], equals('INTEGER'));
+    expect(posCols['computed_cp'], equals('INTEGER'));
 
-    // Verify presence of all pure integer columns
-    expect(columns['bfen'], equals('TEXT'));
-    expect(columns['assigned_result'], equals('INTEGER'));
-    expect(columns['assigned_dtw'], equals('INTEGER'));
-    expect(columns['assigned_dtz'], equals('INTEGER'));
-    expect(columns['assigned_cp'], equals('INTEGER'));
-    expect(columns['computed_result'], equals('INTEGER'));
-    expect(columns['computed_dtw'], equals('INTEGER'));
-    expect(columns['computed_dtz'], equals('INTEGER'));
-    expect(columns['computed_cp'], equals('INTEGER'));
+    // Verify edges table
+    final edgeInfo = await db.rawQuery("PRAGMA table_info('edges');");
+    final edgeCols = {
+      for (var col in edgeInfo) (col['name'] as String).toLowerCase(): (col['type'] as String).toUpperCase()
+    };
+    expect(edgeCols['source_id'], equals('INTEGER'));
+    expect(edgeCols['target_id'], equals('INTEGER'));
+    expect(edgeCols.containsKey('source'), isFalse);
+    expect(edgeCols.containsKey('target'), isFalse);
 
-    // Legacy REAL columns must NOT exist
-    expect(columns.containsKey('assigned'), isFalse);
-    expect(columns.containsKey('computed'), isFalse);
+    // Verify reverse index
+    final indexInfo = await db.rawQuery("PRAGMA index_list('edges');");
+    final indexNames = indexInfo.map((r) => r['name'] as String).toSet();
+    expect(indexNames.contains('idx_edges_target'), isTrue);
+
+    // Legacy nodes table must NOT exist
+    final tables = (await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table';"))
+        .map((r) => r['name'] as String)
+        .toSet();
+    expect(tables.contains('nodes'), isFalse);
 
     await db.close();
   });
 
-  test('DatabaseService persists and loads PositionEval nodes accurately', () async {
+  test('DatabaseService persists and loads PositionEval nodes and edges accurately with streaming', () async {
     final dbService = DatabaseService.instance;
     await dbService.init(dbPath);
 
@@ -78,6 +95,7 @@ void main() {
 
     dbService.upsertNode(bfen1, eval1, null);
     dbService.upsertNode(bfen2, null, eval2);
+    dbService.upsertEdge(bfen1, bfen2);
     await dbService.flush();
 
     final loaded = await dbService.loadNodes();
@@ -90,12 +108,26 @@ void main() {
     final row2 = loaded.firstWhere((r) => r['bfen'] == bfen2);
     expect(parseEvalFromRow(row2, 'assigned'), isNull);
     expect(parseEvalFromRow(row2, 'computed'), equals(eval2));
+
+    // Test loadEdges normal
+    final edges = await dbService.loadEdges();
+    expect(edges.length, equals(1));
+    expect(edges.first['source'], equals(bfen1));
+    expect(edges.first['target'], equals(bfen2));
+
+    // Test loadEdges streaming
+    final streamedEdges = <Map<String, String>>[];
+    await dbService.loadEdges(onEdge: (s, t) {
+      streamedEdges.add({'source': s, 'target': t});
+    });
+    expect(streamedEdges.length, equals(1));
+    expect(streamedEdges.first['source'], equals(bfen1));
+    expect(streamedEdges.first['target'], equals(bfen2));
   });
 
-  test('DatabaseService seamlessly migrates legacy v2 schema with REAL columns to v3 pure integers', () async {
+  test('DatabaseService seamlessly migrates legacy v2 schema (REAL columns, text edges) to v4', () async {
     final factory = getPlatformDatabaseFactory();
 
-    // 1. Manually construct a legacy v2 SQLite database with REAL columns
     final legacyDb = await factory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
@@ -119,23 +151,17 @@ void main() {
       ),
     );
 
-    // Insert legacy float scores
-    // 999.0 -> Mate in 1 for White (dtw: 1)
     await legacyDb.insert('nodes', {'bfen': 'pos1', 'assigned': 999.0, 'computed': null});
-    // -947.0 -> DTZ 3 for Black (dtz: 3, blackWins)
     await legacyDb.insert('nodes', {'bfen': 'pos2', 'assigned': null, 'computed': -947.0});
-    // 1.50 -> Heuristic +1.50 (cp: 150)
     await legacyDb.insert('nodes', {'bfen': 'pos3', 'assigned': 1.50, 'computed': 1.50});
-    // 0.0 -> Draw
     await legacyDb.insert('nodes', {'bfen': 'pos4', 'assigned': 0.0, 'computed': null});
-
+    await legacyDb.insert('edges', {'source': 'pos1', 'target': 'pos2'});
+    await legacyDb.insert('edges', {'source': 'pos2', 'target': 'pos3'});
     await legacyDb.close();
 
-    // 2. Open via DatabaseService.init() which triggers automated migration to v3
     final dbService = DatabaseService.instance;
     await dbService.init(dbPath);
 
-    // 3. Inspect data: verify accurate reconstruction into PositionEval
     final loaded = await dbService.loadNodes();
     expect(loaded.length, equals(4));
 
@@ -152,18 +178,88 @@ void main() {
     final p4 = loaded.firstWhere((r) => r['bfen'] == 'pos4');
     expect(parseEvalFromRow(p4, 'assigned'), equals(const PositionEval(result: GameResult.draw, cp: 0)));
 
+    final edges = await dbService.loadEdges();
+    expect(edges.length, equals(2));
+    expect(edges.any((e) => e['source'] == 'pos1' && e['target'] == 'pos2'), isTrue);
+    expect(edges.any((e) => e['source'] == 'pos2' && e['target'] == 'pos3'), isTrue);
+
     await dbService.close();
 
-    // 4. Inspect schema: legacy REAL columns must be completely dropped
+    // Verify v4 schema on disk
     final db = await factory.openDatabase(dbPath);
-    final tableInfo = await db.rawQuery("PRAGMA table_info('nodes');");
-    final columns = {
-      for (var col in tableInfo) (col['name'] as String).toLowerCase(): (col['type'] as String).toUpperCase()
-    };
-    expect(columns.containsKey('assigned'), isFalse);
-    expect(columns.containsKey('computed'), isFalse);
-    expect(columns['assigned_result'], equals('INTEGER'));
-    expect(columns['computed_result'], equals('INTEGER'));
+    final tables = (await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table';"))
+        .map((r) => r['name'] as String)
+        .toSet();
+    expect(tables.contains('nodes'), isFalse);
+    expect(tables.contains('positions'), isTrue);
+    expect(tables.contains('edges'), isTrue);
+    await db.close();
+  });
+
+  test('DatabaseService seamlessly migrates v3 schema (integer columns, text edges) to v4', () async {
+    final factory = getPlatformDatabaseFactory();
+
+    final v3Db = await factory.openDatabase(
+      dbPath,
+      options: OpenDatabaseOptions(
+        version: 3,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE nodes (
+              bfen TEXT PRIMARY KEY,
+              assigned_result INTEGER,
+              assigned_dtw INTEGER,
+              assigned_dtz INTEGER,
+              assigned_cp INTEGER,
+              computed_result INTEGER,
+              computed_dtw INTEGER,
+              computed_dtz INTEGER,
+              computed_cp INTEGER
+            );
+          ''');
+          await db.execute('''
+            CREATE TABLE edges (
+              source TEXT,
+              target TEXT,
+              PRIMARY KEY (source, target)
+            );
+          ''');
+        },
+      ),
+    );
+
+    await v3Db.insert('nodes', {
+      'bfen': 'v3_pos1',
+      'assigned_result': GameResult.whiteWins.value,
+      'assigned_dtw': 1,
+      'assigned_dtz': null,
+      'assigned_cp': null,
+      'computed_result': null,
+      'computed_dtw': null,
+      'computed_dtz': null,
+      'computed_cp': null,
+    });
+    await v3Db.insert('edges', {'source': 'v3_pos1', 'target': 'frontier_target'});
+    await v3Db.close();
+
+    final dbService = DatabaseService.instance;
+    await dbService.init(dbPath);
+
+    final loaded = await dbService.loadNodes();
+    expect(loaded.length, equals(1));
+    expect(loaded.first['bfen'], equals('v3_pos1'));
+
+    final edges = await dbService.loadEdges();
+    expect(edges.length, equals(1));
+    expect(edges.first['source'], equals('v3_pos1'));
+    expect(edges.first['target'], equals('frontier_target'));
+
+    await dbService.close();
+
+    final db = await factory.openDatabase(dbPath);
+    final posCount = (await db.rawQuery('SELECT COUNT(1) as cnt FROM positions;')).first['cnt'] as int;
+    // Both evaluated node and frontier target must exist in positions table
+    expect(posCount, equals(2));
     await db.close();
   });
 }

@@ -1313,9 +1313,12 @@ class Chess {
 
   double? get terminalEvaluation {
     if (!gameOver) return null;
-    if (inDraw) return 0.0;
 
     if (isRacingKings) {
+      if (Chess.rank(kings[white]) == Chess.rank8 &&
+          Chess.rank(kings[black]) == Chess.rank8) {
+        return 0.0;
+      }
       if (Chess.rank(kings[black]) == Chess.rank8) {
         return -1000.0;
       }
@@ -1354,6 +1357,8 @@ class Chess {
     if (inCheckmate) {
       return turn == white ? -1000.0 : 1000.0;
     }
+
+    if (inDraw) return 0.0;
 
     return 0.0;
   }

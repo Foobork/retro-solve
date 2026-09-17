@@ -25,6 +25,10 @@ class DatabaseService {
   final List<_EdgeUpdate> _edgeQueue = [];
   bool _isFlushing = false;
 
+  // In-memory cache for fast bidirectional ID <-> BFEN lookups
+  final Map<String, int> _bfenToId = {};
+  final Map<int, String> _idToBfen = {};
+
   DatabaseService._();
 
   int getEdgeQueueLength() => _edgeQueue.length;
@@ -40,15 +44,19 @@ class DatabaseService {
       await _db!.close();
       _db = null;
     }
+    _bfenToId.clear();
+    _idToBfen.clear();
+
     final factory = getPlatformDatabaseFactory();
     _db = await factory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 4,
         onCreate: (db, version) async {
           await db.execute('''
-            CREATE TABLE nodes (
-              bfen TEXT PRIMARY KEY,
+            CREATE TABLE positions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              bfen TEXT UNIQUE NOT NULL,
               assigned_result INTEGER,
               assigned_dtw INTEGER,
               assigned_dtz INTEGER,
@@ -57,47 +65,53 @@ class DatabaseService {
               computed_dtw INTEGER,
               computed_dtz INTEGER,
               computed_cp INTEGER
-            )
+            );
           ''');
           await db.execute('''
             CREATE TABLE edges (
-              source TEXT,
-              target TEXT,
-              PRIMARY KEY (source, target)
-            )
+              source_id INTEGER NOT NULL,
+              target_id INTEGER NOT NULL,
+              PRIMARY KEY (source_id, target_id)
+            ) WITHOUT ROWID;
+          ''');
+          await db.execute('''
+            CREATE INDEX idx_edges_target ON edges (target_id, source_id);
           ''');
         },
         onUpgrade: (db, oldVersion, newVersion) async {
-          if (oldVersion < 2) {
-            await db.execute('''
-              CREATE TABLE IF NOT EXISTS edges (
-                source TEXT,
-                target TEXT,
-                PRIMARY KEY (source, target)
-              )
-            ''');
-          }
           if (oldVersion < 3) {
             await _migrateToVersion3(db);
+          }
+          if (oldVersion < 4) {
+            await _migrateToVersion4(db);
           }
         },
       ),
     );
 
-    // Failsafe migration check: ensure legacy REAL columns are migrated even if version was dirty
+    // Failsafe migration check: ensure legacy tables/columns are migrated even if version PRAGMA was dirty
     try {
-      final tableInfo = await _db!.rawQuery("PRAGMA table_info('nodes');");
-      final columnNames =
-          tableInfo.map((row) => (row['name'] as String?)?.toLowerCase()).toSet();
-      if (columnNames.contains('assigned') || columnNames.contains('computed')) {
-        await _migrateToVersion3(_db!);
+      final tables = (await _db!.rawQuery("SELECT name FROM sqlite_master WHERE type='table';"))
+          .map((row) => (row['name'] as String?)?.toLowerCase())
+          .toSet();
+      if (tables.contains('nodes')) {
+        await _migrateToVersion4(_db!);
+      } else if (tables.contains('edges')) {
+        final edgeInfo = await _db!.rawQuery("PRAGMA table_info('edges');");
+        final colNames = edgeInfo.map((r) => (r['name'] as String?)?.toLowerCase()).toSet();
+        if (colNames.contains('source') || colNames.contains('target')) {
+          await _migrateToVersion4(_db!);
+        }
       }
-    } catch (_) {}
+    } catch (e) {
+      log("Warning checking schema version: $e");
+    }
 
-    // Failsafe: Ensure tables always exist
+    // Failsafe: Ensure v4 tables and reverse index always exist
     await _db!.execute('''
-      CREATE TABLE IF NOT EXISTS nodes (
-        bfen TEXT PRIMARY KEY,
+      CREATE TABLE IF NOT EXISTS positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bfen TEXT UNIQUE NOT NULL,
         assigned_result INTEGER,
         assigned_dtw INTEGER,
         assigned_dtz INTEGER,
@@ -106,17 +120,20 @@ class DatabaseService {
         computed_dtw INTEGER,
         computed_dtz INTEGER,
         computed_cp INTEGER
-      )
+      );
     ''');
     await _db!.execute('''
       CREATE TABLE IF NOT EXISTS edges (
-        source TEXT,
-        target TEXT,
-        PRIMARY KEY (source, target)
-      )
+        source_id INTEGER NOT NULL,
+        target_id INTEGER NOT NULL,
+        PRIMARY KEY (source_id, target_id)
+      ) WITHOUT ROWID;
+    ''');
+    await _db!.execute('''
+      CREATE INDEX IF NOT EXISTS idx_edges_target ON edges (target_id, source_id);
     ''');
 
-    // Enable WAL mode and busy timeout for safe multi-process concurrency
+    // Enable WAL mode and busy timeout for safe multi-process / multi-isolate concurrency
     try {
       await _db!.execute('PRAGMA journal_mode = WAL;');
       await _db!.execute('PRAGMA busy_timeout = 10000;');
@@ -126,7 +143,6 @@ class DatabaseService {
   }
 
   static Future<void> _migrateToVersion3(DatabaseExecutor db) async {
-    // 1. Create temporary v3 table with pure integer evaluation columns
     await db.execute('''
       CREATE TABLE IF NOT EXISTS nodes_v3 (
         bfen TEXT PRIMARY KEY,
@@ -141,7 +157,6 @@ class DatabaseService {
       );
     ''');
 
-    // 2. Read legacy rows
     try {
       final legacyRows = await db.rawQuery('SELECT * FROM nodes;');
       if (legacyRows.isNotEmpty) {
@@ -172,12 +187,108 @@ class DatabaseService {
         await batch.commit(noResult: true);
       }
 
-      // 3. Drop legacy table and rename nodes_v3 -> nodes
       await db.execute('DROP TABLE nodes;');
       await db.execute('ALTER TABLE nodes_v3 RENAME TO nodes;');
     } catch (e) {
       log('Warning migrating nodes to version 3: $e');
     }
+  }
+
+  static Future<void> _migrateToVersion4(DatabaseExecutor db) async {
+    final tables = (await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table';"))
+        .map((r) => (r['name'] as String).toLowerCase())
+        .toSet();
+
+    // If nodes table has legacy REAL columns, migrate to v3 integer format first
+    if (tables.contains('nodes')) {
+      final tableInfo = await db.rawQuery("PRAGMA table_info('nodes');");
+      final colNames = tableInfo.map((r) => (r['name'] as String).toLowerCase()).toSet();
+      if (colNames.contains('assigned') || colNames.contains('computed')) {
+        await _migrateToVersion3(db);
+      }
+    }
+
+    // 1. Create positions table
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bfen TEXT UNIQUE NOT NULL,
+        assigned_result INTEGER,
+        assigned_dtw INTEGER,
+        assigned_dtz INTEGER,
+        assigned_cp INTEGER,
+        computed_result INTEGER,
+        computed_dtw INTEGER,
+        computed_dtz INTEGER,
+        computed_cp INTEGER
+      );
+    ''');
+
+    // 2. Populate positions from nodes if nodes table exists
+    if (tables.contains('nodes')) {
+      await db.execute('''
+        INSERT OR IGNORE INTO positions (
+          bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
+          computed_result, computed_dtw, computed_dtz, computed_cp
+        ) SELECT
+          bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
+          computed_result, computed_dtw, computed_dtz, computed_cp
+        FROM nodes;
+      ''');
+    }
+
+    // 3. Migrate edges if legacy edges table exists
+    if (tables.contains('edges')) {
+      final edgeInfo = await db.rawQuery("PRAGMA table_info('edges');");
+      final colNames = edgeInfo.map((r) => (r['name'] as String).toLowerCase()).toSet();
+      if (colNames.contains('source') || colNames.contains('target')) {
+        // Ensure all frontier source/targets from edges are recorded in positions
+        await db.execute('INSERT OR IGNORE INTO positions (bfen) SELECT DISTINCT source FROM edges;');
+        await db.execute('INSERT OR IGNORE INTO positions (bfen) SELECT DISTINCT target FROM edges;');
+
+        // Create new edges_v4 table
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS edges_v4 (
+            source_id INTEGER NOT NULL,
+            target_id INTEGER NOT NULL,
+            PRIMARY KEY (source_id, target_id)
+          ) WITHOUT ROWID;
+        ''');
+
+        // Populate edges_v4 by joining positions on BFEN
+        await db.execute('''
+          INSERT OR IGNORE INTO edges_v4 (source_id, target_id)
+          SELECT ps.id, pt.id
+          FROM edges e
+          JOIN positions ps ON e.source = ps.bfen
+          JOIN positions pt ON e.target = pt.bfen;
+        ''');
+
+        // Drop old edges and rename edges_v4 to edges
+        await db.execute('DROP TABLE edges;');
+        await db.execute('ALTER TABLE edges_v4 RENAME TO edges;');
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_target ON edges (target_id, source_id);');
+      }
+    } else {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS edges (
+          source_id INTEGER NOT NULL,
+          target_id INTEGER NOT NULL,
+          PRIMARY KEY (source_id, target_id)
+        ) WITHOUT ROWID;
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_edges_target ON edges (target_id, source_id);');
+    }
+
+    // 4. Drop nodes table if it still exists
+    if (tables.contains('nodes')) {
+      await db.execute('DROP TABLE nodes;');
+    }
+
+    // Update PRAGMA user_version to 4
+    try {
+      await db.execute('PRAGMA user_version = 4;');
+    } catch (_) {}
   }
 
   Future<void> upsertNode(String bfen, dynamic assigned, dynamic computed) async {
@@ -212,47 +323,101 @@ class DatabaseService {
 
     final batchUpdates = _updateQueue.values.toList();
     _updateQueue.clear();
-    
+
     final batchEdges = List<_EdgeUpdate>.from(_edgeQueue);
     _edgeQueue.clear();
 
     try {
+      // 1. Process node updates using UPSERT to preserve integer primary key IDs
       if (batchUpdates.isNotEmpty) {
         final batch = _db!.batch();
         for (var update in batchUpdates) {
-          batch.insert(
-            'nodes',
-            {
-              'bfen': update.bfen,
-              'assigned_result': update.assigned?.result?.value,
-              'assigned_dtw': update.assigned?.dtw,
-              'assigned_dtz': update.assigned?.dtz,
-              'assigned_cp': update.assigned?.cp,
-              'computed_result': update.computed?.result?.value,
-              'computed_dtw': update.computed?.dtw,
-              'computed_dtz': update.computed?.dtz,
-              'computed_cp': update.computed?.cp,
-            },
-            conflictAlgorithm: ConflictAlgorithm.replace,
-          );
+          batch.rawInsert('''
+            INSERT INTO positions (
+              bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
+              computed_result, computed_dtw, computed_dtz, computed_cp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(bfen) DO UPDATE SET
+              assigned_result = excluded.assigned_result,
+              assigned_dtw = excluded.assigned_dtw,
+              assigned_dtz = excluded.assigned_dtz,
+              assigned_cp = excluded.assigned_cp,
+              computed_result = excluded.computed_result,
+              computed_dtw = excluded.computed_dtw,
+              computed_dtz = excluded.computed_dtz,
+              computed_cp = excluded.computed_cp;
+          ''', [
+            update.bfen,
+            update.assigned?.result?.value,
+            update.assigned?.dtw,
+            update.assigned?.dtz,
+            update.assigned?.cp,
+            update.computed?.result?.value,
+            update.computed?.dtw,
+            update.computed?.dtz,
+            update.computed?.cp,
+          ]);
         }
         await batch.commit(noResult: true);
       }
 
-      for (int i = 0; i < batchEdges.length; i += 2000) {
-        final chunk = batchEdges.skip(i).take(2000);
-        final batch = _db!.batch();
-        for (var edge in chunk) {
-          batch.insert(
-            'edges',
-            {
-              'source': edge.source,
-              'target': edge.target,
-            },
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
+      // 2. Process edge updates
+      if (batchEdges.isNotEmpty) {
+        // Collect missing BFENs that lack cached integer IDs
+        final missingBfens = <String>{};
+        for (var edge in batchEdges) {
+          if (!_bfenToId.containsKey(edge.source)) missingBfens.add(edge.source);
+          if (!_bfenToId.containsKey(edge.target)) missingBfens.add(edge.target);
         }
-        await batch.commit(noResult: true);
+
+        if (missingBfens.isNotEmpty) {
+          final missingList = missingBfens.toList();
+          // Ensure all missing positions are inserted into positions
+          for (int i = 0; i < missingList.length; i += 1000) {
+            final chunk = missingList.skip(i).take(1000).toList();
+            final batch = _db!.batch();
+            for (final bfen in chunk) {
+              batch.rawInsert(
+                'INSERT OR IGNORE INTO positions (bfen) VALUES (?);',
+                [bfen],
+              );
+            }
+            await batch.commit(noResult: true);
+          }
+
+          // Fetch back newly created/existing IDs to cache them
+          for (int i = 0; i < missingList.length; i += 900) {
+            final chunk = missingList.skip(i).take(900).toList();
+            final placeholders = List.filled(chunk.length, '?').join(',');
+            final rows = await _db!.rawQuery(
+              'SELECT id, bfen FROM positions WHERE bfen IN ($placeholders);',
+              chunk,
+            );
+            for (final row in rows) {
+              final id = row['id'] as int;
+              final bfen = row['bfen'] as String;
+              _bfenToId[bfen] = id;
+              _idToBfen[id] = bfen;
+            }
+          }
+        }
+
+        // Insert compact integer edge pairs
+        for (int i = 0; i < batchEdges.length; i += 2000) {
+          final chunk = batchEdges.skip(i).take(2000);
+          final batch = _db!.batch();
+          for (var edge in chunk) {
+            final sId = _bfenToId[edge.source];
+            final tId = _bfenToId[edge.target];
+            if (sId != null && tId != null) {
+              batch.rawInsert(
+                'INSERT OR IGNORE INTO edges (source_id, target_id) VALUES (?, ?);',
+                [sId, tId],
+              );
+            }
+          }
+          await batch.commit(noResult: true);
+        }
       }
     } catch (e) {
       log("Database sync error: $e");
@@ -266,18 +431,100 @@ class DatabaseService {
 
   Future<List<Map<String, dynamic>>> loadNodes() async {
     if (_db == null) return [];
-    return await _db!.query('nodes');
+    // Load evaluated repertoire nodes (assigned or computed evaluations present)
+    final rows = await _db!.rawQuery('''
+      SELECT * FROM positions
+      WHERE assigned_result IS NOT NULL
+         OR computed_result IS NOT NULL
+         OR assigned_cp IS NOT NULL
+         OR computed_cp IS NOT NULL;
+    ''');
+    for (final row in rows) {
+      final id = row['id'] as int;
+      final bfen = row['bfen'] as String;
+      _bfenToId[bfen] = id;
+      _idToBfen[id] = bfen;
+    }
+    return rows;
   }
 
-  Future<List<Map<String, dynamic>>> loadEdges() async {
+  Future<void> _ensureAllPositionsLoaded() async {
+    if (_db == null) return;
+    final countResult = await _db!.rawQuery('SELECT COUNT(1) as cnt FROM positions;');
+    final totalPositions = (countResult.first['cnt'] as num).toInt();
+    if (_idToBfen.length >= totalPositions) return;
+
+    final rows = await _db!.rawQuery('SELECT id, bfen FROM positions;');
+    for (final row in rows) {
+      final id = row['id'] as int;
+      final bfen = row['bfen'] as String;
+      _idToBfen[id] = bfen;
+      _bfenToId[bfen] = id;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> loadEdges({
+    void Function(String source, String target)? onEdge,
+  }) async {
     if (_db == null) return [];
-    return await _db!.query('edges');
+
+    await _ensureAllPositionsLoaded();
+
+    if (onEdge != null) {
+      // Keyset streaming to keep memory footprint minimal
+      int? lastSourceId;
+      int? lastTargetId;
+      const chunkSize = 200000;
+
+      while (true) {
+        List<Map<String, Object?>> chunk;
+        if (lastSourceId == null || lastTargetId == null) {
+          chunk = await _db!.rawQuery('''
+            SELECT source_id, target_id FROM edges
+            ORDER BY source_id, target_id
+            LIMIT ?;
+          ''', [chunkSize]);
+        } else {
+          chunk = await _db!.rawQuery('''
+            SELECT source_id, target_id FROM edges
+            WHERE (source_id > ?) OR (source_id = ? AND target_id > ?)
+            ORDER BY source_id, target_id
+            LIMIT ?;
+          ''', [lastSourceId, lastSourceId, lastTargetId, chunkSize]);
+        }
+
+        if (chunk.isEmpty) break;
+
+        for (final row in chunk) {
+          final sId = row['source_id'] as int;
+          final tId = row['target_id'] as int;
+          final s = _idToBfen[sId];
+          final t = _idToBfen[tId];
+          if (s != null && t != null) {
+            onEdge(s, t);
+          }
+          lastSourceId = sId;
+          lastTargetId = tId;
+        }
+
+        if (chunk.length < chunkSize) break;
+      }
+      return const [];
+    } else {
+      final result = <Map<String, dynamic>>[];
+      await loadEdges(onEdge: (s, t) {
+        result.add({'source': s, 'target': t});
+      });
+      return result;
+    }
   }
 
   Future<void> clearDatabase() async {
     if (_db == null) return;
-    await _db!.delete('nodes');
+    await _db!.delete('positions');
     await _db!.delete('edges');
+    _bfenToId.clear();
+    _idToBfen.clear();
   }
 
   Future<void> flush() async {
@@ -294,5 +541,7 @@ class DatabaseService {
     await flush();
     await _db?.close();
     _db = null;
+    _bfenToId.clear();
+    _idToBfen.clear();
   }
 }

@@ -41,9 +41,27 @@ Future<void> importGraph(String filename) async {
 
     print("Opening database for variant $variant at $dbPath");
     await DatabaseService.instance.init(dbPath);
-    final nodes = await DatabaseService.instance.loadNodes();
 
-    if (nodes.isNotEmpty) {
+    final posCount = await DatabaseService.instance.getPositionCount();
+    if (posCount > 0) {
+      if (graph is CachedGraph) {
+        print("Database opened for $variant ($posCount positions). Fast on-demand startup.");
+        final game = createGameForVariant(variant);
+        final startBfen = game.bfen;
+        final moves = game.generateMoves();
+        final childBfens = <String>[];
+        for (var move in moves) {
+          game.makeMove(move);
+          childBfens.add(game.bfen);
+          game.undo();
+        }
+        await (graph as CachedGraph).prefetchPositions([startBfen, ...childBfens]);
+        final children = await DatabaseService.instance.getChildrenBfens(startBfen);
+        graph.v[startBfen]?.links.addAll(children);
+        return;
+      }
+
+      final nodes = await DatabaseService.instance.loadNodes();
       print("Loading ${nodes.length} nodes from database $dbPath");
       for (var node in nodes) {
         PositionEval? assignedEval;
@@ -193,25 +211,29 @@ void _importFromLines(List<String> lines, {required String variant}) {
   }
 }
 
-void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
-  Chess game;
-  if (variant == 'threecheck') {
-    game = ThreeCheckChess();
-  } else if (variant == 'koth') {
-    game = KothChess();
-  } else if (variant == 'crazyhouse') {
-    game = CrazyhouseChess();
-  } else if (variant == 'antichess') {
-    game = AntichessChess();
-  } else if (variant == 'atomic') {
-    game = AtomicChess();
-  } else if (variant == 'horde') {
-    game = HordeChess();
-  } else if (variant == 'racingkings') {
-    game = RacingKingsChess();
+Chess createGameForVariant(String variant) {
+  final lower = variant.toLowerCase();
+  if (lower.contains('threecheck')) {
+    return ThreeCheckChess();
+  } else if (lower.contains('koth')) {
+    return KothChess();
+  } else if (lower.contains('crazyhouse')) {
+    return CrazyhouseChess();
+  } else if (lower.contains('antichess')) {
+    return AntichessChess();
+  } else if (lower.contains('atomic')) {
+    return AtomicChess();
+  } else if (lower.contains('horde')) {
+    return HordeChess();
+  } else if (lower.contains('racingkings')) {
+    return RacingKingsChess();
   } else {
-    game = Chess();
+    return Chess();
   }
+}
+
+void _addEdgesForBfen(String bfen, {String variant = 'standard'}) {
+  final game = createGameForVariant(variant);
 
   final parts = bfen.split(' ');
   final fullFen = parts.length >= 4 ? "$bfen 0 1" : bfen;

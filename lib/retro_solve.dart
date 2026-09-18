@@ -510,7 +510,7 @@ class HomePageState extends State<HomePage> {
       if (!mounted || _isBatchEvaluating) return;
       _pendingEvals = evals;
       if (_evalTimer == null || !_evalTimer!.isActive) {
-        _evalTimer = Timer(const Duration(milliseconds: 150), () {
+        _evalTimer = Timer(const Duration(milliseconds: 150), () async {
           if (!mounted || _pendingEvals == null) return;
           final currentFen = _controller.game.fen;
           final currentKey = EngineCache.canonicalKey(_variant, currentFen);
@@ -530,45 +530,53 @@ class HomePageState extends State<HomePage> {
             if (validEvals.isNotEmpty) {
               _engineEvals = validEvals;
             }
+          });
 
-            // Auto-populate node directly if not in database and depth is sufficient
-            final bfen = _controller.game.bfen;
-            if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
-              final bestEval = _engineEvals.first;
-              final bool isSufficient = bestEval.mate != null ||
-                  (bestEval.isPseudoMate &&
-                      bestEval.depth != null &&
-                      bestEval.depth! >= 100) ||
-                  (!bestEval.isPseudoMate &&
-                      ((bestEval.depth != null && bestEval.depth! >= 16) ||
-                          (!widget.engineService.isSearching &&
-                              bestEval.depth != null)));
-              if (bestEval.fen != null &&
-                  EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
-                  isSufficient) {
-                final posEval = _engineEvalToPositionEval(bestEval, _controller.game.turn == white);
-                if (posEval != null) {
-                  graph.assign(bfen, posEval);
-                  graph.v[bfen]?.inDatabase = true;
+          // Auto-populate node directly if not in database and depth is sufficient
+          final bfen = _controller.game.bfen;
+          if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
+            final bestEval = _engineEvals.first;
+            final bool isSufficient = bestEval.mate != null ||
+                (bestEval.isPseudoMate &&
+                    bestEval.depth != null &&
+                    bestEval.depth! >= 100) ||
+                (!bestEval.isPseudoMate &&
+                    ((bestEval.depth != null && bestEval.depth! >= 16) ||
+                        (!widget.engineService.isSearching &&
+                            bestEval.depth != null)));
+            if (bestEval.fen != null &&
+                EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
+                isSufficient) {
+              final posEval = _engineEvalToPositionEval(bestEval, _controller.game.turn == white);
+              if (posEval != null) {
+                graph.assign(bfen, posEval);
+                graph.v[bfen]?.inDatabase = true;
+                if (graph is CachedGraph) {
+                  await (graph as CachedGraph).solveBfenAsync(bfen);
+                } else {
                   graph.solveBfen(bfen);
-                  _knownMovesToSan();
-                  final assigned = graph.v[bfen]?.assigned;
-                  final computed = graph.v[bfen]?.computed;
-                  if (computed != null) {
-                    final bool isSameAsAssigned = assigned != null && computed == assigned;
-                    _eval = isSameAsAssigned
-                        ? assigned.format()
-                        : '(${computed.format()})';
-                  } else if (assigned != null) {
-                    _eval = assigned.format();
-                  }
-                  if (_evalController.text != _eval) {
-                    _evalController.text = _eval;
-                  }
+                }
+                if (mounted) {
+                  setState(() {
+                    _knownMovesToSan();
+                    final assigned = graph.v[bfen]?.assigned;
+                    final computed = graph.v[bfen]?.computed;
+                    if (computed != null) {
+                      final bool isSameAsAssigned = assigned != null && computed == assigned;
+                      _eval = isSameAsAssigned
+                          ? assigned.format()
+                          : '(${computed.format()})';
+                    } else if (assigned != null) {
+                      _eval = assigned.format();
+                    }
+                    if (_evalController.text != _eval) {
+                      _evalController.text = _eval;
+                    }
+                  });
                 }
               }
             }
-          });
+          }
         });
       }
     });
@@ -617,25 +625,50 @@ class HomePageState extends State<HomePage> {
       _isLoadingVariant = false;
       _update();
     });
+    _chessBoardListener();
   }
 
-  void _chessBoardListener() {
+  int _chessBoardListenerSeq = 0;
+
+  void _chessBoardListener() async {
+    final seq = ++_chessBoardListenerSeq;
     var game = _controller.game.copy();
     String a = game.bfen;
+
+    List<Move> moves = game.generateMoves();
+    final childBfens = <String>[];
+    for (var move in moves) {
+      game.makeMove(move);
+      childBfens.add(game.bfen);
+      game.undo();
+    }
+
+    if (graph is CachedGraph) {
+      await (graph as CachedGraph).prefetchPositions([a, ...childBfens]);
+    }
+
+    if (!mounted || seq != _chessBoardListenerSeq) return;
+
     if (game.gameOver) {
       final score = game.terminalEvaluation;
       if (score != null && graph.v[a]?.assigned == null) {
         graph.assign(a, score);
       }
-      graph.solveBfen(a);
-      setState(_update);
+      if (graph is CachedGraph) {
+        await (graph as CachedGraph).solveBfenAsync(a);
+      } else {
+        graph.solveBfen(a);
+      }
+      if (mounted && seq == _chessBoardListenerSeq) {
+        setState(_update);
+      }
       return;
     }
 
-    List<Move> moves = game.generateMoves();
-    for (var move in moves) {
+    for (int i = 0; i < moves.length; i++) {
+      final move = moves[i];
+      final b = childBfens[i];
       game.makeMove(move);
-      String b = game.bfen;
       if (game.gameOver) {
         final score = game.terminalEvaluation;
         if (score != null && graph.v[b]?.assigned == null) {
@@ -645,8 +678,16 @@ class HomePageState extends State<HomePage> {
       game.undo();
       graph.addLink(a, b);
     }
-    graph.solveBfen(a);
-    setState(_update);
+
+    if (graph is CachedGraph) {
+      await (graph as CachedGraph).solveBfenAsync(a);
+    } else {
+      graph.solveBfen(a);
+    }
+
+    if (mounted && seq == _chessBoardListenerSeq) {
+      setState(_update);
+    }
   }
 
   void _update() {
@@ -724,8 +765,14 @@ class HomePageState extends State<HomePage> {
               if (posEval != null) {
                 graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
-                graph.solveBfen(bfen);
-                _knownMovesToSan();
+                if (graph is CachedGraph) {
+                  (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
+                    if (mounted) setState(_update);
+                  });
+                } else {
+                  graph.solveBfen(bfen);
+                  _knownMovesToSan();
+                }
               }
             }
           }
@@ -796,7 +843,7 @@ class HomePageState extends State<HomePage> {
     scratch.makeMove(move);
     var vertex = graph.v[scratch.bfen];
     if (vertex == null) return;
-    if (!vertex.inDatabase && vertex.assigned == null && vertex.computed == null && vertex.links.isEmpty) return;
+    if (vertex.effectiveEval == null && vertex.links.isEmpty) return;
     _knownMoves.add(MoveInfo(game.moveToSan(move), vertex.effectiveEval));
   }
 
@@ -860,7 +907,12 @@ class HomePageState extends State<HomePage> {
     try {
       await _exploreRecursive(isRoot: true);
     } finally {
-      if (mounted) setState(() => _isExploring = false);
+      if (mounted) {
+        setState(() {
+          _isExploring = false;
+          _update();
+        });
+      }
       WakelockPlus.disable();
       print('[explore] Exploration ended/stopped.');
     }
@@ -1052,15 +1104,27 @@ class HomePageState extends State<HomePage> {
           '[explore] Choosing to explore unexplored move: $nextMoveToExplore');
       _controller.makeMoveWithNormalNotation(nextMoveToExplore);
 
-      await Future.delayed(const Duration(milliseconds: 200));
-
-      final waitStopwatch = Stopwatch()..start();
-      while (_isExploring && mounted) {
-        final bfen = _controller.game.bfen;
-        if (graph.v[bfen]?.assigned != null || graph.v[bfen]?.computed != null) break;
-        if (!widget.engineService.isSearching && _engineEvals.isNotEmpty) break;
-        if (waitStopwatch.elapsedMilliseconds > 30000) break;
-        await Future.delayed(const Duration(milliseconds: 100));
+      final bfen = _controller.game.bfen;
+      if (graph.v[bfen]?.assigned == null && graph.v[bfen]?.computed == null) {
+        await _waitForEngineStabilization();
+        if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
+          final bestEval = _engineEvals.first;
+          final currentFen = _controller.game.fen;
+          final currentKey = EngineCache.canonicalKey(_variant, currentFen);
+          if (bestEval.fen != null &&
+              EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey) {
+            final posEval = _engineEvalToPositionEval(bestEval, _controller.game.turn == white);
+            if (posEval != null) {
+              graph.assign(bfen, posEval);
+              graph.v[bfen]?.inDatabase = true;
+              if (graph is CachedGraph) {
+                await (graph as CachedGraph).solveBfenAsync(bfen);
+              } else {
+                graph.solveBfen(bfen);
+              }
+            }
+          }
+        }
       }
 
       if (!_isExploring || !mounted) break;
@@ -1075,6 +1139,9 @@ class HomePageState extends State<HomePage> {
       print('[explore] Returning to parent position.');
       _controller.undoMove();
       await _waitForEngineStabilization();
+      if (mounted) {
+        setState(_update);
+      }
     }
   }
 
@@ -1590,9 +1657,15 @@ class HomePageState extends State<HomePage> {
     String bfen = _controller.game.bfen;
     graph.assign(bfen, _parsePositionEval(newEval));
     graph.v[bfen]?.inDatabase = true;
-    graph.solveBfen(bfen);
-    if (mounted) {
-      setState(_update);
+    if (graph is CachedGraph) {
+      (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
+        if (mounted) setState(_update);
+      });
+    } else {
+      graph.solveBfen(bfen);
+      if (mounted) {
+        setState(_update);
+      }
     }
   }
 
@@ -1807,6 +1880,9 @@ class HomePageState extends State<HomePage> {
 
   @visibleForTesting
   Set<String> getKnownMoveSans() => _getKnownMoveSans();
+
+  @visibleForTesting
+  List<MoveInfo> get knownMoves => _knownMoves;
 
   @visibleForTesting
   int Function(MoveInfo, MoveInfo) compareMoves(PlayerColor turn) => _compare(turn);

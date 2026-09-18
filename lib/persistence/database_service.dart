@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:developer';
 import 'package:sqflite_common/sqlite_api.dart';
+import '../graph/csr_graph_solver.dart';
+import '../graph/lru_map.dart';
 import '../graph/position_eval.dart';
 import 'db_init.dart';
 
@@ -25,9 +27,11 @@ class DatabaseService {
   final List<_EdgeUpdate> _edgeQueue = [];
   bool _isFlushing = false;
 
-  // In-memory cache for fast bidirectional ID <-> BFEN lookups
-  final Map<String, int> _bfenToId = {};
-  final Map<int, String> _idToBfen = {};
+  // Bounded in-memory LRU cache for fast bidirectional ID <-> BFEN lookups
+  final Map<String, int> _bfenToId = LruMap<String, int>(capacity: 100000);
+  final Map<int, String> _idToBfen = LruMap<int, String>(capacity: 100000);
+
+  bool get isOpen => _db != null;
 
   DatabaseService._();
 
@@ -427,6 +431,175 @@ class DatabaseService {
         _scheduleFlush();
       }
     }
+  }
+
+  /// Fetches a single position row by its BFEN.
+  Future<Map<String, dynamic>?> getNode(String bfen) async {
+    if (_db == null) return null;
+    final pending = _updateQueue[bfen];
+    if (pending != null) {
+      return {
+        'bfen': bfen,
+        'assigned_result': pending.assigned?.result?.value,
+        'assigned_dtw': pending.assigned?.dtw,
+        'assigned_dtz': pending.assigned?.dtz,
+        'assigned_cp': pending.assigned?.cp,
+        'computed_result': pending.computed?.result?.value,
+        'computed_dtw': pending.computed?.dtw,
+        'computed_dtz': pending.computed?.dtz,
+        'computed_cp': pending.computed?.cp,
+      };
+    }
+    final rows = await _db!.rawQuery(
+      'SELECT * FROM positions WHERE bfen = ? LIMIT 1;',
+      [bfen],
+    );
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  /// Batch-fetches multiple positions by BFEN, checking pending writes first.
+  Future<Map<String, Map<String, dynamic>>> getNodes(Iterable<String> bfens) async {
+    if (_db == null || bfens.isEmpty) return {};
+    final result = <String, Map<String, dynamic>>{};
+    final missing = <String>[];
+
+    for (final bfen in bfens) {
+      final pending = _updateQueue[bfen];
+      if (pending != null) {
+        result[bfen] = {
+          'bfen': bfen,
+          'assigned_result': pending.assigned?.result?.value,
+          'assigned_dtw': pending.assigned?.dtw,
+          'assigned_dtz': pending.assigned?.dtz,
+          'assigned_cp': pending.assigned?.cp,
+          'computed_result': pending.computed?.result?.value,
+          'computed_dtw': pending.computed?.dtw,
+          'computed_dtz': pending.computed?.dtz,
+          'computed_cp': pending.computed?.cp,
+        };
+      } else {
+        missing.add(bfen);
+      }
+    }
+
+    if (missing.isNotEmpty) {
+      for (int i = 0; i < missing.length; i += 500) {
+        final chunk = missing.skip(i).take(500).toList();
+        final placeholders = List.filled(chunk.length, '?').join(',');
+        final rows = await _db!.rawQuery(
+          'SELECT * FROM positions WHERE bfen IN ($placeholders);',
+          chunk,
+        );
+        for (final row in rows) {
+          result[row['bfen'] as String] = row;
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /// Returns outgoing edge target BFENs for the given source position.
+  Future<List<String>> getChildrenBfens(String bfen) async {
+    if (_db == null) return [];
+    if (_edgeQueue.isNotEmpty) {
+      await flush();
+    }
+    final rows = await _db!.rawQuery('''
+      SELECT pt.bfen
+      FROM edges e
+      JOIN positions ps ON e.source_id = ps.id
+      JOIN positions pt ON e.target_id = pt.id
+      WHERE ps.bfen = ?;
+    ''', [bfen]);
+    return rows.map((r) => r['bfen'] as String).toList();
+  }
+
+  /// Returns incoming edge source BFENs (ancestors) for the given target position using idx_edges_target.
+  Future<List<String>> getParentBfens(String bfen) async {
+    if (_db == null) return [];
+    if (_edgeQueue.isNotEmpty) {
+      await flush();
+    }
+    final rows = await _db!.rawQuery('''
+      SELECT ps.bfen
+      FROM edges e
+      JOIN positions pt ON e.target_id = pt.id
+      JOIN positions ps ON e.source_id = ps.id
+      WHERE pt.bfen = ?;
+    ''', [bfen]);
+    return rows.map((r) => r['bfen'] as String).toList();
+  }
+
+  /// Parses a PositionEval object from a raw positions table row.
+  static PositionEval? evalFromRow(Map<String, dynamic> row, String prefix) {
+    final resVal = row['${prefix}_result'] as int?;
+    final dtw = row['${prefix}_dtw'] as int?;
+    final dtz = row['${prefix}_dtz'] as int?;
+    final cp = row['${prefix}_cp'] as int?;
+    if (resVal == null && dtw == null && dtz == null && cp == null) {
+      if (row.containsKey(prefix)) {
+        return PositionEval.fromLegacyScore(row[prefix] as double?);
+      }
+      return null;
+    }
+    return PositionEval(
+      result: GameResult.fromInt(resVal),
+      dtw: dtw,
+      dtz: dtz,
+      cp: cp,
+    );
+  }
+
+  Future<int> getPositionCount() async {
+    if (_db == null) return 0;
+    final res = await _db!.rawQuery('SELECT COUNT(1) as cnt FROM positions;');
+    return (res.first['cnt'] as num).toInt();
+  }
+
+  Future<int> getEdgeCount() async {
+    if (_db == null) return 0;
+    final res = await _db!.rawQuery('SELECT COUNT(1) as cnt FROM edges;');
+    return (res.first['cnt'] as num).toInt();
+  }
+
+  /// Paginates through evaluated positions for disk export without memory spikes.
+  Future<List<Map<String, dynamic>>> getPositionsForExport({
+    int? afterId,
+    int limit = 50000,
+  }) async {
+    if (_db == null) return [];
+    if (afterId == null) {
+      return await _db!.rawQuery('''
+        SELECT id, bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
+               computed_result, computed_dtw, computed_dtz, computed_cp
+        FROM positions
+        WHERE computed_result IS NOT NULL OR computed_cp IS NOT NULL
+        ORDER BY id
+        LIMIT ?;
+      ''', [limit]);
+    } else {
+      return await _db!.rawQuery('''
+        SELECT id, bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
+               computed_result, computed_dtw, computed_dtz, computed_cp
+        FROM positions
+        WHERE id > ? AND (computed_result IS NOT NULL OR computed_cp IS NOT NULL)
+        ORDER BY id
+        LIMIT ?;
+      ''', [afterId, limit]);
+    }
+  }
+
+  /// Solves the entire database using the flat typed-memory CSR Tarjan solver.
+  Future<CsrSolveResult> solveGlobalCsr({
+    void Function(double progress, String status)? onProgress,
+  }) async {
+    if (_db == null) {
+      throw StateError('Database is not initialized.');
+    }
+    await flush();
+    return await CsrGraphSolver.solveDirect(_db!, onProgress: onProgress);
   }
 
   Future<List<Map<String, dynamic>>> loadNodes() async {

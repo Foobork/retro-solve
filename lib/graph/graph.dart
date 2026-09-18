@@ -2,8 +2,12 @@
 
 import 'dart:math';
 
+import 'cached_graph.dart';
 import 'position_eval.dart';
 import 'tarjan.dart';
+export 'cached_graph.dart';
+export 'csr_graph_solver.dart';
+export 'lru_map.dart';
 export 'position_eval.dart';
 
 typedef NodeUpdateCallback = void Function(
@@ -15,9 +19,11 @@ class Graph {
   /// A threshold of 200.0 supports mate distances up to 400 moves (800 plies: 1000.0 - 800.0 = 200.0).
   static const double mateThreshold = 200.0;
 
-  final Map<String, Vertex> v = {};
+  Map<String, Vertex> v;
   NodeUpdateCallback? onNodeUpdated;
   EdgeUpdateCallback? onEdgeAdded;
+
+  Graph({Map<String, Vertex>? vertexMap}) : v = vertexMap ?? {};
 
   Vertex addVertex(String bfen) {
     return v.putIfAbsent(bfen, () => Vertex(bfen));
@@ -31,7 +37,10 @@ class Graph {
     pos.computed = computed is PositionEval?
         ? computed
         : PositionEval.fromLegacyScore(computed as double?);
-    pos.inDatabase = true;
+    if (pos.assigned != null || pos.computed != null) {
+      pos.inDatabase = true;
+    }
+    pos.queriedFromDb = true;
     return pos;
   }
 
@@ -77,9 +86,32 @@ class Graph {
       if (sccCount % 10000 == 0) {
         print("Solved $sccCount / ${sccs.length} SCCs");
       }
-      _solveSCC(scc);
+      solveSCC(scc);
     }
     print("solved");
+  }
+
+  /// Solves a designated subgraph defined by [upstreamNodes] using Tarjan SCC contraction.
+  void solveSubGraph(Set<String> upstreamNodes) {
+    Map<String, Iterable<String>> subGraphOutEdges = {};
+    for (String node in upstreamNodes) {
+      final vertex = v[node];
+      if (vertex == null) continue;
+      subGraphOutEdges[node] =
+          vertex.links.where((l) => upstreamNodes.contains(l));
+
+      vertex._originalComputed = vertex.computed;
+      if (vertex.assigned == null) {
+        vertex.computed = null;
+      }
+    }
+
+    final tarjan = Tarjan();
+    final sccs = tarjan.execute(subGraphOutEdges);
+
+    for (var scc in sccs) {
+      solveSCC(scc);
+    }
   }
 
   void solveBfen(String bfen) {
@@ -91,36 +123,21 @@ class Graph {
     final queue = [bfen];
     while (queue.isNotEmpty) {
       final curr = queue.removeLast();
-      for (var parent in v[curr]!.backLinks) {
-        if (upstreamNodes.add(parent)) {
-          queue.add(parent);
+      final vertex = v[curr];
+      if (vertex != null) {
+        for (var parent in vertex.backLinks) {
+          if (upstreamNodes.add(parent)) {
+            queue.add(parent);
+          }
         }
       }
     }
 
-    // 2. Build local subgraph of outEdges & reset computed values
-    Map<String, Iterable<String>> subGraphOutEdges = {};
-    for (String node in upstreamNodes) {
-      subGraphOutEdges[node] =
-          v[node]!.links.where((l) => upstreamNodes.contains(l));
-
-      v[node]!._originalComputed = v[node]!.computed;
-      if (v[node]!.assigned == null) {
-        v[node]!.computed = null;
-      }
-    }
-
-    // 3. Extract local SCCs using Tarjan
-    final tarjan = Tarjan();
-    final sccs = tarjan.execute(subGraphOutEdges);
-
-    // 4. Solve the local SCCs in reverse topological order
-    for (var scc in sccs) {
-      _solveSCC(scc);
-    }
+    // 2. Solve local subgraph in reverse topological order
+    solveSubGraph(upstreamNodes);
   }
 
-  void _solveSCC(List<String> scc) {
+  void solveSCC(List<String> scc) {
     for (var bfen in scc) {
       final pos = v[bfen]!;
       if (pos.assigned != null) {
@@ -153,7 +170,7 @@ class Graph {
           final childEval = child?.effectiveEval;
           if (childEval == null) continue;
 
-          final candidate = _adjustChildEval(pos, link, childEval);
+          final candidate = adjustChildEval(pos, link, childEval);
           if (bestCandidate == null) {
             bestCandidate = candidate;
           } else {
@@ -184,7 +201,7 @@ class Graph {
     }
   }
 
-  PositionEval _adjustChildEval(Vertex pos, String linkBfen, PositionEval childEval) {
+  PositionEval adjustChildEval(Vertex pos, String linkBfen, PositionEval childEval) {
     int? newDtw = childEval.dtw != null ? childEval.dtw! + 1 : null;
     int? newDtz;
     if (childEval.dtz != null) {
@@ -217,6 +234,7 @@ class Vertex {
   PositionEval? computed;
   PositionEval? _originalComputed;
   bool inDatabase = false;
+  bool queriedFromDb = false;
   Set<String> links = {};
   Set<String> backLinks = {};
 
@@ -236,9 +254,9 @@ class Vertex {
   }
 }
 
-// global graph
-var graph = Graph();
+// Global graph instance (uses on-demand bounded LRU cache by default)
+Graph graph = CachedGraph();
 
-void resetGraph() {
-  graph = Graph();
+void resetGraph({bool useCache = true, int cacheCapacity = 50000}) {
+  graph = useCache ? CachedGraph(cacheCapacity: cacheCapacity) : Graph();
 }

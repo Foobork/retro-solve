@@ -27,6 +27,48 @@ class _NoopEngineService extends FairyStockfishService {
   }
 }
 
+class _MockExploreEngineService extends FairyStockfishService {
+  final _controller = StreamController<List<EngineEvaluation>>.broadcast();
+  bool _searching = false;
+  Timer? _searchTimer;
+
+  @override
+  bool get isEngineAvailable => true;
+
+  @override
+  Stream<List<EngineEvaluation>> get evaluationStream => _controller.stream;
+
+  @override
+  bool get isSearching => _searching;
+
+  @override
+  Future<void> start() async {}
+
+  @override
+  Future<void> startSearch(String fen) async {
+    _searching = true;
+    _searchTimer?.cancel();
+    _searchTimer = Timer(const Duration(milliseconds: 30), () {
+      if (fen.contains('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR')) {
+        _controller.add([
+          EngineEvaluation(candidateMove: 'e2e4', centipawns: 30, depth: 16, fen: fen),
+        ]);
+      } else if (fen.contains('4p3') || fen.contains('4P3')) {
+        _controller.add([
+          EngineEvaluation(candidateMove: 'e7e5', centipawns: -30, depth: 16, fen: fen),
+        ]);
+      }
+      _searching = false;
+    });
+  }
+
+  @override
+  Future<void> dispose() async {
+    _searchTimer?.cancel();
+    _controller.close();
+  }
+}
+
 void main() {
   testWidgets('KOTH variant does not render check badges or status', (WidgetTester tester) async {
     await tester.pumpWidget(
@@ -191,6 +233,41 @@ void main() {
     expect(evaluatedSans.contains('Nxd7'), isFalse);
   });
 
+  testWidgets('unevaluated frontier legal moves are excluded from known moves list', (WidgetTester tester) async {
+    resetGraph();
+
+    const rootBfen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -';
+    const child1Bfen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -'; // e4 (evaluated)
+    const child2Bfen = 'rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq -'; // d4 (unevaluated frontier in graph)
+
+    final rootVertex = graph.addVertex(rootBfen);
+    rootVertex.inDatabase = true;
+
+    graph.addLink(rootBfen, child1Bfen);
+    graph.assign(child1Bfen, 991.0);
+
+    // child2 is linked as frontier node with no eval and no links of its own
+    graph.addLink(rootBfen, child2Bfen);
+
+    graph.solveBfen(rootBfen);
+
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: _NoopEngineService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+    final knownSans = state.getKnownMoveSans();
+
+    // Only evaluated move e4 should be known; d4 (frontier with no eval/links) must not be in knownSans
+    expect(knownSans.contains('e4'), isTrue);
+    expect(knownSans.contains('d4'), isFalse);
+    expect(knownSans.length, equals(1));
+  });
+
   testWidgets('handles mate in 200 in retrograde solving, input parsing, and UI rendering', (WidgetTester tester) async {
     resetGraph();
 
@@ -265,5 +342,37 @@ void main() {
 
     await exploreFuture;
     expect(state.isExploring, isFalse);
+  });
+
+  testWidgets('explore evaluates first candidate move and displays it with evaluation', (WidgetTester tester) async {
+    resetGraph();
+
+    final engineService = _MockExploreEngineService();
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+
+    // Start exploration
+    final exploreFuture = state.startExploring();
+
+    // Advance clocks to let exploration complete root and child move
+    for (int i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (!state.isExploring) break;
+    }
+    await exploreFuture;
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    final knownMoves = state.knownMoves;
+    expect(knownMoves.any((m) => m.move == 'e4'), isTrue);
+    final e4Move = knownMoves.firstWhere((m) => m.move == 'e4');
+    expect(e4Move.eval, isNotNull);
   });
 }

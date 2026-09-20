@@ -138,7 +138,11 @@ Future<void> importGraph(String filename) async {
 
       if (shouldSolve || !hasComputedEvaluations) {
         print("importGraph done (from DB). Final vertices count: ${graph.v.length}. Solving graph...");
-        graph.solve();
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).solveGlobal();
+        } else {
+          graph.solve();
+        }
       } else {
         print("importGraph done (from DB). Final vertices count: ${graph.v.length}. Fast startup (using persisted evaluations, bypassing full solve).");
       }
@@ -186,7 +190,11 @@ Future<void> importGraph(String filename) async {
       }
     }
     print("importGraph done (migrated from asset). Solving graph...");
-    graph.solve();
+    if (graph is CachedGraph) {
+      await (graph as CachedGraph).solveGlobal();
+    } else {
+      graph.solve();
+    }
   } catch (e) {
     print("Error in importGraph: $e");
   }

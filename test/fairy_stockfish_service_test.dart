@@ -73,8 +73,7 @@ void main() {
     expect(pseudoLoss.toString(), isNot(contains('-152.65')));
   });
 
-  test('EngineService default and max pseudo-mate search depths', () {
+  test('EngineService default search depth', () {
     expect(EngineService.defaultSearchDepth, equals(16));
-    expect(EngineService.maxPseudoMateDepth, equals(36));
   });
 }

@@ -44,9 +44,10 @@ class CachedGraph extends Graph {
     return vertex;
   }
 
-  Future<void> prefetchPositions(Iterable<String> bfens) async {
+  Future<void> prefetchPositions(Iterable<String> bfens, {bool forceRefresh = false}) async {
     if (!dbService.isOpen || bfens.isEmpty) return;
     final missing = bfens.where((b) {
+      if (forceRefresh) return true;
       final existing = v[b];
       if (existing == null) return true;
       return !existing.queriedFromDb &&
@@ -75,6 +76,47 @@ class CachedGraph extends Graph {
     await prefetchPositions([bfen, ...childBfens]);
   }
 
+  /// Performs full database retrograde solve using the out-of-core flat CSR Tarjan solver,
+  /// and refreshes all cached positions in memory.
+  Future<CsrSolveResult?> solveGlobal({
+    void Function(double progress, String status)? onProgress,
+  }) async {
+    if (!dbService.isOpen) {
+      super.solve();
+      return null;
+    }
+    await dbService.flush();
+    final result = await dbService.solveGlobalCsr(onProgress: onProgress);
+
+    // Refresh evaluations for all currently cached positions
+    final cachedBfens = v.keys.toList(growable: false);
+    if (cachedBfens.isNotEmpty) {
+      final rows = await dbService.getNodes(cachedBfens);
+      for (final bfen in cachedBfens) {
+        final vertex = v[bfen];
+        final row = rows[bfen];
+        if (vertex != null && row != null) {
+          vertex.assigned = DatabaseService.evalFromRow(row, 'assigned');
+          vertex.computed = DatabaseService.evalFromRow(row, 'computed');
+          if (vertex.assigned != null || vertex.computed != null) {
+            vertex.inDatabase = true;
+          }
+          vertex.queriedFromDb = true;
+        }
+      }
+    }
+    return result;
+  }
+
+  @override
+  void solve() {
+    if (dbService.isOpen) {
+      solveGlobal();
+    } else {
+      super.solve();
+    }
+  }
+
   /// Performs targeted retrograde back-propagation through SQLite reverse index (`idx_edges_target`).
   ///
   /// 1. Discovers all upstream ancestor nodes via SQLite reverse index and memory backlinks.
@@ -82,6 +124,10 @@ class CachedGraph extends Graph {
   /// 3. Contracts strongly connected components and propagates minimax evaluations upward.
   /// 4. Enqueues updated evaluations to SQLite via [onNodeUpdated].
   Future<void> solveBfenAsync(String bfen) async {
+    if (dbService.isOpen) {
+      await dbService.flush();
+    }
+
     // 1. Upstream BFS searching both cache backLinks and SQLite reverse index idx_edges_target
     final upstreamNodes = <String>{bfen};
     final queue = [bfen];
@@ -112,8 +158,10 @@ class CachedGraph extends Graph {
       if (vertex != null) {
         vertex.links.addAll(dbChildren);
       }
-      for (final child in dbChildren) {
-        if (!v.containsKey(child)) {
+      final allChildren = {...?vertex?.links, ...dbChildren};
+      for (final child in allChildren) {
+        final childVertex = v[child];
+        if (childVertex == null || childVertex.effectiveEval == null) {
           childrenToPrefetch.add(child);
         }
       }

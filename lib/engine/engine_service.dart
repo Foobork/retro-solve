@@ -167,7 +167,6 @@ String uciVariantForDataset(DatasetVariant variant) {
 
 abstract class EngineService {
   static const int defaultSearchDepth = 16;
-  static const int maxPseudoMateDepth = 36;
 
   DatasetVariant get variant;
   bool get isNNUE;

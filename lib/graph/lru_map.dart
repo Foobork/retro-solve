@@ -36,8 +36,17 @@ class LruMap<K, V> with MapMixin<K, V> {
   @override
   void clear() => _map.clear();
 
+  /// Looks up [key] without updating its position in the LRU order.
+  V? peek(Object? key) => _map[key];
+
   @override
-  Iterable<K> get keys => _map.keys;
+  Iterable<K> get keys => _map.keys.toList(growable: false);
+
+  @override
+  Iterable<V> get values => _map.values.toList(growable: false);
+
+  @override
+  Iterable<MapEntry<K, V>> get entries => _map.entries.toList(growable: false);
 
   @override
   V? remove(Object? key) => _map.remove(key);

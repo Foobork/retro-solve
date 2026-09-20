@@ -537,13 +537,9 @@ class HomePageState extends State<HomePage> {
           if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
             final bool isSufficient = bestEval.mate != null ||
-                (bestEval.isPseudoMate &&
-                    bestEval.depth != null &&
-                    bestEval.depth! >= 100) ||
-                (!bestEval.isPseudoMate &&
-                    ((bestEval.depth != null && bestEval.depth! >= 16) ||
-                        (!widget.engineService.isSearching &&
-                            bestEval.depth != null)));
+                (bestEval.depth != null && bestEval.depth! >= 16) ||
+                (!widget.engineService.isSearching &&
+                    bestEval.depth != null);
             if (bestEval.fen != null &&
                 EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
                 isSufficient) {
@@ -754,11 +750,7 @@ class HomePageState extends State<HomePage> {
           if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
             final hasFull = bestEval.mate != null ||
-                (bestEval.isPseudoMate &&
-                    bestEval.depth != null &&
-                    bestEval.depth! >= 100) ||
-                (!bestEval.isPseudoMate &&
-                    bestEval.depth != null &&
+                (bestEval.depth != null &&
                     bestEval.depth! >= 16);
             if (hasFull) {
               final posEval = _engineEvalToPositionEval(bestEval, whiteToMove);
@@ -779,12 +771,8 @@ class HomePageState extends State<HomePage> {
         });
         final bestCached = validEvals.first;
         final hasFull = bestCached.mate != null ||
-            (!bestCached.isPseudoMate &&
-                bestCached.depth != null &&
-                bestCached.depth! >= 16) ||
-            (bestCached.isPseudoMate &&
-                bestCached.depth != null &&
-                bestCached.depth! >= EngineService.maxPseudoMateDepth);
+            (bestCached.depth != null &&
+                bestCached.depth! >= 16);
         if (hasFull) {
           return;
         }
@@ -869,8 +857,12 @@ class HomePageState extends State<HomePage> {
     exportGraph(_variant.dataPath);
   }
 
-  void _solve() {
-    graph.solve();
+  Future<void> _solve() async {
+    if (graph is CachedGraph) {
+      await (graph as CachedGraph).solveGlobal();
+    } else {
+      graph.solve();
+    }
     if (mounted) {
       setState(_update);
     }
@@ -938,12 +930,8 @@ class HomePageState extends State<HomePage> {
             EngineCache.canonicalKey(_variant, bestEval.fen!) ==
                 EngineCache.canonicalKey(_variant, _controller.game.fen);
         final bool hasReachedTarget = bestEval.mate != null ||
-            (!bestEval.isPseudoMate &&
-                bestEval.depth != null &&
-                bestEval.depth! >= 16) ||
-            (bestEval.isPseudoMate &&
-                bestEval.depth != null &&
-                bestEval.depth! >= EngineService.maxPseudoMateDepth);
+            (bestEval.depth != null &&
+                bestEval.depth! >= 16);
         if (isCurrentPos &&
             (hasReachedTarget || !widget.engineService.isSearching)) {
           break;
@@ -1151,12 +1139,8 @@ class HomePageState extends State<HomePage> {
     if (!_engineEvalPending && _engineEvals.isNotEmpty) {
       final bestEval = _engineEvals.first;
       final bool hasReachedTarget = bestEval.mate != null ||
-          (!bestEval.isPseudoMate &&
-              bestEval.depth != null &&
-              bestEval.depth! >= 16) ||
-          (bestEval.isPseudoMate &&
-              bestEval.depth != null &&
-              bestEval.depth! >= EngineService.maxPseudoMateDepth);
+          (bestEval.depth != null &&
+              bestEval.depth! >= 16);
       if (bestEval.fen != null &&
           EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey &&
           (bestEval.candidateMove == null ||
@@ -1184,12 +1168,8 @@ class HomePageState extends State<HomePage> {
             (bestEval.candidateMove == null ||
                 EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, bestEval.candidateMove!));
         final bool hasReachedTarget = bestEval.mate != null ||
-            (!bestEval.isPseudoMate &&
-                bestEval.depth != null &&
-                bestEval.depth! >= 16) ||
-            (bestEval.isPseudoMate &&
-                bestEval.depth != null &&
-                bestEval.depth! >= EngineService.maxPseudoMateDepth);
+            (bestEval.depth != null &&
+                bestEval.depth! >= 16);
         if (isCurrentPos &&
             (hasReachedTarget || !widget.engineService.isSearching)) {
           break;

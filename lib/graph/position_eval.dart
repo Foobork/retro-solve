@@ -102,7 +102,7 @@ class PositionEval {
         dtw: plies,
       );
     } else if (score == 0.0) {
-      return const PositionEval(result: GameResult.draw, cp: 0);
+      return const PositionEval(cp: 0);
     } else {
       return PositionEval(cp: (score * 100).round());
     }
@@ -227,8 +227,8 @@ class PositionEval {
     final bDraw = b.result == GameResult.draw || (b.result == null && b.cp == 0);
 
     // Positive heuristic scores
-    final aPos = a.cp != null && (whiteToMove ? a.cp! > 0 : a.cp! < 0);
-    final bPos = b.cp != null && (whiteToMove ? b.cp! > 0 : b.cp! < 0);
+    final aPos = !aDraw && a.cp != null && (whiteToMove ? a.cp! > 0 : a.cp! < 0);
+    final bPos = !bDraw && b.cp != null && (whiteToMove ? b.cp! > 0 : b.cp! < 0);
     if (aPos != bPos) {
       return aPos ? -1 : 1;
     }

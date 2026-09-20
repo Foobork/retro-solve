@@ -92,3 +92,23 @@ class SolveOnStartupStore {
     await prefs.setBool(_key, solveOnStartup);
   }
 }
+
+class InteractiveBacksolvingStore {
+  static const _key = 'interactive_backsolving';
+
+  static Future<bool> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_key) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<void> save(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_key, enabled);
+    } catch (_) {}
+  }
+}

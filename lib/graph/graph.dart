@@ -143,11 +143,7 @@ class Graph {
       if (pos.assigned != null) {
         pos.computed = pos.assigned;
       } else {
-        if (scc.length > 1) {
-          pos.computed = const PositionEval(result: GameResult.draw, cp: 0);
-        } else {
-          pos.computed = null;
-        }
+        pos.computed = null;
       }
     }
 
@@ -181,10 +177,6 @@ class Graph {
         }
 
         bestCandidate ??= pos.assigned;
-
-        if (scc.length > 1 && bestCandidate == null) {
-          bestCandidate = const PositionEval(result: GameResult.draw, cp: 0);
-        }
 
         if (pos.computed != bestCandidate) {
           pos.computed = bestCandidate;
@@ -220,7 +212,7 @@ class Graph {
       result: childEval.result,
       dtw: newDtw,
       dtz: newDtz,
-      cp: childEval.cp,
+      cp: childEval.result == GameResult.draw ? 0 : childEval.cp,
     );
   }
 

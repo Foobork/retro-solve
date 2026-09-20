@@ -121,6 +121,10 @@ class CsrGraphSolver {
     final origComputedDtz = Int16List(maxId + 1);
     final origComputedCp = Int16List(maxId + 1);
 
+    assignedDtw.fillRange(0, maxId + 1, -1);
+    computedDtw.fillRange(0, maxId + 1, -1);
+    origComputedDtw.fillRange(0, maxId + 1, -1);
+
     final isWhiteToMove = Uint8List(maxId + 1);
     final pieceCount = Uint8List(maxId + 1);
 
@@ -338,9 +342,9 @@ class CsrGraphSolver {
       final batch = db.batch();
       for (final id in chunk) {
         final cRes = _decodeGameResult(computedRes[id]);
-        final cDtw = (computedRes[id] == 1 || computedRes[id] == 3) ? computedDtw[id] : null;
+        final cDtw = computedDtw[id] >= 0 ? computedDtw[id] : null;
         final cDtz = computedDtz[id] != 0 ? computedDtz[id] : null;
-        final cCp = computedCp[id] != 0 ? computedCp[id] : null;
+        final cCp = (computedRes[id] != 2 && computedCp[id] != 0) ? computedCp[id] : null;
 
         batch.rawUpdate('''
           UPDATE positions
@@ -388,17 +392,10 @@ class CsrGraphSolver {
         computedDtz[node] = assignedDtz[node];
         computedCp[node] = assignedCp[node];
       } else {
-        if (sccLen > 1) {
-          computedRes[node] = 2; // draw (code 2)
-          computedCp[node] = 0;
-          computedDtw[node] = 0;
-          computedDtz[node] = 0;
-        } else {
-          computedRes[node] = 0;
-          computedDtw[node] = 0;
-          computedDtz[node] = 0;
-          computedCp[node] = 0;
-        }
+        computedRes[node] = 0;
+        computedDtw[node] = -1;
+        computedDtz[node] = 0;
+        computedCp[node] = 0;
       }
     }
 
@@ -416,7 +413,7 @@ class CsrGraphSolver {
         final isWhite = isWhiteToMove[node] == 1;
 
         int bestRes = 0;
-        int bestDtw = 0;
+        int bestDtw = -1;
         int bestDtz = 0;
         int bestCp = 0;
         bool hasBest = false;
@@ -437,7 +434,7 @@ class CsrGraphSolver {
           final rawChildDtz = computedDtz[child] != 0 ? computedDtz[child] : assignedDtz[child];
 
           int candRes = childRes;
-          int candDtw = (childRes == 1 || childRes == 3) ? (rawChildDtw + 1) : 0;
+          int candDtw = (rawChildDtw >= 0) ? (rawChildDtw + 1) : -1;
           int candDtz = 0;
           if (rawChildDtz != 0) {
             if (pieceCount[child] < pieceCount[node]) {
@@ -446,7 +443,7 @@ class CsrGraphSolver {
               candDtz = rawChildDtz + 1;
             }
           }
-          int candCp = childCp;
+          int candCp = candRes == 2 ? 0 : childCp;
 
           if (!hasBest) {
             bestRes = candRes;
@@ -477,10 +474,8 @@ class CsrGraphSolver {
           hasBest = true;
         }
 
-        if (sccLen > 1 && !hasBest) {
-          bestRes = 2; // draw (code 2)
+        if (bestRes == 2) {
           bestCp = 0;
-          hasBest = true;
         }
 
         if (hasBest) {
@@ -504,9 +499,71 @@ class CsrGraphSolver {
     int bRes, int bDtw, int bDtz, int bCp,
     bool whiteToMove,
   ) {
-    final aScore = _numericScore(aRes, aDtw, aCp);
-    final bScore = _numericScore(bRes, bDtw, bCp);
+    final targetWin = whiteToMove ? 1 : 3;
+    final targetLoss = whiteToMove ? 3 : 1;
 
+    final aWins = aRes == targetWin;
+    final bWins = bRes == targetWin;
+    if (aWins != bWins) {
+      return aWins ? -1 : 1;
+    }
+
+    if (aWins && bWins) {
+      final aImmediate = aDtw >= 0 && aDtw <= 2;
+      final bImmediate = bDtw >= 0 && bDtw <= 2;
+      if (aImmediate != bImmediate) {
+        return aImmediate ? -1 : 1;
+      }
+
+      if (aDtw >= 0 && bDtw >= 0) {
+        final cmp = aDtw.compareTo(bDtw);
+        if (cmp != 0) return cmp;
+      } else if (aDtw >= 0 && bDtw < 0) {
+        return -1;
+      } else if (aDtw < 0 && bDtw >= 0) {
+        return 1;
+      }
+
+      if (aDtz != 0 && bDtz != 0) {
+        final cmp = aDtz.compareTo(bDtz);
+        if (cmp != 0) return cmp;
+      }
+
+      if (aCp != 0 && bCp != 0) {
+        return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
+      }
+      return 0;
+    }
+
+    final aLoses = aRes == targetLoss;
+    final bLoses = bRes == targetLoss;
+    if (aLoses != bLoses) {
+      return aLoses ? 1 : -1;
+    }
+
+    if (aLoses && bLoses) {
+      if (aDtw >= 0 && bDtw >= 0) {
+        final cmp = bDtw.compareTo(aDtw); // delay loss
+        if (cmp != 0) return cmp;
+      } else if (aDtw >= 0 && bDtw < 0) {
+        return 1;
+      } else if (aDtw < 0 && bDtw >= 0) {
+        return -1;
+      }
+
+      if (aDtz != 0 && bDtz != 0) {
+        final cmp = bDtz.compareTo(aDtz);
+        if (cmp != 0) return cmp;
+      }
+
+      if (aCp != 0 && bCp != 0) {
+        return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
+      }
+      return 0;
+    }
+
+    final aScore = _numericScore(aRes, aDtw, aDtz, aCp);
+    final bScore = _numericScore(bRes, bDtw, bDtz, bCp);
     if (whiteToMove) {
       if (aScore > bScore) return -1;
       if (aScore < bScore) return 1;
@@ -514,21 +571,20 @@ class CsrGraphSolver {
       if (aScore < bScore) return -1;
       if (aScore > bScore) return 1;
     }
-
-    if (aDtz != 0 && bDtz != 0 && aDtz != bDtz) {
-      final isWinning = whiteToMove ? (aScore > 0) : (aScore < 0);
-      return isWinning ? (aDtz - bDtz) : (bDtz - aDtz);
-    }
     return 0;
   }
 
-  static double _numericScore(int code, int dtw, int cp) {
+  static double _numericScore(int code, int dtw, int dtz, int cp) {
     if (code == 1) {
       // whiteWins
-      return 1000.0 - dtw.toDouble();
+      if (dtw >= 0) return 1000.0 - dtw.toDouble();
+      if (dtz > 0) return 950.0 - dtz.toDouble();
+      return 950.0;
     } else if (code == 3) {
       // blackWins
-      return -1000.0 + dtw.toDouble();
+      if (dtw >= 0) return -1000.0 + dtw.toDouble();
+      if (dtz > 0) return -950.0 + dtz.toDouble();
+      return -950.0;
     } else if (code == 2) {
       // draw
       return 0.0;

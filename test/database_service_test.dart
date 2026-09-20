@@ -176,7 +176,7 @@ void main() {
     expect(parseEvalFromRow(p3, 'computed'), equals(const PositionEval(cp: 150)));
 
     final p4 = loaded.firstWhere((r) => r['bfen'] == 'pos4');
-    expect(parseEvalFromRow(p4, 'assigned'), equals(const PositionEval(result: GameResult.draw, cp: 0)));
+    expect(parseEvalFromRow(p4, 'assigned'), equals(const PositionEval(cp: 0)));
 
     final edges = await dbService.loadEdges();
     expect(edges.length, equals(2));

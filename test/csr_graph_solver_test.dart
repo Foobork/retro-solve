@@ -57,7 +57,7 @@ void main() {
     expect(updatedRoot['computed_dtw'], equals(2));
   });
 
-  test('CsrGraphSolver contracts cycles to draw', () async {
+  test('CsrGraphSolver leaves cycles without forced wins as unproven (computed_result null)', () async {
     final dbService = DatabaseService.instance;
 
     const cycleNodeA = 'cycle_a w - -';
@@ -72,13 +72,12 @@ void main() {
     final result = await dbService.solveGlobalCsr();
 
     expect(result.sccCount, equals(1)); // 2-node cycle = 1 SCC
-    expect(result.updatedPositions, equals(2));
 
     final nodeA = await dbService.getNode(cycleNodeA);
-    expect(nodeA!['computed_result'], equals(GameResult.draw.value));
+    expect(nodeA!['computed_result'], isNull);
 
     final nodeB = await dbService.getNode(cycleNodeB);
-    expect(nodeB!['computed_result'], equals(GameResult.draw.value));
+    expect(nodeB!['computed_result'], isNull);
   });
 
   test('CsrGraphSolver runs in background isolate with progress callbacks', () async {
@@ -111,5 +110,28 @@ void main() {
     final rootRow = await dbService.getNode(rootBfen);
     expect(rootRow!['computed_result'], equals(GameResult.blackWins.value));
     expect(rootRow['computed_dtw'], equals(1));
+  });
+
+  test('CsrGraphSolver propagates DTZ without fabricating DTW when DTW is null', () async {
+    final dbService = DatabaseService.instance;
+
+    const parentBfen = '8/p1p5/5K2/8/2k5/8/8/1r6 b - -';
+    const childBfen = '8/2p5/p4K2/8/2k5/8/8/1r6 w - -';
+
+    dbService.upsertNode(parentBfen, const PositionEval(cp: -122), null);
+    dbService.upsertNode(
+      childBfen,
+      const PositionEval(result: GameResult.blackWins, dtz: 2),
+      null,
+    );
+    dbService.upsertEdge(parentBfen, childBfen);
+    await dbService.flush();
+
+    await dbService.solveGlobalCsr();
+
+    final parentRow = await dbService.getNode(parentBfen);
+    expect(parentRow!['computed_result'], equals(GameResult.blackWins.value));
+    expect(parentRow['computed_dtw'], isNull);
+    expect(parentRow['computed_dtz'], equals(3));
   });
 }

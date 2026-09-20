@@ -503,7 +503,9 @@ class DatabaseService {
   /// Returns outgoing edge target BFENs for the given source position.
   Future<List<String>> getChildrenBfens(String bfen) async {
     if (_db == null) return [];
-    await flush();
+    if (_edgeQueue.isNotEmpty || _isFlushing) {
+      await flush();
+    }
     final rows = await _db!.rawQuery('''
       SELECT pt.bfen
       FROM edges e
@@ -517,7 +519,9 @@ class DatabaseService {
   /// Returns incoming edge source BFENs (ancestors) for the given target position using idx_edges_target.
   Future<List<String>> getParentBfens(String bfen) async {
     if (_db == null) return [];
-    await flush();
+    if (_edgeQueue.isNotEmpty || _isFlushing) {
+      await flush();
+    }
     final rows = await _db!.rawQuery('''
       SELECT ps.bfen
       FROM edges e

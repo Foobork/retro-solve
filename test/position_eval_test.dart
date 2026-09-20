@@ -69,10 +69,12 @@ void main() {
       expect(wMateGen.toLegacyScore(), equals(950.0));
       expect(PositionEval.fromLegacyScore(950.0), equals(wMateGen));
 
-      // Draw: 0.0
+      // Draw / neutral 0.0
       const drawEval = PositionEval(result: GameResult.draw, cp: 0);
       expect(drawEval.toLegacyScore(), equals(0.0));
-      expect(PositionEval.fromLegacyScore(0.0), equals(drawEval));
+      const cp0 = PositionEval(cp: 0);
+      expect(cp0.toLegacyScore(), equals(0.0));
+      expect(PositionEval.fromLegacyScore(0.0), equals(cp0));
 
       // Centipawns: +1.50
       const cp150 = PositionEval(cp: 150);
@@ -171,6 +173,32 @@ void main() {
       const bDtz5 = PositionEval(result: GameResult.blackWins, dtz: 5);
       const bDtz1 = PositionEval(result: GameResult.blackWins, dtz: 1);
       expect(PositionEval.compare(bDtz5, bDtz1, true), lessThan(0));
+    });
+
+    test('Black to move prefers win over negative cp, draw, and loss', () {
+      const win = PositionEval(result: GameResult.blackWins, dtz: 1);
+      const cpMinus3 = PositionEval(cp: -316);
+      const cpMinus029 = PositionEval(cp: -29);
+      const draw = PositionEval(result: GameResult.draw);
+      const cpPlus084 = PositionEval(cp: 84);
+      const loss = PositionEval(result: GameResult.whiteWins, dtw: 2);
+
+      expect(PositionEval.compare(win, cpMinus3, false), lessThan(0));
+      expect(PositionEval.compare(cpMinus3, cpMinus029, false), lessThan(0));
+      expect(PositionEval.compare(cpMinus029, draw, false), lessThan(0));
+      expect(PositionEval.compare(draw, cpPlus084, false), lessThan(0));
+      expect(PositionEval.compare(cpPlus084, loss, false), lessThan(0));
+    });
+
+    test('Draw is not treated as advantage even with anomalous non-zero cp', () {
+      const g6 = PositionEval(cp: -316);
+      const c3 = PositionEval(cp: -29);
+      const drawWithAnomalousCp = PositionEval(result: GameResult.draw, cp: -52);
+
+      // Black to move: g6 (-3.16) > c3 (-0.29) > draw (0.00)
+      expect(PositionEval.compare(g6, c3, false), lessThan(0));
+      expect(PositionEval.compare(c3, drawWithAnomalousCp, false), lessThan(0));
+      expect(PositionEval.compare(drawWithAnomalousCp, c3, false), greaterThan(0));
     });
 
     test('Evaluated moves sort before null/unrated moves', () {

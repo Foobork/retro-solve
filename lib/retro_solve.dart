@@ -57,12 +57,28 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, export_, analyzeGame }
+enum _MoreAction { solve, export_, analyzeGame, toggleBacksolve }
 
 class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
   Timer? _evalTimer;
   List<EngineEvaluation>? _pendingEvals;
+  bool _interactiveBacksolving = true;
+
+  @visibleForTesting
+  bool get interactiveBacksolving => _interactiveBacksolving;
+
+  @visibleForTesting
+  void setInteractiveBacksolvingForTesting(bool value) =>
+      _toggleInteractiveBacksolving(value);
+
+  void _toggleInteractiveBacksolving(bool value) {
+    setState(() {
+      _interactiveBacksolving = value;
+    });
+    InteractiveBacksolvingStore.save(value);
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -111,18 +127,24 @@ class HomePageState extends State<HomePage> {
       tooltip: 'More actions',
       enabled: !isBoardDisabled,
       onSelected: _onMoreAction,
-      itemBuilder: (_) => const [
-        PopupMenuItem(
+      itemBuilder: (_) => [
+        const PopupMenuItem(
           value: _MoreAction.solve,
           child: Text('Solve'),
         ),
-        PopupMenuItem(
+        const PopupMenuItem(
           value: _MoreAction.export_,
           child: Text('Export'),
         ),
-        PopupMenuItem(
+        const PopupMenuItem(
           value: _MoreAction.analyzeGame,
           child: Text('Analyze Game'),
+        ),
+        const PopupMenuDivider(),
+        CheckedPopupMenuItem<_MoreAction>(
+          value: _MoreAction.toggleBacksolve,
+          checked: _interactiveBacksolving,
+          child: const Text('Interactive Backsolving'),
         ),
       ],
     );
@@ -506,6 +528,9 @@ class HomePageState extends State<HomePage> {
     _controller.setGame(_createGameForVariant(_variant));
     _controller.game.reset();
     _engineAvailable = widget.engineService.isEngineAvailable;
+    InteractiveBacksolvingStore.load().then((val) {
+      if (mounted) setState(() => _interactiveBacksolving = val);
+    });
     _evalSub = widget.engineService.evaluationStream.listen((evals) {
       if (!mounted || _isBatchEvaluating) return;
       _pendingEvals = evals;
@@ -547,10 +572,12 @@ class HomePageState extends State<HomePage> {
               if (posEval != null) {
                 graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
-                if (graph is CachedGraph) {
-                  await (graph as CachedGraph).solveBfenAsync(bfen);
-                } else {
-                  graph.solveBfen(bfen);
+                if (_interactiveBacksolving) {
+                  if (graph is CachedGraph) {
+                    await (graph as CachedGraph).solveBfenAsync(bfen);
+                  } else {
+                    graph.solveBfen(bfen);
+                  }
                 }
                 if (mounted) {
                   setState(() {
@@ -650,10 +677,12 @@ class HomePageState extends State<HomePage> {
       if (score != null && graph.v[a]?.assigned == null) {
         graph.assign(a, score);
       }
-      if (graph is CachedGraph) {
-        await (graph as CachedGraph).solveBfenAsync(a);
-      } else {
-        graph.solveBfen(a);
+      if (_interactiveBacksolving) {
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).solveBfenAsync(a);
+        } else {
+          graph.solveBfen(a);
+        }
       }
       if (mounted && seq == _chessBoardListenerSeq) {
         setState(_update);
@@ -675,10 +704,12 @@ class HomePageState extends State<HomePage> {
       graph.addLink(a, b);
     }
 
-    if (graph is CachedGraph) {
-      await (graph as CachedGraph).solveBfenAsync(a);
-    } else {
-      graph.solveBfen(a);
+    if (_interactiveBacksolving && !_isExploring) {
+      if (graph is CachedGraph) {
+        await (graph as CachedGraph).solveBfenAsync(a);
+      } else {
+        graph.solveBfen(a);
+      }
     }
 
     if (mounted && seq == _chessBoardListenerSeq) {
@@ -757,12 +788,16 @@ class HomePageState extends State<HomePage> {
               if (posEval != null) {
                 graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
-                if (graph is CachedGraph) {
-                  (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
-                    if (mounted) setState(_update);
-                  });
+                if (_interactiveBacksolving) {
+                  if (graph is CachedGraph) {
+                    (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
+                      if (mounted) setState(_update);
+                    });
+                  } else {
+                    graph.solveBfen(bfen);
+                    _knownMovesToSan();
+                  }
                 } else {
-                  graph.solveBfen(bfen);
                   _knownMovesToSan();
                 }
               }
@@ -878,6 +913,9 @@ class HomePageState extends State<HomePage> {
         break;
       case _MoreAction.analyzeGame:
         _pickAndAnalyzeGame();
+        break;
+      case _MoreAction.toggleBacksolve:
+        _toggleInteractiveBacksolving(!_interactiveBacksolving);
         break;
     }
   }
@@ -1637,12 +1675,18 @@ class HomePageState extends State<HomePage> {
     String bfen = _controller.game.bfen;
     graph.assign(bfen, _parsePositionEval(newEval));
     graph.v[bfen]?.inDatabase = true;
-    if (graph is CachedGraph) {
-      (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
-        if (mounted) setState(_update);
-      });
+    if (_interactiveBacksolving) {
+      if (graph is CachedGraph) {
+        (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
+          if (mounted) setState(_update);
+        });
+      } else {
+        graph.solveBfen(bfen);
+        if (mounted) {
+          setState(_update);
+        }
+      }
     } else {
-      graph.solveBfen(bfen);
       if (mounted) {
         setState(_update);
       }
@@ -1835,8 +1879,13 @@ class HomePageState extends State<HomePage> {
       );
     }
 
-    if (text == '0' || text == '0.0' || text == '0.00') {
+    final lower = text.trim().toLowerCase();
+    if (lower == 'draw' || lower == '1/2-1/2' || lower == '½-½') {
       return const PositionEval(result: GameResult.draw, cp: 0);
+    }
+
+    if (text == '0' || text == '0.0' || text == '0.00') {
+      return const PositionEval(cp: 0);
     }
 
     final parsed = double.tryParse(text);

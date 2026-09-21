@@ -137,17 +137,21 @@ void main() {
     expect(state.parseScore('+M51'), equals(898.0));
     expect(state.formatScore(state.parseScore('+M51')!), equals('+M51'));
 
-    // 16. Pseudo-mate from engine (e.g. +-15265 cp) is rejected from being treated as static eval
+    // 16. Pseudo-mate from engine (e.g. +-15265 cp) is converted to decisive evaluation (+Mate / -Mate)
     const pseudoLossEval = EngineEvaluation(centipawns: -15265);
     const pseudoWinEval = EngineEvaluation(centipawns: 15265);
     expect(pseudoLossEval.isPseudoMate, isTrue);
     expect(pseudoWinEval.isPseudoMate, isTrue);
-    expect(state.engineEvalToGraphScore(pseudoLossEval, true), isNull);
-    expect(state.engineEvalToGraphScore(pseudoWinEval, true), isNull);
+    expect(state.engineEvalToGraphScore(pseudoLossEval, true), equals(-950.0));
+    expect(state.engineEvalToGraphScore(pseudoWinEval, true), equals(950.0));
+    expect(state.engineEvalToPositionEval(pseudoLossEval, true), equals(const PositionEval(result: GameResult.blackWins)));
+    expect(state.engineEvalToPositionEval(pseudoWinEval, true), equals(const PositionEval(result: GameResult.whiteWins)));
     expect(pseudoLossEval.toString().contains('-Mate'), isTrue);
     expect(pseudoWinEval.toString().contains('+Mate'), isTrue);
     expect(state.formatScore(-152.65), equals('-Mate'));
     expect(state.formatScore(152.65), equals('+Mate'));
+    expect(state.formatScore(state.engineEvalToPositionEval(pseudoWinEval, true)), equals('+Mate'));
+    expect(state.formatScore(state.engineEvalToPositionEval(pseudoLossEval, true)), equals('-Mate'));
 
     // 17. Tablebase pseudo-mate with depth 100 receives decisive mate score
     const tbWinEval = EngineEvaluation(centipawns: 20000, depth: 100, dtz: 1);
@@ -519,6 +523,64 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
   });
+
+  testWidgets('Engine pseudomate (+Mate) is auto-populated and recorded in the database', (WidgetTester tester) async {
+    final mockService = MockEngineService(variant: DatasetVariant.standard);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: mockService,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    const fen = '8/8/8/8/8/4k3/8/4K2R w - - 0 1';
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+    state.controller.loadFen(fen);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final bfen = state.controller.game.bfen;
+    expect(graph.v[bfen]?.assigned, isNull);
+
+    // Emit pseudo-mate (+20000 cp) from engine evaluation stream
+    mockService.emit([
+      EngineEvaluation(
+        centipawns: 20000,
+        depth: 16,
+        candidateMove: 'h1h3',
+        fen: state.controller.game.fen,
+      ),
+    ]);
+    await tester.pump(const Duration(milliseconds: 250));
+
+    // Node must be auto-populated in graph and marked as inDatabase
+    expect(graph.v[bfen]?.assigned, equals(const PositionEval(result: GameResult.whiteWins)));
+    expect(graph.v[bfen]?.inDatabase, isTrue);
+    expect(state.formatScore(graph.v[bfen]?.assigned), equals('+Mate'));
+
+    // Also verify for Black to move and Black is winning (-Mate in White perspective)
+    const bWinFen = '8/8/8/8/8/4k3/8/4K2r b - - 0 1';
+    state.controller.loadFen(bWinFen);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final bWinBfen = state.controller.game.bfen;
+    mockService.emit([
+      EngineEvaluation(
+        centipawns: 20000, // Black's perspective: winning -> White's perspective: -20000
+        depth: 16,
+        candidateMove: 'h1h2',
+        fen: state.controller.game.fen,
+      ),
+    ]);
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(graph.v[bWinBfen]?.assigned, equals(const PositionEval(result: GameResult.blackWins)));
+    expect(graph.v[bWinBfen]?.inDatabase, isTrue);
+    expect(state.formatScore(graph.v[bWinBfen]?.assigned), equals('-Mate'));
+  });
 }
 
 class MockEngineService implements EngineService {
@@ -545,6 +607,8 @@ class MockEngineService implements EngineService {
   final _evalController = StreamController<List<EngineEvaluation>>.broadcast();
   @override
   Stream<List<EngineEvaluation>> get evaluationStream => _evalController.stream;
+
+  void emit(List<EngineEvaluation> evals) => _evalController.add(evals);
 
   @override
   int get cacheSize => cache.size;

@@ -562,6 +562,7 @@ class HomePageState extends State<HomePage> {
           if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
             final bool isSufficient = bestEval.mate != null ||
+                bestEval.isPseudoMate ||
                 (bestEval.depth != null && bestEval.depth! >= 16) ||
                 (!widget.engineService.isSearching &&
                     bestEval.depth != null);
@@ -781,6 +782,7 @@ class HomePageState extends State<HomePage> {
           if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
             final hasFull = bestEval.mate != null ||
+                bestEval.isPseudoMate ||
                 (bestEval.depth != null &&
                     bestEval.depth! >= 16);
             if (hasFull) {
@@ -806,6 +808,7 @@ class HomePageState extends State<HomePage> {
         });
         final bestCached = validEvals.first;
         final hasFull = bestCached.mate != null ||
+            bestCached.isPseudoMate ||
             (bestCached.depth != null &&
                 bestCached.depth! >= 16);
         if (hasFull) {
@@ -1177,6 +1180,7 @@ class HomePageState extends State<HomePage> {
     if (!_engineEvalPending && _engineEvals.isNotEmpty) {
       final bestEval = _engineEvals.first;
       final bool hasReachedTarget = bestEval.mate != null ||
+          bestEval.isPseudoMate ||
           (bestEval.depth != null &&
               bestEval.depth! >= 16);
       if (bestEval.fen != null &&
@@ -1206,6 +1210,7 @@ class HomePageState extends State<HomePage> {
             (bestEval.candidateMove == null ||
                 EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, bestEval.candidateMove!));
         final bool hasReachedTarget = bestEval.mate != null ||
+            bestEval.isPseudoMate ||
             (bestEval.depth != null &&
                 bestEval.depth! >= 16);
         if (isCurrentPos &&
@@ -1757,13 +1762,10 @@ class HomePageState extends State<HomePage> {
       return PositionEval(result: result, dtw: pliesToMate);
     } else if (eval.centipawns != null) {
       if (eval.isPseudoMate) {
-        if (eval.depth != null && eval.depth! >= 100) {
-          final isWhiteWin = eval.centipawns! > 0;
-          final result = isWhiteWin ? GameResult.whiteWins : GameResult.blackWins;
-          final dtz = eval.dtz?.abs();
-          return PositionEval(result: result, dtz: dtz);
-        }
-        return null;
+        final isWhiteWin = eval.centipawns! > 0;
+        final result = isWhiteWin ? GameResult.whiteWins : GameResult.blackWins;
+        final dtz = eval.dtz?.abs();
+        return PositionEval(result: result, dtz: dtz);
       }
       return PositionEval(cp: eval.centipawns);
     }

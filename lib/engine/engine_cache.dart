@@ -166,7 +166,9 @@ class EngineCache {
 
     if (entry.isEmpty) return null;
     final best = entry.first;
-    if (best.mate != null || (best.depth != null && best.depth! >= minDepth)) {
+    if (best.mate != null ||
+        best.isPseudoMate ||
+        (best.depth != null && best.depth! >= minDepth)) {
       return entry;
     }
     return null;
@@ -195,7 +197,7 @@ class EngineCache {
 
     final best = evals.first;
     final depth = best.depth ?? 0;
-    if (!force && best.mate == null && depth < minCacheDepth) {
+    if (!force && best.mate == null && !best.isPseudoMate && depth < minCacheDepth) {
       return;
     }
 
@@ -205,12 +207,14 @@ class EngineCache {
       final existingBest = existing.first;
       final existingDepth = existingBest.depth ?? 0;
 
-      // Do not replace mate with non-mate
-      if (existingBest.mate != null && best.mate == null) {
+      // Do not replace mate or pseudomate with non-decisive
+      final existingIsDecisive = existingBest.mate != null || existingBest.isPseudoMate;
+      final bestIsDecisive = best.mate != null || best.isPseudoMate;
+      if (existingIsDecisive && !bestIsDecisive) {
         return;
       }
-      // Do not downgrade depth unless replacing non-mate with mate
-      if (!force && existingDepth > depth && (best.mate == null || existingBest.mate != null)) {
+      // Do not downgrade depth unless replacing non-decisive with decisive
+      if (!force && existingDepth > depth && (!bestIsDecisive || existingIsDecisive)) {
         return;
       }
     }

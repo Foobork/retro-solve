@@ -154,8 +154,8 @@ void main() {
     expect(state.formatScore(state.engineEvalToPositionEval(pseudoLossEval, true)), equals('-Mate'));
 
     // 17. Tablebase pseudo-mate with depth 100 receives decisive mate score
-    const tbWinEval = EngineEvaluation(centipawns: 20000, depth: 100, dtz: 1);
-    const tbLossEval = EngineEvaluation(centipawns: -20000, depth: 100, dtz: 3);
+    const tbWinEval = EngineEvaluation(centipawns: 20000, depth: 100);
+    const tbLossEval = EngineEvaluation(centipawns: -20000, depth: 100);
     final tbWinScore = state.engineEvalToGraphScore(tbWinEval, true);
     final tbLossScore = state.engineEvalToGraphScore(tbLossEval, true);
     expect(tbWinScore, isNotNull);
@@ -163,13 +163,13 @@ void main() {
     expect(tbLossScore, isNotNull);
     expect(tbLossScore!, lessThan(-Graph.mateThreshold));
 
-    // 18. Parsing pseudo-mate and DTZ inputs: +Mate, -Mate, +DTZ 1, -DTZ 3, +Mate (DTZ 1), -Mate (DTZ 3)
+    // 18. Parsing pseudo-mate and legacy DTZ inputs: +Mate, -Mate, +DTZ 1, -DTZ 3, +Mate (DTZ 1), -Mate (DTZ 3)
     expect(state.parseScore('+Mate'), equals(950.0));
     expect(state.parseScore('-Mate'), equals(-950.0));
-    expect(state.parseScore('+DTZ 1'), equals(949.0));
-    expect(state.parseScore('-DTZ 3'), equals(-947.0));
-    expect(state.parseScore('+Mate (DTZ 1)'), equals(949.0));
-    expect(state.parseScore('-Mate (DTZ 3)'), equals(-947.0));
+    expect(state.parseScore('+DTZ 1'), equals(950.0));
+    expect(state.parseScore('-DTZ 3'), equals(-950.0));
+    expect(state.parseScore('+Mate (DTZ 1)'), equals(950.0));
+    expect(state.parseScore('-Mate (DTZ 3)'), equals(-950.0));
   });
 
   testWidgets('Pseudo-mate evaluations render -Mate/+Mate and never -152.65 in engine widget', (WidgetTester tester) async {
@@ -580,6 +580,38 @@ void main() {
     expect(graph.v[bWinBfen]?.assigned, equals(const PositionEval(result: GameResult.blackWins)));
     expect(graph.v[bWinBfen]?.inDatabase, isTrue);
     expect(state.formatScore(graph.v[bWinBfen]?.assigned), equals('-Mate'));
+  });
+
+  testWidgets('Solve action triggers visual indicator and disables board while running', (WidgetTester tester) async {
+    final mockService = MockEngineService(variant: DatasetVariant.koth);
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.koth,
+        engineService: mockService,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final state = tester.state(find.byType(HomePage)) as dynamic;
+    expect(state.isSolving, isFalse);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+
+    // Verify solve indicator renders when solving is active
+    state.setSolvingForTesting(true, progress: 0.5, status: 'Testing solve progress...');
+    await tester.pump();
+
+    expect(state.isSolving, isTrue);
+    expect(find.byType(LinearProgressIndicator), findsWidgets);
+    expect(find.text('Testing solve progress...'), findsWidgets);
+
+    // Verify solve indicator clears when done
+    state.setSolvingForTesting(false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(state.isSolving, isFalse);
+    expect(find.text('Testing solve progress...'), findsNothing);
   });
 }
 

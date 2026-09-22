@@ -70,24 +70,20 @@ Future<void> importGraph(String filename) async {
           assignedEval = PositionEval(
             result: GameResult.fromInt(node['assigned_result'] as int?),
             dtw: node['assigned_dtw'] as int?,
-            dtz: node['assigned_dtz'] as int?,
             cp: node['assigned_cp'] as int?,
           );
           computedEval = PositionEval(
             result: GameResult.fromInt(node['computed_result'] as int?),
             dtw: node['computed_dtw'] as int?,
-            dtz: node['computed_dtz'] as int?,
             cp: node['computed_cp'] as int?,
           );
           if (assignedEval.result == null &&
               assignedEval.dtw == null &&
-              assignedEval.dtz == null &&
               assignedEval.cp == null) {
             assignedEval = null;
           }
           if (computedEval.result == null &&
               computedEval.dtw == null &&
-              computedEval.dtz == null &&
               computedEval.cp == null) {
             computedEval = null;
           }

@@ -84,11 +84,9 @@ CREATE TABLE positions (
   bfen TEXT UNIQUE NOT NULL,
   assigned_result INTEGER,
   assigned_dtw INTEGER,
-  assigned_dtz INTEGER,
   assigned_cp INTEGER,
   computed_result INTEGER,
   computed_dtw INTEGER,
-  computed_dtz INTEGER,
   computed_cp INTEGER
 );
 
@@ -136,7 +134,7 @@ In the current implementation, every launch executes:
 ```dart
 graph.solve(); // Runs Tarjan's SCC over millions of edges
 ```
-This re-computation was occurring even though converged values (`computed_result`, `computed_cp`, `computed_dtz`, `computed_dtw`) were already stored in the database.
+This re-computation was occurring even though converged values (`computed_result`, `computed_cp`, `computed_dtw`) were already stored in the database.
 
 Because converged retrograde evaluations are persisted in the database:
 - **Option 1: Zero-Solve Startup (Instant Launch - Default)**

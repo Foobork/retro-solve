@@ -8,10 +8,9 @@ import 'package:sqflite_common/sqlite_api.dart';
 PositionEval? parseEvalFromRow(Map<String, dynamic> row, String prefix) {
   final resVal = row['${prefix}_result'] as int?;
   final dtw = row['${prefix}_dtw'] as int?;
-  final dtz = row['${prefix}_dtz'] as int?;
   final cp = row['${prefix}_cp'] as int?;
-  if (resVal == null && dtw == null && dtz == null && cp == null) return null;
-  return PositionEval(result: GameResult.fromInt(resVal), dtw: dtw, dtz: dtz, cp: cp);
+  if (resVal == null && dtw == null && cp == null) return null;
+  return PositionEval(result: GameResult.fromInt(resVal), dtw: dtw, cp: cp);
 }
 
 void main() {
@@ -35,7 +34,7 @@ void main() {
     }
   });
 
-  test('DatabaseService creates version 4 normalized schema on fresh init', () async {
+  test('DatabaseService creates version 5 normalized schema on fresh init', () async {
     final dbService = DatabaseService.instance;
     await dbService.init(dbPath);
     await dbService.close();
@@ -52,12 +51,12 @@ void main() {
     expect(posCols['bfen'], equals('TEXT'));
     expect(posCols['assigned_result'], equals('INTEGER'));
     expect(posCols['assigned_dtw'], equals('INTEGER'));
-    expect(posCols['assigned_dtz'], equals('INTEGER'));
     expect(posCols['assigned_cp'], equals('INTEGER'));
     expect(posCols['computed_result'], equals('INTEGER'));
     expect(posCols['computed_dtw'], equals('INTEGER'));
-    expect(posCols['computed_dtz'], equals('INTEGER'));
     expect(posCols['computed_cp'], equals('INTEGER'));
+    expect(posCols.containsKey('assigned_dtz'), isFalse);
+    expect(posCols.containsKey('computed_dtz'), isFalse);
 
     // Verify edges table
     final edgeInfo = await db.rawQuery("PRAGMA table_info('edges');");
@@ -88,7 +87,7 @@ void main() {
     await dbService.init(dbPath);
 
     const bfen1 = '8/8/5K2/p1p4p/7p/8/8/6r1 b - -';
-    const eval1 = PositionEval(result: GameResult.blackWins, dtz: 1);
+    const eval1 = PositionEval(result: GameResult.blackWins, dtw: 1);
 
     const bfen2 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -';
     const eval2 = PositionEval(cp: 25);
@@ -125,7 +124,7 @@ void main() {
     expect(streamedEdges.first['target'], equals(bfen2));
   });
 
-  test('DatabaseService seamlessly migrates legacy v2 schema (REAL columns, text edges) to v4', () async {
+  test('DatabaseService seamlessly migrates legacy v2 schema (REAL columns, text edges) to v5', () async {
     final factory = getPlatformDatabaseFactory();
 
     final legacyDb = await factory.openDatabase(
@@ -169,7 +168,7 @@ void main() {
     expect(parseEvalFromRow(p1, 'assigned'), equals(const PositionEval(result: GameResult.whiteWins, dtw: 1)));
 
     final p2 = loaded.firstWhere((r) => r['bfen'] == 'pos2');
-    expect(parseEvalFromRow(p2, 'computed'), equals(const PositionEval(result: GameResult.blackWins, dtz: 3)));
+    expect(parseEvalFromRow(p2, 'computed'), equals(const PositionEval(result: GameResult.blackWins)));
 
     final p3 = loaded.firstWhere((r) => r['bfen'] == 'pos3');
     expect(parseEvalFromRow(p3, 'assigned'), equals(const PositionEval(cp: 150)));
@@ -185,7 +184,7 @@ void main() {
 
     await dbService.close();
 
-    // Verify v4 schema on disk
+    // Verify v5 schema on disk without dtz columns
     final db = await factory.openDatabase(dbPath);
     final tables = (await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table';"))
         .map((r) => r['name'] as String)
@@ -193,10 +192,15 @@ void main() {
     expect(tables.contains('nodes'), isFalse);
     expect(tables.contains('positions'), isTrue);
     expect(tables.contains('edges'), isTrue);
+
+    final posInfo = await db.rawQuery("PRAGMA table_info('positions');");
+    final posCols = posInfo.map((r) => (r['name'] as String).toLowerCase()).toSet();
+    expect(posCols.contains('assigned_dtz'), isFalse);
+    expect(posCols.contains('computed_dtz'), isFalse);
     await db.close();
   });
 
-  test('DatabaseService seamlessly migrates v3 schema (integer columns, text edges) to v4', () async {
+  test('DatabaseService seamlessly migrates v3 schema (integer columns, text edges) to v5', () async {
     final factory = getPlatformDatabaseFactory();
 
     final v3Db = await factory.openDatabase(
@@ -209,11 +213,9 @@ void main() {
               bfen TEXT PRIMARY KEY,
               assigned_result INTEGER,
               assigned_dtw INTEGER,
-              assigned_dtz INTEGER,
               assigned_cp INTEGER,
               computed_result INTEGER,
               computed_dtw INTEGER,
-              computed_dtz INTEGER,
               computed_cp INTEGER
             );
           ''');
@@ -232,11 +234,9 @@ void main() {
       'bfen': 'v3_pos1',
       'assigned_result': GameResult.whiteWins.value,
       'assigned_dtw': 1,
-      'assigned_dtz': null,
       'assigned_cp': null,
       'computed_result': null,
       'computed_dtw': null,
-      'computed_dtz': null,
       'computed_cp': null,
     });
     await v3Db.insert('edges', {'source': 'v3_pos1', 'target': 'frontier_target'});
@@ -258,8 +258,74 @@ void main() {
 
     final db = await factory.openDatabase(dbPath);
     final posCount = (await db.rawQuery('SELECT COUNT(1) as cnt FROM positions;')).first['cnt'] as int;
-    // Both evaluated node and frontier target must exist in positions table
     expect(posCount, equals(2));
+    await db.close();
+  });
+
+  test('DatabaseService seamlessly migrates v4 schema (with assigned_dtz, computed_dtz) to v5', () async {
+    final factory = getPlatformDatabaseFactory();
+
+    final v4Db = await factory.openDatabase(
+      dbPath,
+      options: OpenDatabaseOptions(
+        version: 4,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE positions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              bfen TEXT UNIQUE NOT NULL,
+              assigned_result INTEGER,
+              assigned_dtw INTEGER,
+              assigned_dtz INTEGER,
+              assigned_cp INTEGER,
+              computed_result INTEGER,
+              computed_dtw INTEGER,
+              computed_dtz INTEGER,
+              computed_cp INTEGER
+            );
+          ''');
+          await db.execute('''
+            CREATE TABLE edges (
+              source_id INTEGER NOT NULL,
+              target_id INTEGER NOT NULL,
+              PRIMARY KEY (source_id, target_id)
+            ) WITHOUT ROWID;
+          ''');
+        },
+      ),
+    );
+
+    await v4Db.insert('positions', {
+      'bfen': 'v4_pos1',
+      'assigned_result': GameResult.blackWins.value,
+      'assigned_dtw': null,
+      'assigned_dtz': 3,
+      'assigned_cp': null,
+      'computed_result': GameResult.whiteWins.value,
+      'computed_dtw': 2,
+      'computed_dtz': 1,
+      'computed_cp': null,
+    });
+    await v4Db.close();
+
+    final dbService = DatabaseService.instance;
+    await dbService.init(dbPath);
+
+    final loaded = await dbService.loadNodes();
+    expect(loaded.length, equals(1));
+    final pos1 = loaded.first;
+    expect(parseEvalFromRow(pos1, 'assigned'), equals(const PositionEval(result: GameResult.blackWins)));
+    expect(parseEvalFromRow(pos1, 'computed'), equals(const PositionEval(result: GameResult.whiteWins, dtw: 2)));
+
+    await dbService.close();
+
+    final db = await factory.openDatabase(dbPath);
+    final posInfo = await db.rawQuery("PRAGMA table_info('positions');");
+    final posCols = posInfo.map((r) => (r['name'] as String).toLowerCase()).toSet();
+    expect(posCols.contains('assigned_dtz'), isFalse);
+    expect(posCols.contains('computed_dtz'), isFalse);
+    expect(posCols.contains('assigned_dtw'), isTrue);
+    expect(posCols.contains('computed_dtw'), isTrue);
     await db.close();
   });
 }

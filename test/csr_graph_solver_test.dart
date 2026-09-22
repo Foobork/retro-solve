@@ -112,7 +112,7 @@ void main() {
     expect(rootRow['computed_dtw'], equals(1));
   });
 
-  test('CsrGraphSolver propagates DTZ without fabricating DTW when DTW is null', () async {
+  test('CsrGraphSolver propagates decisive result without fabricating DTW when DTW is null', () async {
     final dbService = DatabaseService.instance;
 
     const parentBfen = '8/p1p5/5K2/8/2k5/8/8/1r6 b - -';
@@ -121,7 +121,7 @@ void main() {
     dbService.upsertNode(parentBfen, const PositionEval(cp: -122), null);
     dbService.upsertNode(
       childBfen,
-      const PositionEval(result: GameResult.blackWins, dtz: 2),
+      const PositionEval(result: GameResult.blackWins),
       null,
     );
     dbService.upsertEdge(parentBfen, childBfen);
@@ -132,6 +132,5 @@ void main() {
     final parentRow = await dbService.getNode(parentBfen);
     expect(parentRow!['computed_result'], equals(GameResult.blackWins.value));
     expect(parentRow['computed_dtw'], isNull);
-    expect(parentRow['computed_dtz'], equals(3));
   });
 }

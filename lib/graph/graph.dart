@@ -195,23 +195,10 @@ class Graph {
 
   PositionEval adjustChildEval(Vertex pos, String linkBfen, PositionEval childEval) {
     int? newDtw = childEval.dtw != null ? childEval.dtw! + 1 : null;
-    int? newDtz;
-    if (childEval.dtz != null) {
-      final parentPieceCount =
-          pos.bfen.split(' ')[0].replaceAll(RegExp(r'[^a-zA-Z]'), '').length;
-      final childPieceCount =
-          linkBfen.split(' ')[0].replaceAll(RegExp(r'[^a-zA-Z]'), '').length;
-      if (childPieceCount < parentPieceCount) {
-        newDtz = 1;
-      } else {
-        newDtz = childEval.dtz! + 1;
-      }
-    }
 
     return PositionEval(
       result: childEval.result,
       dtw: newDtw,
-      dtz: newDtz,
       cp: childEval.result == GameResult.draw ? 0 : childEval.cp,
     );
   }

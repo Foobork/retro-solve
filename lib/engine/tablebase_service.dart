@@ -109,7 +109,6 @@ class TablebaseService {
       if (category == null || category == 'unknown') return null;
 
       final posDtw = data['dtw'] as int?;
-      final posDtz = data['dtz'] as int?;
       final rawMoves = data['moves'] as List<dynamic>? ?? [];
 
       // If no moves are listed (e.g. terminal position)
@@ -148,7 +147,6 @@ class TablebaseService {
           EngineEvaluation(
             centipawns: centipawns,
             mate: mate,
-            dtz: posDtz?.abs(),
             depth: 100,
             multipv: 1,
             fen: fen,
@@ -164,7 +162,6 @@ class TablebaseService {
         final moveUci = moveData['uci'] as String?;
         final moveCat = (moveData['category'] as String?)?.toLowerCase();
         final moveDtw = moveData['dtw'] as int?;
-        final moveDtz = moveData['dtz'] as int?;
         final isCheckmate = moveData['checkmate'] == true;
         final isVariantWin = moveData['variant_win'] == true;
         final isVariantLoss = moveData['variant_loss'] == true;
@@ -214,7 +211,6 @@ class TablebaseService {
         evals.add(EngineEvaluation(
           centipawns: moveCentipawns,
           mate: moveMate,
-          dtz: moveDtz?.abs(),
           depth: 100,
           candidateMove: moveUci,
           multipv: i + 1,

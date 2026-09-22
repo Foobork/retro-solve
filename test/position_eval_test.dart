@@ -26,21 +26,18 @@ void main() {
   });
 
   group('PositionEval Properties & Legacy Conversion', () {
-    test('isDecisive, isMate, isDtzOnly flags', () {
+    test('isDecisive, isMate flags', () {
       const mateEval = PositionEval(result: GameResult.whiteWins, dtw: 1);
       expect(mateEval.isDecisive, isTrue);
       expect(mateEval.isMate, isTrue);
-      expect(mateEval.isDtzOnly, isFalse);
 
-      const dtzEval = PositionEval(result: GameResult.blackWins, dtz: 3);
-      expect(dtzEval.isDecisive, isTrue);
-      expect(dtzEval.isMate, isFalse);
-      expect(dtzEval.isDtzOnly, isTrue);
+      const generalMateEval = PositionEval(result: GameResult.blackWins);
+      expect(generalMateEval.isDecisive, isTrue);
+      expect(generalMateEval.isMate, isFalse);
 
       const cpEval = PositionEval(cp: 120);
       expect(cpEval.isDecisive, isFalse);
       expect(cpEval.isMate, isFalse);
-      expect(cpEval.isDtzOnly, isFalse);
     });
 
     test('toLegacyScore and fromLegacyScore round-trip', () {
@@ -54,20 +51,14 @@ void main() {
       expect(bMate2.toLegacyScore(), equals(-997.0));
       expect(PositionEval.fromLegacyScore(-997.0), equals(bMate2));
 
-      // DTZ 1 win for White: 950 - 1 = 949.0
-      const wDtz1 = PositionEval(result: GameResult.whiteWins, dtz: 1);
-      expect(wDtz1.toLegacyScore(), equals(949.0));
-      expect(PositionEval.fromLegacyScore(949.0), equals(wDtz1));
-
-      // DTZ 3 win for Black: -950 + 3 = -947.0
-      const bDtz3 = PositionEval(result: GameResult.blackWins, dtz: 3);
-      expect(bDtz3.toLegacyScore(), equals(-947.0));
-      expect(PositionEval.fromLegacyScore(-947.0), equals(bDtz3));
-
-      // General mate without DTZ: +/-950.0
+      // General mate: +/-950.0
       const wMateGen = PositionEval(result: GameResult.whiteWins);
       expect(wMateGen.toLegacyScore(), equals(950.0));
       expect(PositionEval.fromLegacyScore(950.0), equals(wMateGen));
+
+      const bMateGen = PositionEval(result: GameResult.blackWins);
+      expect(bMateGen.toLegacyScore(), equals(-950.0));
+      expect(PositionEval.fromLegacyScore(-950.0), equals(bMateGen));
 
       // Draw / neutral 0.0
       const drawEval = PositionEval(result: GameResult.draw, cp: 0);
@@ -97,18 +88,12 @@ void main() {
       expect(bMate3Plies.format(isMove: true), equals('-M2'));
     });
 
-    test('formats DTZ-only and pseudo-mates cleanly', () {
-      const wDtz1 = PositionEval(result: GameResult.whiteWins, dtz: 1);
-      expect(wDtz1.format(), equals('+DTZ 1'));
+    test('formats pseudo-mates cleanly', () {
+      const wMateNoDtw = PositionEval(result: GameResult.whiteWins);
+      expect(wMateNoDtw.format(), equals('+Mate'));
 
-      const bDtz3 = PositionEval(result: GameResult.blackWins, dtz: 3);
-      expect(bDtz3.format(), equals('-DTZ 3'));
-
-      const wMateNoDtz = PositionEval(result: GameResult.whiteWins);
-      expect(wMateNoDtz.format(), equals('+Mate'));
-
-      const bMateNoDtz = PositionEval(result: GameResult.blackWins);
-      expect(bMateNoDtz.format(), equals('-Mate'));
+      const bMateNoDtw = PositionEval(result: GameResult.blackWins);
+      expect(bMateNoDtw.format(), equals('-Mate'));
     });
 
     test('formats draws and heuristic centipawns', () {
@@ -127,22 +112,15 @@ void main() {
       expect(PositionEval.compare(mate3, mate1, true), greaterThan(0));
     });
 
-    test('White to move prefers exact DTW over DTZ-only win', () {
+    test('White to move prefers exact DTW over general win without DTW', () {
       const exactMate = PositionEval(result: GameResult.whiteWins, dtw: 4);
-      const dtzWin = PositionEval(result: GameResult.whiteWins, dtz: 1);
-      expect(PositionEval.compare(exactMate, dtzWin, true), lessThan(0));
-      expect(PositionEval.compare(dtzWin, exactMate, true), greaterThan(0));
-    });
-
-    test('White to move prefers smaller DTZ among DTZ-only wins', () {
-      const dtz1 = PositionEval(result: GameResult.whiteWins, dtz: 1);
-      const dtz3 = PositionEval(result: GameResult.whiteWins, dtz: 3);
-      expect(PositionEval.compare(dtz1, dtz3, true), lessThan(0));
-      expect(PositionEval.compare(dtz3, dtz1, true), greaterThan(0));
+      const generalWin = PositionEval(result: GameResult.whiteWins);
+      expect(PositionEval.compare(exactMate, generalWin, true), lessThan(0));
+      expect(PositionEval.compare(generalWin, exactMate, true), greaterThan(0));
     });
 
     test('White to move prefers win over positive cp, draw, and loss', () {
-      const win = PositionEval(result: GameResult.whiteWins, dtz: 1);
+      const win = PositionEval(result: GameResult.whiteWins);
       const cpPlus5 = PositionEval(cp: 500);
       const draw = PositionEval(result: GameResult.draw);
       const cpMinus2 = PositionEval(cp: -200);
@@ -154,29 +132,23 @@ void main() {
       expect(PositionEval.compare(cpMinus2, loss, true), lessThan(0));
     });
 
-    test('Black to move prefers Black wins with shorter DTW and smaller DTZ', () {
+    test('Black to move prefers Black wins with shorter DTW', () {
       const bMate1 = PositionEval(result: GameResult.blackWins, dtw: 1);
       const bMate3 = PositionEval(result: GameResult.blackWins, dtw: 3);
-      const bDtz1 = PositionEval(result: GameResult.blackWins, dtz: 1);
-      const bDtz5 = PositionEval(result: GameResult.blackWins, dtz: 5);
+      const bGeneralWin = PositionEval(result: GameResult.blackWins);
 
       expect(PositionEval.compare(bMate1, bMate3, false), lessThan(0));
-      expect(PositionEval.compare(bMate1, bDtz1, false), lessThan(0));
-      expect(PositionEval.compare(bDtz1, bDtz5, false), lessThan(0));
+      expect(PositionEval.compare(bMate1, bGeneralWin, false), lessThan(0));
     });
 
-    test('Losing side resists by preferring larger DTW or larger DTZ', () {
+    test('Losing side resists by preferring larger DTW', () {
       const bMate10 = PositionEval(result: GameResult.blackWins, dtw: 10);
       const bMate2 = PositionEval(result: GameResult.blackWins, dtw: 2);
       expect(PositionEval.compare(bMate10, bMate2, true), lessThan(0));
-
-      const bDtz5 = PositionEval(result: GameResult.blackWins, dtz: 5);
-      const bDtz1 = PositionEval(result: GameResult.blackWins, dtz: 1);
-      expect(PositionEval.compare(bDtz5, bDtz1, true), lessThan(0));
     });
 
     test('Black to move prefers win over negative cp, draw, and loss', () {
-      const win = PositionEval(result: GameResult.blackWins, dtz: 1);
+      const win = PositionEval(result: GameResult.blackWins);
       const cpMinus3 = PositionEval(cp: -316);
       const cpMinus029 = PositionEval(cp: -29);
       const draw = PositionEval(result: GameResult.draw);

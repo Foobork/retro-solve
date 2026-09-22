@@ -72,6 +72,18 @@ class HomePageState extends State<HomePage> {
   void setInteractiveBacksolvingForTesting(bool value) =>
       _toggleInteractiveBacksolving(value);
 
+  @visibleForTesting
+  Future<void> solveForTesting() => _solve();
+
+  @visibleForTesting
+  void setSolvingForTesting(bool value, {double progress = 0.0, String status = ''}) {
+    setState(() {
+      _isSolving = value;
+      _solveProgress = progress;
+      _solveStatus = status;
+    });
+  }
+
   void _toggleInteractiveBacksolving(bool value) {
     setState(() {
       _interactiveBacksolving = value;
@@ -83,7 +95,7 @@ class HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final bool isBoardDisabled =
-        _isExploring || _isAnalyzingGame || _isBatchEvaluating || _isLoadingVariant || _isPickingFile;
+        _isExploring || _isAnalyzingGame || _isBatchEvaluating || _isLoadingVariant || _isPickingFile || _isSolving;
 
     final lastMove = _controller.game.history.isNotEmpty ? _controller.game.history.last.move : null;
     final lastMoveFrom = lastMove?.fromAlgebraic;
@@ -102,7 +114,37 @@ class HomePageState extends State<HomePage> {
     );
     var turn = Text(_turn, style: _textStyle);
     var appBar = AppBar(
-      title: const Text('RetroSolve'),
+      title: _isSolving
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('RetroSolve'),
+                const SizedBox(width: 8),
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                ),
+                if (_solveStatus.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      _solveStatus,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.normal,
+                        color: Colors.white70,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ],
+            )
+          : const Text('RetroSolve'),
       actions: [
         DropdownButtonHideUnderline(
           child: DropdownButton<DatasetVariant>(
@@ -128,9 +170,22 @@ class HomePageState extends State<HomePage> {
       enabled: !isBoardDisabled,
       onSelected: _onMoreAction,
       itemBuilder: (_) => [
-        const PopupMenuItem(
+        PopupMenuItem(
           value: _MoreAction.solve,
-          child: Text('Solve'),
+          enabled: !_isSolving,
+          child: Row(
+            children: [
+              const Text('Solve'),
+              if (_isSolving) ...[
+                const SizedBox(width: 8),
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
+          ),
         ),
         const PopupMenuItem(
           value: _MoreAction.export_,
@@ -203,6 +258,10 @@ class HomePageState extends State<HomePage> {
                 if (Config.showBatchEval && _isBatchEvaluating) ...[
                   const SizedBox(height: 12),
                   _batchEvalProgress(),
+                ],
+                if (_isSolving) ...[
+                  const SizedBox(height: 12),
+                  _solveProgressWidget(),
                 ],
                 const SizedBox(height: 16),
                 const Text('Known Moves',
@@ -296,6 +355,12 @@ class HomePageState extends State<HomePage> {
   int _evalTotal = 0;
   String _batchTimeText = "";
 
+  bool _isSolving = false;
+  double _solveProgress = 0.0;
+  String _solveStatus = "";
+  @visibleForTesting
+  bool get isSolving => _isSolving;
+
   bool _isAnalyzingGame = false;
   bool _isPickingFile = false;
   int _analyzeProgress = 0;
@@ -368,9 +433,70 @@ class HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           _evaluationWidget(),
+          if (_isSolving) ...[
+            const SizedBox(height: 8),
+            _solveProgressWidget(),
+          ],
           Expanded(
             child: SingleChildScrollView(
               child: _movesTable(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _solveProgressWidget() {
+    final percent = _solveProgress.clamp(0.0, 1.0);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.deepPurple.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.deepPurple.shade200),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple.shade700),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  _solveStatus.isNotEmpty ? _solveStatus : "Solving graph...",
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.deepPurple.shade900,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: percent > 0 ? percent : null,
+              minHeight: 6,
+              backgroundColor: Colors.deepPurple.shade100,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple.shade600),
             ),
           ),
         ],
@@ -896,13 +1022,36 @@ class HomePageState extends State<HomePage> {
   }
 
   Future<void> _solve() async {
-    if (graph is CachedGraph) {
-      await (graph as CachedGraph).solveGlobal();
-    } else {
-      graph.solve();
-    }
-    if (mounted) {
-      setState(_update);
+    if (_isSolving) return;
+    setState(() {
+      _isSolving = true;
+      _solveProgress = 0.0;
+      _solveStatus = 'Solving graph...';
+    });
+    try {
+      if (graph is CachedGraph) {
+        await (graph as CachedGraph).solveGlobal(
+          onProgress: (progress, status) {
+            if (mounted) {
+              setState(() {
+                _solveProgress = progress;
+                _solveStatus = status;
+              });
+            }
+          },
+        );
+      } else {
+        graph.solve();
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSolving = false;
+          _solveProgress = 0.0;
+          _solveStatus = '';
+          _update();
+        });
+      }
     }
   }
 
@@ -1602,11 +1751,7 @@ class HomePageState extends State<HomePage> {
           }
         } else if (e.centipawns != null) {
           if (e.isPseudoMate) {
-            if (e.dtz != null) {
-              evalStr = e.centipawns! > 0 ? '+DTZ ${e.dtz!.abs()}' : '-DTZ ${e.dtz!.abs()}';
-            } else {
-              evalStr = e.centipawns! > 0 ? '+Mate' : '-Mate';
-            }
+            evalStr = e.centipawns! > 0 ? '+Mate' : '-Mate';
           } else {
             final pawns = e.centipawns! / 100.0;
             evalStr = pawns > 0
@@ -1759,8 +1904,7 @@ class HomePageState extends State<HomePage> {
       if (eval.isPseudoMate) {
         final isWhiteWin = eval.centipawns! > 0;
         final result = isWhiteWin ? GameResult.whiteWins : GameResult.blackWins;
-        final dtz = eval.dtz?.abs();
-        return PositionEval(result: result, dtz: dtz);
+        return PositionEval(result: result);
       }
       return PositionEval(cp: eval.centipawns);
     }
@@ -1856,10 +2000,8 @@ class HomePageState extends State<HomePage> {
     final dtzMatch = dtzRegex.firstMatch(text);
     if (dtzMatch != null) {
       final sign = dtzMatch.group(1) == '-' ? -1 : 1;
-      final dtz = int.tryParse(dtzMatch.group(2)!);
       return PositionEval(
         result: sign > 0 ? GameResult.whiteWins : GameResult.blackWins,
-        dtz: dtz,
       );
     }
 
@@ -1868,11 +2010,8 @@ class HomePageState extends State<HomePage> {
     final pseudoMatch = pseudoMateRegex.firstMatch(text);
     if (pseudoMatch != null) {
       final sign = pseudoMatch.group(1) == '-' ? -1 : 1;
-      final dtzStr = pseudoMatch.group(2);
-      final dtz = dtzStr != null ? int.tryParse(dtzStr) : null;
       return PositionEval(
         result: sign > 0 ? GameResult.whiteWins : GameResult.blackWins,
-        dtz: dtz,
       );
     }
 

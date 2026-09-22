@@ -108,17 +108,14 @@ class CsrGraphSolver {
 
     final assignedRes = Int8List(maxId + 1);
     final assignedDtw = Int16List(maxId + 1);
-    final assignedDtz = Int16List(maxId + 1);
     final assignedCp = Int16List(maxId + 1);
 
     final computedRes = Int8List(maxId + 1);
     final computedDtw = Int16List(maxId + 1);
-    final computedDtz = Int16List(maxId + 1);
     final computedCp = Int16List(maxId + 1);
 
     final origComputedRes = Int8List(maxId + 1);
     final origComputedDtw = Int16List(maxId + 1);
-    final origComputedDtz = Int16List(maxId + 1);
     final origComputedCp = Int16List(maxId + 1);
 
     assignedDtw.fillRange(0, maxId + 1, -1);
@@ -126,15 +123,19 @@ class CsrGraphSolver {
     origComputedDtw.fillRange(0, maxId + 1, -1);
 
     final isWhiteToMove = Uint8List(maxId + 1);
-    final pieceCount = Uint8List(maxId + 1);
 
-    onProgress?.call(0.25, 'Loading position metadata...');
+    try {
+      await db.execute('PRAGMA cache_size = -64000;');
+      await db.execute('PRAGMA mmap_size = 1073741824;');
+      await db.execute('PRAGMA temp_store = MEMORY;');
+    } catch (_) {}
+
+    onProgress?.call(0.20, 'Loading position metadata...');
     int lastPosId = 0;
-    const posBatch = 100000;
+    const posBatch = 250000;
     while (true) {
       final rows = await db.rawQuery('''
-        SELECT id, bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
-               computed_result, computed_dtw, computed_dtz, computed_cp
+        SELECT id, (INSTR(bfen, ' w ') > 0) AS is_white
         FROM positions
         WHERE id > ?
         ORDER BY id
@@ -142,52 +143,58 @@ class CsrGraphSolver {
       ''', [lastPosId, posBatch]);
       if (rows.isEmpty) break;
 
-      for (final row in rows) {
+      for (int i = 0; i < rows.length; i++) {
+        final row = rows[i];
         final id = row['id'] as int;
-        lastPosId = id;
-
-        final aRes = row['assigned_result'] as int?;
-        if (aRes != null) assignedRes[id] = _encodeGameResult(aRes);
-        final aDtw = row['assigned_dtw'] as int?;
-        if (aDtw != null) assignedDtw[id] = aDtw;
-        final aDtz = row['assigned_dtz'] as int?;
-        if (aDtz != null) assignedDtz[id] = aDtz;
-        final aCp = row['assigned_cp'] as int?;
-        if (aCp != null) assignedCp[id] = aCp;
-
-        final cRes = row['computed_result'] as int?;
-        if (cRes != null) {
-          final encoded = _encodeGameResult(cRes);
-          computedRes[id] = encoded;
-          origComputedRes[id] = encoded;
-        }
-        final cDtw = row['computed_dtw'] as int?;
-        if (cDtw != null) {
-          computedDtw[id] = cDtw;
-          origComputedDtw[id] = cDtw;
-        }
-        final cDtz = row['computed_dtz'] as int?;
-        if (cDtz != null) {
-          computedDtz[id] = cDtz;
-          origComputedDtz[id] = cDtz;
-        }
-        final cCp = row['computed_cp'] as int?;
-        if (cCp != null) {
-          computedCp[id] = cCp;
-          origComputedCp[id] = cCp;
-        }
-
-        final bfen = row['bfen'] as String;
-        final parts = bfen.split(' ');
-        if (parts.length > 1) {
-          isWhiteToMove[id] = (parts[1] == 'w') ? 1 : 0;
-        } else {
-          isWhiteToMove[id] = bfen.contains(' w ') ? 1 : 0;
-        }
-        final boardPart = parts.isNotEmpty ? parts[0] : bfen;
-        pieceCount[id] = boardPart.replaceAll(RegExp(r'[^a-zA-Z]'), '').length;
+        isWhiteToMove[id] = row['is_white'] as int;
       }
+      lastPosId = rows.last['id'] as int;
+
+      final progress = 0.20 + 0.15 * (lastPosId / (maxId > 0 ? maxId : 1));
+      onProgress?.call(progress, 'Loading position metadata (${(progress * 100).toInt()}%)...');
+
       if (rows.length < posBatch) break;
+    }
+
+    onProgress?.call(0.35, 'Loading evaluation metadata...');
+    final metadataRows = await db.rawQuery('''
+      SELECT id, assigned_result, assigned_dtw, assigned_cp,
+             computed_result, computed_dtw, computed_cp
+      FROM positions
+      WHERE assigned_result IS NOT NULL
+         OR assigned_dtw IS NOT NULL
+         OR assigned_cp IS NOT NULL
+         OR computed_result IS NOT NULL
+         OR computed_dtw IS NOT NULL
+         OR computed_cp IS NOT NULL;
+    ''');
+    for (int i = 0; i < metadataRows.length; i++) {
+      final row = metadataRows[i];
+      final id = row['id'] as int;
+
+      final aRes = row['assigned_result'] as int?;
+      if (aRes != null) assignedRes[id] = _encodeGameResult(aRes);
+      final aDtw = row['assigned_dtw'] as int?;
+      if (aDtw != null) assignedDtw[id] = aDtw;
+      final aCp = row['assigned_cp'] as int?;
+      if (aCp != null) assignedCp[id] = aCp;
+
+      final cRes = row['computed_result'] as int?;
+      if (cRes != null) {
+        final encoded = _encodeGameResult(cRes);
+        computedRes[id] = encoded;
+        origComputedRes[id] = encoded;
+      }
+      final cDtw = row['computed_dtw'] as int?;
+      if (cDtw != null) {
+        computedDtw[id] = cDtw;
+        origComputedDtw[id] = cDtw;
+      }
+      final cCp = row['computed_cp'] as int?;
+      if (cCp != null) {
+        computedCp[id] = cCp;
+        origComputedCp[id] = cCp;
+      }
     }
 
     onProgress?.call(0.40, 'Streaming edge transitions into CSR...');
@@ -198,7 +205,7 @@ class CsrGraphSolver {
     const edgeBatch = 200000;
 
     while (true) {
-      List<Map<String, Object?>> rows;
+      final List<Map<String, Object?>> rows;
       if (lastSourceId == 0) {
         rows = await db.rawQuery('''
           SELECT source_id, target_id FROM edges
@@ -208,18 +215,17 @@ class CsrGraphSolver {
       } else {
         rows = await db.rawQuery('''
           SELECT source_id, target_id FROM edges
-          WHERE (source_id > ?) OR (source_id = ? AND target_id > ?)
+          WHERE (source_id, target_id) > (?, ?)
           ORDER BY source_id, target_id
           LIMIT ?;
-        ''', [lastSourceId, lastSourceId, lastTargetId, edgeBatch]);
+        ''', [lastSourceId, lastTargetId, edgeBatch]);
       }
       if (rows.isEmpty) break;
 
-      for (final row in rows) {
+      for (int i = 0; i < rows.length; i++) {
+        final row = rows[i];
         final s = row['source_id'] as int;
         final t = row['target_id'] as int;
-        lastSourceId = s;
-        lastTargetId = t;
 
         while (currSource < s) {
           rowPtrs[++currSource] = edgeIndex;
@@ -228,6 +234,13 @@ class CsrGraphSolver {
           colIndices[edgeIndex++] = t;
         }
       }
+      final lastRow = rows.last;
+      lastSourceId = lastRow['source_id'] as int;
+      lastTargetId = lastRow['target_id'] as int;
+
+      final progress = 0.40 + 0.20 * (edgeIndex / (edgeCount > 0 ? edgeCount : 1));
+      onProgress?.call(progress, 'Streaming edge transitions (${(progress * 100).toInt()}%)...');
+
       if (rows.length < edgeBatch) break;
     }
     while (currSource <= maxId) {
@@ -311,14 +324,11 @@ class CsrGraphSolver {
               colIndices,
               assignedRes,
               assignedDtw,
-              assignedDtz,
               assignedCp,
               computedRes,
               computedDtw,
-              computedDtz,
               computedCp,
               isWhiteToMove,
-              pieceCount,
             );
           }
         }
@@ -331,29 +341,32 @@ class CsrGraphSolver {
     for (int i = 1; i <= maxId; i++) {
       if (computedRes[i] != origComputedRes[i] ||
           computedDtw[i] != origComputedDtw[i] ||
-          computedDtz[i] != origComputedDtz[i] ||
           computedCp[i] != origComputedCp[i]) {
         dirtyIds.add(i);
       }
     }
 
-    for (int i = 0; i < dirtyIds.length; i += 2000) {
-      final chunk = dirtyIds.skip(i).take(2000);
+    const writeBatchSize = 2500;
+    for (int i = 0; i < dirtyIds.length; i += writeBatchSize) {
+      final end = (i + writeBatchSize < dirtyIds.length) ? i + writeBatchSize : dirtyIds.length;
       final batch = db.batch();
-      for (final id in chunk) {
+      for (int j = i; j < end; j++) {
+        final id = dirtyIds[j];
         final cRes = _decodeGameResult(computedRes[id]);
         final cDtw = computedDtw[id] >= 0 ? computedDtw[id] : null;
-        final cDtz = computedDtz[id] != 0 ? computedDtz[id] : null;
         final cCp = (computedRes[id] != 2 && computedCp[id] != 0) ? computedCp[id] : null;
 
         batch.rawUpdate('''
           UPDATE positions
-          SET computed_result = ?, computed_dtw = ?, computed_dtz = ?, computed_cp = ?
+          SET computed_result = ?, computed_dtw = ?, computed_cp = ?
           WHERE id = ?;
-        ''', [cRes, cDtw, cDtz, cCp, id]);
+        ''', [cRes, cDtw, cCp, id]);
         updatedCount++;
       }
       await batch.commit(noResult: true);
+
+      final progress = 0.85 + 0.15 * (end / dirtyIds.length);
+      onProgress?.call(progress, 'Writing evaluations (${(progress * 100).toInt()}%)...');
     }
 
     stopwatch.stop();
@@ -375,26 +388,21 @@ class CsrGraphSolver {
     Int32List colIndices,
     Int8List assignedRes,
     Int16List assignedDtw,
-    Int16List assignedDtz,
     Int16List assignedCp,
     Int8List computedRes,
     Int16List computedDtw,
-    Int16List computedDtz,
     Int16List computedCp,
     Uint8List isWhiteToMove,
-    Uint8List pieceCount,
   ) {
     for (int i = 0; i < sccLen; i++) {
       final node = scc[i];
       if (assignedRes[node] != 0 || assignedCp[node] != 0) {
         computedRes[node] = assignedRes[node];
         computedDtw[node] = assignedDtw[node];
-        computedDtz[node] = assignedDtz[node];
         computedCp[node] = assignedCp[node];
       } else {
         computedRes[node] = 0;
         computedDtw[node] = -1;
-        computedDtz[node] = 0;
         computedCp[node] = 0;
       }
     }
@@ -414,7 +422,6 @@ class CsrGraphSolver {
 
         int bestRes = 0;
         int bestDtw = -1;
-        int bestDtz = 0;
         int bestCp = 0;
         bool hasBest = false;
 
@@ -431,36 +438,25 @@ class CsrGraphSolver {
           final rawChildDtw = (computedRes[child] != 0 && (computedRes[child] == 1 || computedRes[child] == 3))
               ? computedDtw[child]
               : assignedDtw[child];
-          final rawChildDtz = computedDtz[child] != 0 ? computedDtz[child] : assignedDtz[child];
 
           int candRes = childRes;
           int candDtw = (rawChildDtw >= 0) ? (rawChildDtw + 1) : -1;
-          int candDtz = 0;
-          if (rawChildDtz != 0) {
-            if (pieceCount[child] < pieceCount[node]) {
-              candDtz = 1;
-            } else {
-              candDtz = rawChildDtz + 1;
-            }
-          }
           int candCp = candRes == 2 ? 0 : childCp;
 
           if (!hasBest) {
             bestRes = candRes;
             bestDtw = candDtw;
-            bestDtz = candDtz;
             bestCp = candCp;
             hasBest = true;
           } else {
             final cmp = _compareEvalValues(
-              candRes, candDtw, candDtz, candCp,
-              bestRes, bestDtw, bestDtz, bestCp,
+              candRes, candDtw, candCp,
+              bestRes, bestDtw, bestCp,
               isWhite,
             );
             if (cmp < 0) {
               bestRes = candRes;
               bestDtw = candDtw;
-              bestDtz = candDtz;
               bestCp = candCp;
             }
           }
@@ -469,7 +465,6 @@ class CsrGraphSolver {
         if (!hasBest && (assignedRes[node] != 0 || assignedCp[node] != 0)) {
           bestRes = assignedRes[node];
           bestDtw = assignedDtw[node];
-          bestDtz = assignedDtz[node];
           bestCp = assignedCp[node];
           hasBest = true;
         }
@@ -481,11 +476,9 @@ class CsrGraphSolver {
         if (hasBest) {
           if (computedRes[node] != bestRes ||
               computedDtw[node] != bestDtw ||
-              computedDtz[node] != bestDtz ||
               computedCp[node] != bestCp) {
             computedRes[node] = bestRes;
             computedDtw[node] = bestDtw;
-            computedDtz[node] = bestDtz;
             computedCp[node] = bestCp;
             changed = true;
           }
@@ -495,8 +488,8 @@ class CsrGraphSolver {
   }
 
   static int _compareEvalValues(
-    int aRes, int aDtw, int aDtz, int aCp,
-    int bRes, int bDtw, int bDtz, int bCp,
+    int aRes, int aDtw, int aCp,
+    int bRes, int bDtw, int bCp,
     bool whiteToMove,
   ) {
     final targetWin = whiteToMove ? 1 : 3;
@@ -524,11 +517,6 @@ class CsrGraphSolver {
         return 1;
       }
 
-      if (aDtz != 0 && bDtz != 0) {
-        final cmp = aDtz.compareTo(bDtz);
-        if (cmp != 0) return cmp;
-      }
-
       if (aCp != 0 && bCp != 0) {
         return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
       }
@@ -551,19 +539,14 @@ class CsrGraphSolver {
         return -1;
       }
 
-      if (aDtz != 0 && bDtz != 0) {
-        final cmp = bDtz.compareTo(aDtz);
-        if (cmp != 0) return cmp;
-      }
-
       if (aCp != 0 && bCp != 0) {
         return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
       }
       return 0;
     }
 
-    final aScore = _numericScore(aRes, aDtw, aDtz, aCp);
-    final bScore = _numericScore(bRes, bDtw, bDtz, bCp);
+    final aScore = _numericScore(aRes, aDtw, aCp);
+    final bScore = _numericScore(bRes, bDtw, bCp);
     if (whiteToMove) {
       if (aScore > bScore) return -1;
       if (aScore < bScore) return 1;
@@ -574,16 +557,14 @@ class CsrGraphSolver {
     return 0;
   }
 
-  static double _numericScore(int code, int dtw, int dtz, int cp) {
+  static double _numericScore(int code, int dtw, int cp) {
     if (code == 1) {
       // whiteWins
       if (dtw >= 0) return 1000.0 - dtw.toDouble();
-      if (dtz > 0) return 950.0 - dtz.toDouble();
       return 950.0;
     } else if (code == 3) {
       // blackWins
       if (dtw >= 0) return -1000.0 + dtw.toDouble();
-      if (dtz > 0) return -950.0 + dtz.toDouble();
       return -950.0;
     } else if (code == 2) {
       // draw

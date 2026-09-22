@@ -36,24 +36,20 @@ enum GameResult {
 /// Encapsulates all evaluation dimensions for a chess / variant position:
 /// - [result]: Definite game-theoretic outcome ([GameResult.whiteWins], [GameResult.blackWins], [GameResult.draw]).
 /// - [dtw]: Exact Distance to Win in plies (terminal mate distance / DTM).
-/// - [dtz]: Distance to Zero in plies (plies until next capture or pawn advance).
 /// - [cp]: Heuristic evaluation in centipawns from White's perspective.
 class PositionEval {
   final GameResult? result;
   final int? dtw;
-  final int? dtz;
   final int? cp;
 
   const PositionEval({
     this.result,
     this.dtw,
-    this.dtz,
     this.cp,
   });
 
   bool get isDecisive => result != null;
   bool get isMate => dtw != null;
-  bool get isDtzOnly => dtz != null && dtw == null;
 
   /// Inverts the evaluation to the opposite perspective if needed.
   PositionEval get inverted => PositionEval(
@@ -61,7 +57,6 @@ class PositionEval {
             ? GameResult.blackWins
             : (result == GameResult.blackWins ? GameResult.whiteWins : result),
         dtw: dtw,
-        dtz: dtz,
         cp: cp != null ? -cp! : null,
       );
 
@@ -69,9 +64,9 @@ class PositionEval {
   /// compatible with legacy algorithms expecting mate scores around +/-1000.
   double? toLegacyScore() {
     if (result == GameResult.whiteWins) {
-      return dtw != null ? (1000.0 - dtw!) : (dtz != null ? (950.0 - dtz!) : 950.0);
+      return dtw != null ? (1000.0 - dtw!) : 950.0;
     } else if (result == GameResult.blackWins) {
-      return dtw != null ? (-1000.0 + dtw!) : (dtz != null ? (-950.0 + dtz!) : -950.0);
+      return dtw != null ? (-1000.0 + dtw!) : -950.0;
     } else if (result == GameResult.draw) {
       return 0.0;
     } else if (cp != null) {
@@ -85,15 +80,9 @@ class PositionEval {
     if (score == null) return null;
     const double mateThreshold = 200.0;
     if (score.abs() >= mateThreshold) {
-      if (score.abs() == 950.0) {
+      if (score.abs() == 950.0 || (score.abs() >= 940.0 && score.abs() < 960.0)) {
         return PositionEval(
           result: score > 0 ? GameResult.whiteWins : GameResult.blackWins,
-        );
-      } else if (score.abs() >= 940.0 && score.abs() < 950.0) {
-        final dtz = (950.0 - score.abs()).round();
-        return PositionEval(
-          result: score > 0 ? GameResult.whiteWins : GameResult.blackWins,
-          dtz: dtz,
         );
       }
       final plies = (1000.0 - score.abs()).round();
@@ -126,9 +115,6 @@ class PositionEval {
 
     if (result != null) {
       final sign = result == GameResult.whiteWins ? '+' : '-';
-      if (dtz != null) {
-        return '$sign' 'DTZ $dtz';
-      }
       return '$sign' 'Mate';
     }
 
@@ -173,16 +159,10 @@ class PositionEval {
         final cmp = a.dtw!.compareTo(b.dtw!);
         if (cmp != 0) return cmp;
       } else if (a.dtw != null && b.dtw == null) {
-        // Known exact mate is preferred over unknown mate distance with DTZ
+        // Known exact mate is preferred over unknown mate distance
         return -1;
       } else if (a.dtw == null && b.dtw != null) {
         return 1;
-      }
-
-      // If both are DTZ-only wins, prefer smaller DTZ (faster piece clearing / progress)
-      if (a.dtz != null && b.dtz != null) {
-        final cmp = a.dtz!.compareTo(b.dtz!);
-        if (cmp != 0) return cmp;
       }
 
       // Tie-breaker: heuristic centipawns if available
@@ -208,12 +188,6 @@ class PositionEval {
         return 1;
       } else if (a.dtw == null && b.dtw != null) {
         return -1;
-      }
-
-      // If both are DTZ-only losses, prefer larger DTZ to delay conversion
-      if (a.dtz != null && b.dtz != null) {
-        final cmp = b.dtz!.compareTo(a.dtz!);
-        if (cmp != 0) return cmp;
       }
 
       if (a.cp != null && b.cp != null) {
@@ -260,13 +234,12 @@ class PositionEval {
           runtimeType == other.runtimeType &&
           result == other.result &&
           dtw == other.dtw &&
-          dtz == other.dtz &&
           cp == other.cp;
 
   @override
-  int get hashCode => Object.hash(result, dtw, dtz, cp);
+  int get hashCode => Object.hash(result, dtw, cp);
 
   @override
   String toString() =>
-      'PositionEval(result: $result, dtw: $dtw, dtz: $dtz, cp: $cp)';
+      'PositionEval(result: $result, dtw: $dtw, cp: $cp)';
 }

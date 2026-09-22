@@ -31,6 +31,8 @@ class DatabaseService {
   final Map<String, int> _bfenToId = LruMap<String, int>(capacity: 100000);
   final Map<int, String> _idToBfen = LruMap<int, String>(capacity: 100000);
 
+  String? _dbPath;
+  String? get dbPath => _dbPath;
   bool get isOpen => _db != null;
 
   DatabaseService._();
@@ -44,6 +46,7 @@ class DatabaseService {
   }
 
   Future<void> init(String dbPath) async {
+    _dbPath = dbPath;
     if (_db != null) {
       await _db!.close();
       _db = null;
@@ -55,7 +58,7 @@ class DatabaseService {
     _db = await factory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE positions (
@@ -63,11 +66,9 @@ class DatabaseService {
               bfen TEXT UNIQUE NOT NULL,
               assigned_result INTEGER,
               assigned_dtw INTEGER,
-              assigned_dtz INTEGER,
               assigned_cp INTEGER,
               computed_result INTEGER,
               computed_dtw INTEGER,
-              computed_dtz INTEGER,
               computed_cp INTEGER
             );
           ''');
@@ -89,6 +90,9 @@ class DatabaseService {
           if (oldVersion < 4) {
             await _migrateToVersion4(db);
           }
+          if (oldVersion < 5) {
+            await _migrateToVersion5(db);
+          }
         },
       ),
     );
@@ -107,22 +111,27 @@ class DatabaseService {
           await _migrateToVersion4(_db!);
         }
       }
+      if (tables.contains('positions')) {
+        final posInfo = await _db!.rawQuery("PRAGMA table_info('positions');");
+        final posCols = posInfo.map((r) => (r['name'] as String?)?.toLowerCase()).toSet();
+        if (posCols.contains('assigned_dtz') || posCols.contains('computed_dtz')) {
+          await _migrateToVersion5(_db!);
+        }
+      }
     } catch (e) {
       log("Warning checking schema version: $e");
     }
 
-    // Failsafe: Ensure v4 tables and reverse index always exist
+    // Failsafe: Ensure v5 tables and reverse index always exist
     await _db!.execute('''
       CREATE TABLE IF NOT EXISTS positions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bfen TEXT UNIQUE NOT NULL,
         assigned_result INTEGER,
         assigned_dtw INTEGER,
-        assigned_dtz INTEGER,
         assigned_cp INTEGER,
         computed_result INTEGER,
         computed_dtw INTEGER,
-        computed_dtz INTEGER,
         computed_cp INTEGER
       );
     ''');
@@ -152,11 +161,9 @@ class DatabaseService {
         bfen TEXT PRIMARY KEY,
         assigned_result INTEGER,
         assigned_dtw INTEGER,
-        assigned_dtz INTEGER,
         assigned_cp INTEGER,
         computed_result INTEGER,
         computed_dtw INTEGER,
-        computed_dtz INTEGER,
         computed_cp INTEGER
       );
     ''');
@@ -178,11 +185,9 @@ class DatabaseService {
               'bfen': bfen,
               'assigned_result': assignedEval?.result?.value,
               'assigned_dtw': assignedEval?.dtw,
-              'assigned_dtz': assignedEval?.dtz,
               'assigned_cp': assignedEval?.cp,
               'computed_result': computedEval?.result?.value,
               'computed_dtw': computedEval?.dtw,
-              'computed_dtz': computedEval?.dtz,
               'computed_cp': computedEval?.cp,
             },
             conflictAlgorithm: ConflictAlgorithm.replace,
@@ -195,6 +200,37 @@ class DatabaseService {
       await db.execute('ALTER TABLE nodes_v3 RENAME TO nodes;');
     } catch (e) {
       log('Warning migrating nodes to version 3: $e');
+    }
+  }
+
+  static Future<void> _migrateToVersion5(DatabaseExecutor db) async {
+    final posInfo = await db.rawQuery("PRAGMA table_info('positions');");
+    final colNames = posInfo.map((r) => (r['name'] as String?)?.toLowerCase()).toSet();
+    if (colNames.contains('assigned_dtz') || colNames.contains('computed_dtz')) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS positions_v5 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          bfen TEXT UNIQUE NOT NULL,
+          assigned_result INTEGER,
+          assigned_dtw INTEGER,
+          assigned_cp INTEGER,
+          computed_result INTEGER,
+          computed_dtw INTEGER,
+          computed_cp INTEGER
+        );
+      ''');
+      await db.execute('''
+        INSERT INTO positions_v5 (
+          id, bfen, assigned_result, assigned_dtw, assigned_cp,
+          computed_result, computed_dtw, computed_cp
+        )
+        SELECT
+          id, bfen, assigned_result, assigned_dtw, assigned_cp,
+          computed_result, computed_dtw, computed_cp
+        FROM positions;
+      ''');
+      await db.execute('DROP TABLE positions;');
+      await db.execute('ALTER TABLE positions_v5 RENAME TO positions;');
     }
   }
 
@@ -219,11 +255,9 @@ class DatabaseService {
         bfen TEXT UNIQUE NOT NULL,
         assigned_result INTEGER,
         assigned_dtw INTEGER,
-        assigned_dtz INTEGER,
         assigned_cp INTEGER,
         computed_result INTEGER,
         computed_dtw INTEGER,
-        computed_dtz INTEGER,
         computed_cp INTEGER
       );
     ''');
@@ -232,11 +266,11 @@ class DatabaseService {
     if (tables.contains('nodes')) {
       await db.execute('''
         INSERT OR IGNORE INTO positions (
-          bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
-          computed_result, computed_dtw, computed_dtz, computed_cp
+          bfen, assigned_result, assigned_dtw, assigned_cp,
+          computed_result, computed_dtw, computed_cp
         ) SELECT
-          bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
-          computed_result, computed_dtw, computed_dtz, computed_cp
+          bfen, assigned_result, assigned_dtw, assigned_cp,
+          computed_result, computed_dtw, computed_cp
         FROM nodes;
       ''');
     }
@@ -338,27 +372,23 @@ class DatabaseService {
         for (var update in batchUpdates) {
           batch.rawInsert('''
             INSERT INTO positions (
-              bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
-              computed_result, computed_dtw, computed_dtz, computed_cp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              bfen, assigned_result, assigned_dtw, assigned_cp,
+              computed_result, computed_dtw, computed_cp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(bfen) DO UPDATE SET
               assigned_result = excluded.assigned_result,
               assigned_dtw = excluded.assigned_dtw,
-              assigned_dtz = excluded.assigned_dtz,
               assigned_cp = excluded.assigned_cp,
               computed_result = excluded.computed_result,
               computed_dtw = excluded.computed_dtw,
-              computed_dtz = excluded.computed_dtz,
               computed_cp = excluded.computed_cp;
           ''', [
             update.bfen,
             update.assigned?.result?.value,
             update.assigned?.dtw,
-            update.assigned?.dtz,
             update.assigned?.cp,
             update.computed?.result?.value,
             update.computed?.dtw,
-            update.computed?.dtz,
             update.computed?.cp,
           ]);
         }
@@ -442,11 +472,9 @@ class DatabaseService {
         'bfen': bfen,
         'assigned_result': pending.assigned?.result?.value,
         'assigned_dtw': pending.assigned?.dtw,
-        'assigned_dtz': pending.assigned?.dtz,
         'assigned_cp': pending.assigned?.cp,
         'computed_result': pending.computed?.result?.value,
         'computed_dtw': pending.computed?.dtw,
-        'computed_dtz': pending.computed?.dtz,
         'computed_cp': pending.computed?.cp,
       };
     }
@@ -471,11 +499,9 @@ class DatabaseService {
           'bfen': bfen,
           'assigned_result': pending.assigned?.result?.value,
           'assigned_dtw': pending.assigned?.dtw,
-          'assigned_dtz': pending.assigned?.dtz,
           'assigned_cp': pending.assigned?.cp,
           'computed_result': pending.computed?.result?.value,
           'computed_dtw': pending.computed?.dtw,
-          'computed_dtz': pending.computed?.dtz,
           'computed_cp': pending.computed?.cp,
         };
       } else {
@@ -536,9 +562,8 @@ class DatabaseService {
   static PositionEval? evalFromRow(Map<String, dynamic> row, String prefix) {
     final resVal = row['${prefix}_result'] as int?;
     final dtw = row['${prefix}_dtw'] as int?;
-    final dtz = row['${prefix}_dtz'] as int?;
     final cp = row['${prefix}_cp'] as int?;
-    if (resVal == null && dtw == null && dtz == null && cp == null) {
+    if (resVal == null && dtw == null && cp == null) {
       if (row.containsKey(prefix)) {
         return PositionEval.fromLegacyScore(row[prefix] as double?);
       }
@@ -547,7 +572,6 @@ class DatabaseService {
     return PositionEval(
       result: GameResult.fromInt(resVal),
       dtw: dtw,
-      dtz: dtz,
       cp: cp,
     );
   }
@@ -572,8 +596,8 @@ class DatabaseService {
     if (_db == null) return [];
     if (afterId == null) {
       return await _db!.rawQuery('''
-        SELECT id, bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
-               computed_result, computed_dtw, computed_dtz, computed_cp
+        SELECT id, bfen, assigned_result, assigned_dtw, assigned_cp,
+               computed_result, computed_dtw, computed_cp
         FROM positions
         WHERE computed_result IS NOT NULL OR computed_cp IS NOT NULL
         ORDER BY id
@@ -581,8 +605,8 @@ class DatabaseService {
       ''', [limit]);
     } else {
       return await _db!.rawQuery('''
-        SELECT id, bfen, assigned_result, assigned_dtw, assigned_dtz, assigned_cp,
-               computed_result, computed_dtw, computed_dtz, computed_cp
+        SELECT id, bfen, assigned_result, assigned_dtw, assigned_cp,
+               computed_result, computed_dtw, computed_cp
         FROM positions
         WHERE id > ? AND (computed_result IS NOT NULL OR computed_cp IS NOT NULL)
         ORDER BY id
@@ -599,6 +623,9 @@ class DatabaseService {
       throw StateError('Database is not initialized.');
     }
     await flush();
+    if (_dbPath != null && _dbPath != inMemoryDatabasePath) {
+      return await CsrGraphSolver.solveInIsolate(_dbPath!, onProgress: onProgress);
+    }
     return await CsrGraphSolver.solveDirect(_db!, onProgress: onProgress);
   }
 
@@ -714,6 +741,7 @@ class DatabaseService {
     await flush();
     await _db?.close();
     _db = null;
+    _dbPath = null;
     _bfenToId.clear();
     _idToBfen.clear();
   }

@@ -149,7 +149,6 @@ class FairyStockfishService implements EngineService {
         _currentEvals[idx - 1] = EngineEvaluation(
           centipawns: parsedInfo.centipawns,
           mate: parsedInfo.mate,
-          dtz: existing.dtz,
           depth: parsedInfo.depth ?? existing.depth,
           candidateMove: parsedInfo.candidateMove ?? existing.candidateMove,
           multipv: parsedInfo.multipv ?? existing.multipv,

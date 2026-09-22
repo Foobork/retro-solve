@@ -46,7 +46,7 @@ void main() {
     // A also has an exit to a decisive loss E
     g.addFullVertex('A w', null, null);
     g.addFullVertex('B b', null, null);
-    g.addFullVertex('E b', const PositionEval(result: GameResult.blackWins, dtz: 1), null);
+    g.addFullVertex('E b', const PositionEval(result: GameResult.blackWins, dtw: 1), null);
     g.addLink('A w', 'B b');
     g.addLink('B b', 'A w');
     g.addLink('A w', 'E b');

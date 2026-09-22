@@ -317,38 +317,34 @@ void main() {
       expect(evals, isNotNull);
       expect(evals!.length, equals(3));
 
-      // Rg5: Black is winning, but it is DTZ 1, NOT mate in 1!
+      // Rg5: Black is winning, but DTW is null -> pseudomate (+Mate / -Mate)
       final m1 = evals[0];
       expect(m1.candidateMove, equals('g1g5'));
-      expect(m1.mate, isNull, reason: 'DTZ 1 must not be treated as Mate 1 when DTW is null');
+      expect(m1.mate, isNull, reason: 'Must not be treated as Mate 1 when DTW is null');
       expect(m1.centipawns, equals(20000));
       expect(m1.isPseudoMate, isTrue);
-      expect(m1.dtz, equals(1));
       expect(m1.depth, equals(100));
 
       // In White perspective (Black to move):
       final m1White = m1.asWhitePerspective(whiteToMove: false);
       expect(m1White.centipawns, equals(-20000)); // Black winning
       expect(m1White.mate, isNull);
-      expect(m1White.dtz, equals(1));
-      expect(m1White.toString().contains('-DTZ 1'), isTrue);
+      expect(m1White.toString().contains('-Mate'), isTrue);
 
       // Rg6: also winning for Black
       final m2 = evals[1];
       expect(m2.candidateMove, equals('g1g6'));
       expect(m2.mate, isNull);
       expect(m2.centipawns, equals(20000));
-      expect(m2.dtz, equals(1));
 
       // Ra1: losing for Black
       final m3 = evals[2];
       expect(m3.candidateMove, equals('g1a1'));
       expect(m3.mate, isNull);
       expect(m3.centipawns, equals(-20000));
-      expect(m3.dtz, equals(3));
       final m3White = m3.asWhitePerspective(whiteToMove: false);
       expect(m3White.centipawns, equals(20000)); // White winning
-      expect(m3White.toString().contains('+DTZ 3'), isTrue);
+      expect(m3White.toString().contains('+Mate'), isTrue);
     });
 
     test('parseTablebaseResponse detects immediate variant win even if DTW is null', () {

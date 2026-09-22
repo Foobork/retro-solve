@@ -207,15 +207,26 @@ class EngineCache {
       final existingBest = existing.first;
       final existingDepth = existingBest.depth ?? 0;
 
-      // Do not replace mate or pseudomate with non-decisive
-      final existingIsDecisive = existingBest.mate != null || existingBest.isPseudoMate;
-      final bestIsDecisive = best.mate != null || best.isPseudoMate;
-      if (existingIsDecisive && !bestIsDecisive) {
+      // DTW overrides engine eval:
+      // If existing evaluation has DTW, do not allow an evaluation without DTW to replace it.
+      if (existingBest.dtw != null && best.dtw == null) {
         return;
       }
-      // Do not downgrade depth unless replacing non-decisive with decisive
-      if (!force && existingDepth > depth && (!bestIsDecisive || existingIsDecisive)) {
-        return;
+
+      // If incoming evaluation has DTW and existing lacks DTW, allow it to override immediately.
+      if (best.dtw != null && existingBest.dtw == null) {
+        // Allow replacement
+      } else {
+        // Do not replace mate or pseudomate with non-decisive
+        final existingIsDecisive = existingBest.mate != null || existingBest.isPseudoMate;
+        final bestIsDecisive = best.mate != null || best.isPseudoMate;
+        if (existingIsDecisive && !bestIsDecisive) {
+          return;
+        }
+        // Do not downgrade depth unless replacing non-decisive with decisive
+        if (!force && existingDepth > depth && (!bestIsDecisive || existingIsDecisive)) {
+          return;
+        }
       }
     }
 

@@ -266,7 +266,7 @@ void main() {
 
     test('TablebaseService.instance respects Config.enableRemoteTablebase', () {
       expect(TablebaseService.instance.isEnabled, equals(Config.enableRemoteTablebase));
-      expect(TablebaseService.instance.isEnabled, isFalse);
+      expect(TablebaseService.instance.isEnabled, isTrue);
     });
 
     test('parseTablebaseResponse handles 6-piece position with DTZ and null DTW without claiming mate in 1', () {
@@ -314,37 +314,8 @@ void main() {
         jsonStr,
       );
 
-      expect(evals, isNotNull);
-      expect(evals!.length, equals(3));
-
-      // Rg5: Black is winning, but DTW is null -> pseudomate (+Mate / -Mate)
-      final m1 = evals[0];
-      expect(m1.candidateMove, equals('g1g5'));
-      expect(m1.mate, isNull, reason: 'Must not be treated as Mate 1 when DTW is null');
-      expect(m1.centipawns, equals(20000));
-      expect(m1.isPseudoMate, isTrue);
-      expect(m1.depth, equals(100));
-
-      // In White perspective (Black to move):
-      final m1White = m1.asWhitePerspective(whiteToMove: false);
-      expect(m1White.centipawns, equals(-20000)); // Black winning
-      expect(m1White.mate, isNull);
-      expect(m1White.toString().contains('-Mate'), isTrue);
-
-      // Rg6: also winning for Black
-      final m2 = evals[1];
-      expect(m2.candidateMove, equals('g1g6'));
-      expect(m2.mate, isNull);
-      expect(m2.centipawns, equals(20000));
-
-      // Ra1: losing for Black
-      final m3 = evals[2];
-      expect(m3.candidateMove, equals('g1a1'));
-      expect(m3.mate, isNull);
-      expect(m3.centipawns, equals(-20000));
-      final m3White = m3.asWhitePerspective(whiteToMove: false);
-      expect(m3White.centipawns, equals(20000)); // White winning
-      expect(m3White.toString().contains('+Mate'), isTrue);
+      // When tablebase has no DTW/DTM for position or moves, return null so engine evaluates
+      expect(evals, isNull);
     });
 
     test('parseTablebaseResponse detects immediate variant win even if DTW is null', () {
@@ -375,6 +346,68 @@ void main() {
       expect(evals!.length, equals(1));
       expect(evals.first.candidateMove, equals('b1a2'));
       expect(evals.first.mate, equals(1));
+      expect(evals.first.dtw, equals(1));
+    });
+
+    test('parseTablebaseResponse handles Standard chess with dtm as DTW', () {
+      const fen = '8/8/8/8/8/4k3/8/4K2Q w - - 0 1';
+      final jsonStr = jsonEncode({
+        'category': 'win',
+        'checkmate': false,
+        'variant_win': false,
+        'variant_loss': false,
+        'insufficient_material': false,
+        'dtz': 9,
+        'precise_dtz': 9,
+        'dtm': 9,
+        'dtw': null,
+        'moves': [
+          {
+            'uci': 'h1d5',
+            'san': 'Qd5',
+            'category': 'loss',
+            'dtz': -8,
+            'precise_dtz': -8,
+            'dtm': -8,
+            'dtw': null,
+            'checkmate': false,
+            'variant_win': false,
+          },
+          {
+            'uci': 'h1f3',
+            'san': 'Qf3+',
+            'category': 'draw',
+            'dtz': 0,
+            'precise_dtz': 0,
+            'dtm': 0,
+            'dtw': null,
+            'checkmate': false,
+            'variant_win': false,
+          }
+        ],
+      });
+
+      final evals = TablebaseService.parseTablebaseResponse(
+        DatasetVariant.standard,
+        fen,
+        jsonStr,
+      );
+
+      expect(evals, isNotNull);
+      expect(evals!.length, equals(2));
+
+      // 1st move: Qd5 (mate in 5 moves / 9 plies)
+      final m1 = evals[0];
+      expect(m1.candidateMove, equals('h1d5'));
+      expect(m1.dtw, equals(9));
+      expect(m1.mate, equals(5));
+
+      // 2nd move: Qf3+ (draw)
+      final m2 = evals[1];
+      expect(m2.candidateMove, equals('h1f3'));
+      expect(m2.dtw, isNull);
+      expect(m2.mate, isNull);
+      expect(m2.centipawns, equals(0));
     });
   });
 }

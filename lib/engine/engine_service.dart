@@ -19,6 +19,7 @@ export 'tablebase_service.dart';
 class EngineEvaluation {
   final int? centipawns;
   final int? mate;
+  final int? dtw;
   final int? depth;
   final String? candidateMove;
   final int? multipv;
@@ -27,6 +28,7 @@ class EngineEvaluation {
   const EngineEvaluation({
     this.centipawns,
     this.mate,
+    this.dtw,
     this.depth,
     this.candidateMove,
     this.multipv,
@@ -43,6 +45,7 @@ class EngineEvaluation {
     return EngineEvaluation(
       centipawns: centipawns != null ? -centipawns! : null,
       mate: mate != null ? -mate! : null,
+      dtw: dtw,
       depth: depth,
       candidateMove: candidateMove,
       multipv: multipv,
@@ -54,6 +57,7 @@ class EngineEvaluation {
     return EngineEvaluation(
       centipawns: centipawns,
       mate: mate,
+      dtw: dtw,
       depth: depth,
       candidateMove: candidateMove,
       multipv: multipv,

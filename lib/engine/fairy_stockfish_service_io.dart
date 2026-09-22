@@ -268,13 +268,8 @@ class FairyStockfishService implements EngineService {
   @override
   Future<EngineEvaluation?> evaluatePositionSync(String fen, {int depth = 16}) async {
     final cached = cache.get(_variant, fen, minDepth: depth);
-    if (cached != null && cached.isNotEmpty) {
-      final best = cached.first;
-      final hasReachedFullDepth = best.mate != null ||
-          (best.depth != null && best.depth! >= depth);
-      if (hasReachedFullDepth) {
-        return best.copyWithFen(fen);
-      }
+    if (cached != null && cached.isNotEmpty && cached.first.dtw != null) {
+      return cached.first.copyWithFen(fen);
     }
 
     if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
@@ -282,6 +277,15 @@ class FairyStockfishService implements EngineService {
       if (tbEvals != null && tbEvals.isNotEmpty) {
         cache.put(_variant, fen, tbEvals, force: true);
         return tbEvals.first;
+      }
+    }
+
+    if (cached != null && cached.isNotEmpty) {
+      final best = cached.first;
+      final hasReachedFullDepth = best.mate != null ||
+          (best.depth != null && best.depth! >= depth);
+      if (hasReachedFullDepth) {
+        return best.copyWithFen(fen);
       }
     }
 
@@ -465,6 +469,44 @@ class FairyStockfishService implements EngineService {
     }
 
     final cached = cache.get(_variant, fen, minDepth: 16);
+    if (cached != null && cached.isNotEmpty && cached.first.dtw != null) {
+      if (_isStarted && _process != null && _isSearching) {
+        _waitingForReadyOk = true;
+        _isSearching = false;
+        try {
+          _writeLine('stop');
+          _writeLine('isready');
+          await _waitForLine('readyok');
+        } catch (_) {}
+      }
+      _activeFen = fen;
+      _currentEvals.clear();
+      _currentEvals.addAll(cached.map((e) => e.copyWithFen(fen)));
+      _evaluationController.add(List.from(_currentEvals));
+      return;
+    }
+
+    if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
+      final tbEvals = await TablebaseService.instance.probe(_variant, fen);
+      if (tbEvals != null && tbEvals.isNotEmpty) {
+        if (_isStarted && _process != null && _isSearching) {
+          _waitingForReadyOk = true;
+          _isSearching = false;
+          try {
+            _writeLine('stop');
+            _writeLine('isready');
+            await _waitForLine('readyok');
+          } catch (_) {}
+        }
+        _activeFen = fen;
+        _currentEvals.clear();
+        _currentEvals.addAll(tbEvals);
+        cache.put(_variant, fen, tbEvals, force: true);
+        _evaluationController.add(List.from(_currentEvals));
+        return;
+      }
+    }
+
     if (cached != null && cached.isNotEmpty) {
       final best = cached.first;
       final hasReachedFullDepth = best.mate != null ||
@@ -498,27 +540,6 @@ class FairyStockfishService implements EngineService {
         _currentEvals.clear();
         _currentEvals.addAll(shallower.map((e) => e.copyWithFen(fen)));
         _evaluationController.add(List.from(_currentEvals));
-      }
-    }
-
-    if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
-      final tbEvals = await TablebaseService.instance.probe(_variant, fen);
-      if (tbEvals != null && tbEvals.isNotEmpty) {
-        if (_isStarted && _process != null && _isSearching) {
-          _waitingForReadyOk = true;
-          _isSearching = false;
-          try {
-            _writeLine('stop');
-            _writeLine('isready');
-            await _waitForLine('readyok');
-          } catch (_) {}
-        }
-        _activeFen = fen;
-        _currentEvals.clear();
-        _currentEvals.addAll(tbEvals);
-        cache.put(_variant, fen, tbEvals, force: true);
-        _evaluationController.add(List.from(_currentEvals));
-        return;
       }
     }
 

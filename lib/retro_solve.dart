@@ -57,13 +57,14 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, export_, analyzeGame, toggleBacksolve }
+enum _MoreAction { solve, export_, analyzeGame, toggleBacksolve, toggleTablebase }
 
 class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
   Timer? _evalTimer;
   List<EngineEvaluation>? _pendingEvals;
   bool _interactiveBacksolving = true;
+  bool _enableTablebase = Config.enableRemoteTablebase;
 
   @visibleForTesting
   bool get interactiveBacksolving => _interactiveBacksolving;
@@ -200,6 +201,11 @@ class HomePageState extends State<HomePage> {
           value: _MoreAction.toggleBacksolve,
           checked: _interactiveBacksolving,
           child: const Text('Interactive Backsolving'),
+        ),
+        CheckedPopupMenuItem<_MoreAction>(
+          value: _MoreAction.toggleTablebase,
+          checked: _enableTablebase,
+          child: const Text('Online Tablebase (DTW)'),
         ),
       ],
     );
@@ -657,6 +663,14 @@ class HomePageState extends State<HomePage> {
     InteractiveBacksolvingStore.load().then((val) {
       if (mounted) setState(() => _interactiveBacksolving = val);
     });
+    TablebaseStore.load().then((val) {
+      if (mounted) {
+        setState(() {
+          _enableTablebase = val;
+          Config.enableRemoteTablebase = val;
+        });
+      }
+    });
     _evalSub = widget.engineService.evaluationStream.listen((evals) {
       if (!mounted || _isBatchEvaluating) return;
       _pendingEvals = evals;
@@ -685,9 +699,11 @@ class HomePageState extends State<HomePage> {
 
           // Auto-populate node directly if not in database and depth is sufficient
           final bfen = _controller.game.bfen;
-          if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
+          final existingAssigned = graph.v[bfen]?.assigned;
+          if (_engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
-            final bool isSufficient = bestEval.mate != null ||
+            final bool isSufficient = bestEval.dtw != null ||
+                bestEval.mate != null ||
                 bestEval.isPseudoMate ||
                 (bestEval.depth != null && bestEval.depth! >= 16) ||
                 (!widget.engineService.isSearching &&
@@ -697,8 +713,13 @@ class HomePageState extends State<HomePage> {
                 isSufficient) {
               final posEval = _engineEvalToPositionEval(bestEval, _controller.game.turn == white);
               if (posEval != null) {
-                graph.assign(bfen, posEval);
-                graph.v[bfen]?.inDatabase = true;
+                // DTW overrides engine eval:
+                // Only assign if node has no assigned eval, or if new eval has DTW and existing lacks DTW
+                final canAssign = existingAssigned == null ||
+                    (posEval.dtw != null && existingAssigned.dtw == null);
+                if (canAssign) {
+                  graph.assign(bfen, posEval);
+                  graph.v[bfen]?.inDatabase = true;
                 if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
                   if (graph is CachedGraph) {
                     await (graph as CachedGraph).solveBfenAsync(bfen);
@@ -727,9 +748,10 @@ class HomePageState extends State<HomePage> {
               }
             }
           }
-        });
-      }
-    });
+        }
+      });
+    }
+  });
     _update();
   }
 
@@ -905,15 +927,19 @@ class HomePageState extends State<HomePage> {
           _engineEvals = validEvals;
 
           final bfen = _controller.game.bfen;
-          if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {
+          final existingAssigned = graph.v[bfen]?.assigned;
+          if (_engineEvals.isNotEmpty) {
             final bestEval = _engineEvals.first;
-            final hasFull = bestEval.mate != null ||
+            final hasFull = bestEval.dtw != null ||
+                bestEval.mate != null ||
                 bestEval.isPseudoMate ||
                 (bestEval.depth != null &&
                     bestEval.depth! >= 16);
             if (hasFull) {
               final posEval = _engineEvalToPositionEval(bestEval, whiteToMove);
-              if (posEval != null) {
+              final canAssign = existingAssigned == null ||
+                  (posEval?.dtw != null && existingAssigned.dtw == null);
+              if (posEval != null && canAssign) {
                 graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
                 if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
@@ -933,7 +959,8 @@ class HomePageState extends State<HomePage> {
           }
         });
         final bestCached = validEvals.first;
-        final hasFull = bestCached.mate != null ||
+        final hasFull = bestCached.dtw != null ||
+            bestCached.mate != null ||
             bestCached.isPseudoMate ||
             (bestCached.depth != null &&
                 bestCached.depth! >= 16);
@@ -1068,6 +1095,13 @@ class HomePageState extends State<HomePage> {
         break;
       case _MoreAction.toggleBacksolve:
         _toggleInteractiveBacksolving(!_interactiveBacksolving);
+        break;
+      case _MoreAction.toggleTablebase:
+        setState(() {
+          _enableTablebase = !_enableTablebase;
+          Config.enableRemoteTablebase = _enableTablebase;
+          TablebaseStore.save(_enableTablebase);
+        });
         break;
     }
   }
@@ -1773,7 +1807,7 @@ class HomePageState extends State<HomePage> {
           Row(
             children: [
               if (depth != null)
-                Text('Depth $depth',
+                Text(depth == 100 ? 'Tablebase' : 'Depth $depth',
                     style: const TextStyle(fontSize: 16, color: Colors.black54)),
               if (_engineEvalPending) ...[
                 const SizedBox(width: 8),
@@ -1893,7 +1927,9 @@ class HomePageState extends State<HomePage> {
       final absM = m.abs();
       final sideToMoveIsWinning = whiteToMove ? (m > 0) : (m < 0);
       final int pliesToMate;
-      if (variant == DatasetVariant.antichess) {
+      if (eval.dtw != null) {
+        pliesToMate = eval.dtw!;
+      } else if (variant == DatasetVariant.antichess) {
         pliesToMate = sideToMoveIsWinning ? (2 * absM) : (2 * absM - 1);
       } else {
         pliesToMate = sideToMoveIsWinning ? (2 * absM - 1) : (2 * absM);
@@ -1904,7 +1940,7 @@ class HomePageState extends State<HomePage> {
       if (eval.isPseudoMate) {
         final isWhiteWin = eval.centipawns! > 0;
         final result = isWhiteWin ? GameResult.whiteWins : GameResult.blackWins;
-        return PositionEval(result: result);
+        return PositionEval(result: result, dtw: eval.dtw);
       }
       return PositionEval(cp: eval.centipawns);
     }

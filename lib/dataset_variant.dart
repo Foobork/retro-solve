@@ -112,3 +112,23 @@ class InteractiveBacksolvingStore {
     } catch (_) {}
   }
 }
+
+class TablebaseStore {
+  static const _key = 'enable_tablebase';
+
+  static Future<bool> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_key) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<void> save(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_key, enabled);
+    } catch (_) {}
+  }
+}

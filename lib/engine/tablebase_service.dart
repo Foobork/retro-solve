@@ -108,13 +108,14 @@ class TablebaseService {
       final category = (data['category'] as String?)?.toLowerCase();
       if (category == null || category == 'unknown') return null;
 
-      final posDtw = data['dtw'] as int?;
+      final posDtw = (data['dtw'] ?? data['dtm']) as int?;
       final rawMoves = data['moves'] as List<dynamic>? ?? [];
 
       // If no moves are listed (e.g. terminal position)
       if (rawMoves.isEmpty) {
         int? mate;
         int? centipawns;
+        int? dtwPlies;
         final isCheckmate = data['checkmate'] == true;
         final isVariantWin = data['variant_win'] == true;
         final isVariantLoss = data['variant_loss'] == true;
@@ -122,16 +123,20 @@ class TablebaseService {
 
         if (isCheckmate || isVariantWin || (isStalemate && category == 'win')) {
           mate = 0;
+          dtwPlies = 0;
         } else if (isVariantLoss || (isStalemate && category == 'loss')) {
           mate = 0;
+          dtwPlies = 0;
         } else if (posDtw != null) {
           final plies = posDtw.abs();
+          dtwPlies = plies;
           if (category == 'win') {
             mate = plies == 0 ? 0 : (plies + 1) ~/ 2;
           } else if (category == 'loss') {
             mate = plies == 0 ? 0 : -((plies + 1) ~/ 2);
           } else {
             centipawns = 0;
+            dtwPlies = null;
           }
         } else {
           if (category == 'win') {
@@ -143,10 +148,15 @@ class TablebaseService {
           }
         }
 
+        if (dtwPlies == null && !isCheckmate && !isVariantWin && !isVariantLoss) {
+          return null;
+        }
+
         return [
           EngineEvaluation(
             centipawns: centipawns,
             mate: mate,
+            dtw: dtwPlies,
             depth: 100,
             multipv: 1,
             fen: fen,
@@ -161,22 +171,26 @@ class TablebaseService {
         final moveData = rawMoves[i] as Map<String, dynamic>;
         final moveUci = moveData['uci'] as String?;
         final moveCat = (moveData['category'] as String?)?.toLowerCase();
-        final moveDtw = moveData['dtw'] as int?;
+        final moveDtw = (moveData['dtw'] ?? moveData['dtm']) as int?;
         final isCheckmate = moveData['checkmate'] == true;
         final isVariantWin = moveData['variant_win'] == true;
         final isVariantLoss = moveData['variant_loss'] == true;
 
         int? moveMate;
         int? moveCentipawns;
+        int? moveDtwPlies;
 
         // In Lichess Tablebase API, move['category'] is from opponent's perspective
         if (isCheckmate || isVariantWin) {
           moveMate = 1;
+          moveDtwPlies = 1;
         } else if (isVariantLoss) {
           moveMate = -1;
+          moveDtwPlies = 1;
         } else if (moveDtw != null) {
           final opponentPlies = moveDtw.abs();
           final plies = opponentPlies + 1;
+          moveDtwPlies = plies;
           if (moveCat == 'loss') {
             // Opponent loses -> this move wins for side to move
             moveMate = (plies + 1) ~/ 2;
@@ -185,9 +199,10 @@ class TablebaseService {
             moveMate = -((plies + 1) ~/ 2);
           } else {
             moveCentipawns = 0;
+            moveDtwPlies = null;
           }
         } else {
-          // DTW is null (e.g. 6-piece tablebases with DTZ only)
+          // DTW is null (e.g. 7-piece tablebases with DTZ only)
           if (moveCat == 'loss') {
             moveCentipawns = 20000;
           } else if (moveCat == 'win') {
@@ -211,11 +226,19 @@ class TablebaseService {
         evals.add(EngineEvaluation(
           centipawns: moveCentipawns,
           mate: moveMate,
+          dtw: moveDtwPlies,
           depth: 100,
           candidateMove: moveUci,
           multipv: i + 1,
           fen: fen,
         ));
+      }
+
+      // If the tablebase does not have DTW for this position or its candidate moves,
+      // return null so that the local engine evaluates instead.
+      final hasDtw = posDtw != null || evals.any((e) => e.dtw != null);
+      if (!hasDtw) {
+        return null;
       }
 
       return evals;

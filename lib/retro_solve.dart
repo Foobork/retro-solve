@@ -573,7 +573,7 @@ class HomePageState extends State<HomePage> {
               if (posEval != null) {
                 graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
-                if (_interactiveBacksolving) {
+                if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
                   if (graph is CachedGraph) {
                     await (graph as CachedGraph).solveBfenAsync(bfen);
                   } else {
@@ -678,7 +678,7 @@ class HomePageState extends State<HomePage> {
       if (score != null && graph.v[a]?.assigned == null) {
         graph.assign(a, score);
       }
-      if (_interactiveBacksolving) {
+      if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
         if (graph is CachedGraph) {
           await (graph as CachedGraph).solveBfenAsync(a);
         } else {
@@ -705,7 +705,7 @@ class HomePageState extends State<HomePage> {
       graph.addLink(a, b);
     }
 
-    if (_interactiveBacksolving && !_isExploring) {
+    if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
       if (graph is CachedGraph) {
         await (graph as CachedGraph).solveBfenAsync(a);
       } else {
@@ -790,7 +790,7 @@ class HomePageState extends State<HomePage> {
               if (posEval != null) {
                 graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
-                if (_interactiveBacksolving) {
+                if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
                   if (graph is CachedGraph) {
                     (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
                       if (mounted) setState(_update);
@@ -940,14 +940,14 @@ class HomePageState extends State<HomePage> {
     try {
       await _exploreRecursive(isRoot: true);
     } finally {
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isExploring = false;
-          _update();
         });
       }
-      WakelockPlus.disable();
       print('[explore] Exploration ended/stopped.');
+      await _solve();
     }
   }
 
@@ -1146,11 +1146,6 @@ class HomePageState extends State<HomePage> {
             if (posEval != null) {
               graph.assign(bfen, posEval);
               graph.v[bfen]?.inDatabase = true;
-              if (graph is CachedGraph) {
-                await (graph as CachedGraph).solveBfenAsync(bfen);
-              } else {
-                graph.solveBfen(bfen);
-              }
             }
           }
         }
@@ -1158,7 +1153,7 @@ class HomePageState extends State<HomePage> {
 
       if (!_isExploring || !mounted) break;
       print(
-          '[explore] Back-solved evaluation for $nextMoveToExplore completed.');
+          '[explore] Evaluation for $nextMoveToExplore completed.');
 
       // Recursively explore the resulting position
       await _exploreRecursive(isRoot: false);
@@ -1348,17 +1343,17 @@ class HomePageState extends State<HomePage> {
       }
     } finally {
       _analyzeStopwatch.stop();
+      WakelockPlus.disable();
       if (mounted) {
         setState(() {
           _isExploring = false;
           _isAnalyzingGame = false;
           _analyzeTimeText = "";
           _analyzeChapterText = "";
-          _update();
         });
       }
-      WakelockPlus.disable();
       print('[analyze] Game/study analysis ended/stopped.');
+      await _solve();
     }
   }
 
@@ -1923,6 +1918,12 @@ class HomePageState extends State<HomePage> {
 
   @visibleForTesting
   Future<void> startExploring() => _startExploring();
+
+  @visibleForTesting
+  bool get isAnalyzingGame => _isAnalyzingGame;
+
+  @visibleForTesting
+  Future<void> analyzeGame(String pgnText) => _analyzeGame(pgnText);
 
   Chess _createGameForVariant(DatasetVariant variant) {
     switch (variant) {

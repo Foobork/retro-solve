@@ -49,14 +49,28 @@ class _MockExploreEngineService extends FairyStockfishService {
     _searching = true;
     _searchTimer?.cancel();
     _searchTimer = Timer(const Duration(milliseconds: 30), () {
-      if (fen.contains('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR')) {
-        _controller.add([
-          EngineEvaluation(candidateMove: 'e2e4', centipawns: 30, depth: 16, fen: fen),
-        ]);
-      } else if (fen.contains('4p3') || fen.contains('4P3')) {
-        _controller.add([
-          EngineEvaluation(candidateMove: 'e7e5', centipawns: -30, depth: 16, fen: fen),
-        ]);
+      final chess = Chess();
+      if (chess.load(fen)) {
+        final moves = chess.generateMoves();
+        if (moves.isNotEmpty) {
+          final preferred = moves.firstWhere(
+            (m) =>
+                '${m.fromAlgebraic}${m.toAlgebraic}' == 'e2e4' ||
+                '${m.fromAlgebraic}${m.toAlgebraic}' == 'e7e5',
+            orElse: () => moves.first,
+          );
+          final uci =
+              '${preferred.fromAlgebraic}${preferred.toAlgebraic}${preferred.promotion?.name ?? ''}'
+                  .toLowerCase();
+          _controller.add([
+            EngineEvaluation(
+              candidateMove: uci,
+              centipawns: chess.turn == PlayerColor.white ? 30 : -30,
+              depth: 16,
+              fen: fen,
+            ),
+          ]);
+        }
       }
       _searching = false;
     });
@@ -374,5 +388,43 @@ void main() {
     expect(knownMoves.any((m) => m.move == 'e4'), isTrue);
     final e4Move = knownMoves.firstWhere((m) => m.move == 'e4');
     expect(e4Move.eval, isNotNull);
+  });
+
+  testWidgets('analyze mode analyzes moves and solves once at the end', (WidgetTester tester) async {
+    resetGraph();
+
+    final engineService = _MockExploreEngineService();
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+
+    const pgn = '''
+[Event "Test Game"]
+[Variant "Standard"]
+
+1. e4
+''';
+
+    final analyzeFuture = state.analyzeGame(pgn);
+
+    for (int i = 0; i < 60; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (!state.isAnalyzingGame) break;
+    }
+    await analyzeFuture;
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(state.isAnalyzingGame, isFalse);
+    expect(state.isExploring, isFalse);
+
+    final knownMoves = state.knownMoves;
+    expect(knownMoves.any((m) => m.move == 'e4'), isTrue);
   });
 }

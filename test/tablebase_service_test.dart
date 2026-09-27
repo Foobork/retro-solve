@@ -314,8 +314,37 @@ void main() {
         jsonStr,
       );
 
-      // When tablebase has no DTW/DTM for position or moves, return null so engine evaluates
-      expect(evals, isNull);
+      expect(evals, isNotNull);
+      expect(evals!.length, equals(3));
+
+      // Rg5: Black is winning, but DTW is null -> pseudomate (+Mate / -Mate)
+      final m1 = evals[0];
+      expect(m1.candidateMove, equals('g1g5'));
+      expect(m1.mate, isNull, reason: 'Must not be treated as Mate 1 when DTW is null');
+      expect(m1.centipawns, equals(20000));
+      expect(m1.isPseudoMate, isTrue);
+      expect(m1.depth, equals(100));
+
+      // In White perspective (Black to move):
+      final m1White = m1.asWhitePerspective(whiteToMove: false);
+      expect(m1White.centipawns, equals(-20000)); // Black winning
+      expect(m1White.mate, isNull);
+      expect(m1White.toString().contains('-Mate'), isTrue);
+
+      // Rg6: also winning for Black
+      final m2 = evals[1];
+      expect(m2.candidateMove, equals('g1g6'));
+      expect(m2.mate, isNull);
+      expect(m2.centipawns, equals(20000));
+
+      // Ra1: losing for Black
+      final m3 = evals[2];
+      expect(m3.candidateMove, equals('g1a1'));
+      expect(m3.mate, isNull);
+      expect(m3.centipawns, equals(-20000));
+      final m3White = m3.asWhitePerspective(whiteToMove: false);
+      expect(m3White.centipawns, equals(20000)); // White winning
+      expect(m3White.toString().contains('+Mate'), isTrue);
     });
 
     test('parseTablebaseResponse detects immediate variant win even if DTW is null', () {
@@ -408,6 +437,148 @@ void main() {
       expect(m2.dtw, isNull);
       expect(m2.mate, isNull);
       expect(m2.centipawns, equals(0));
+    });
+
+    test('probe prioritizes local sidecar when localEnabled is true', () async {
+      const fen = '4k3/4P3/8/8/8/8/8/4K3 w - - 0 1';
+      final requests = <Uri>[];
+      final mockClient = MockClient((request) async {
+        requests.add(request.url);
+        if (request.url.host == '127.0.0.1') {
+          return http.Response(
+            jsonEncode({
+              'category': 'win',
+              'dtz': 1,
+              'dtw': 3,
+              'moves': [
+                {
+                  'uci': 'e1f2',
+                  'san': 'Kf2',
+                  'category': 'loss',
+                  'dtz': -2,
+                  'dtw': -2,
+                }
+              ],
+            }),
+            200,
+          );
+        }
+        return http.Response('Unexpected remote probe', 500);
+      });
+
+      final service = TablebaseService(
+        client: mockClient,
+        localEnabled: true,
+        enabled: true,
+      );
+
+      final evals = await service.probe(DatasetVariant.atomic, fen);
+      expect(evals, isNotNull);
+      expect(evals!.length, equals(1));
+      expect(evals.first.candidateMove, equals('e1f2'));
+      expect(evals.first.mate, equals(2)); // (2 + 1) ~/ 2 = 2
+      expect(evals.first.dtw, equals(3));  // 2 + 1 = 3
+      expect(requests.length, equals(1));
+      expect(requests.first.host, equals('127.0.0.1'));
+    });
+
+    test('probe does not fall back to remote when local sidecar is enabled to prevent throttling', () async {
+      const fen = '4k3/4P3/8/8/8/8/8/4K3 w - - 0 1';
+      final requests = <Uri>[];
+      final mockClient = MockClient((request) async {
+        requests.add(request.url);
+        return http.Response('Local sidecar unavailable', 500);
+      });
+
+      final service = TablebaseService(
+        client: mockClient,
+        localEnabled: true,
+        enabled: true,
+      );
+
+      final evals = await service.probe(DatasetVariant.atomic, fen);
+      expect(evals, isNull);
+      expect(requests.length, equals(1));
+      expect(requests[0].host, equals('127.0.0.1'));
+    });
+
+    test('probe returns immediate variant win via local sidecar', () async {
+      const fen = '4k3/3Q4/8/8/8/8/8/K7 w - - 0 1';
+      final mockClient = MockClient((request) async {
+        expect(request.url.host, equals('127.0.0.1'));
+        return http.Response(
+          jsonEncode({
+            'category': 'win',
+            'dtz': 0,
+            'dtw': null,
+            'checkmate': false,
+            'variant_win': false,
+            'moves': [
+              {
+                'uci': 'd7e8',
+                'san': 'Qxe8#',
+                'category': 'loss',
+                'dtz': 0,
+                'dtw': -1,
+                'checkmate': false,
+                'variant_win': true,
+              }
+            ],
+          }),
+          200,
+        );
+      });
+
+      final service = TablebaseService(
+        client: mockClient,
+        localEnabled: true,
+      );
+
+      final evals = await service.probe(DatasetVariant.atomic, fen);
+      expect(evals, isNotNull);
+      expect(evals!.first.candidateMove, equals('d7e8'));
+      expect(evals.first.mate, equals(1));
+      expect(evals.first.dtw, equals(1));
+    });
+
+    test('probe retains tablebase win as +Mate pseudomate when DTW is null', () async {
+      const fen = '4k3/4P3/8/8/8/8/8/4K3 w - - 0 1';
+      final mockClient = MockClient((request) async {
+        expect(request.url.host, equals('127.0.0.1'));
+        return http.Response(
+          jsonEncode({
+            'category': 'win',
+            'dtz': 1,
+            'dtw': null,
+            'checkmate': false,
+            'variant_win': false,
+            'moves': [
+              {
+                'uci': 'e1f2',
+                'san': 'Kf2',
+                'category': 'loss',
+                'dtz': -2,
+                'dtw': null,
+              }
+            ],
+          }),
+          200,
+        );
+      });
+
+      final service = TablebaseService(
+        client: mockClient,
+        localEnabled: true,
+      );
+
+      final evals = await service.probe(DatasetVariant.atomic, fen);
+      expect(evals, isNotNull);
+      expect(evals!.length, equals(1));
+      expect(evals.first.candidateMove, equals('e1f2'));
+      expect(evals.first.mate, isNull);
+      expect(evals.first.dtw, isNull);
+      expect(evals.first.centipawns, equals(20000));
+      expect(evals.first.isPseudoMate, isTrue);
     });
   });
 }

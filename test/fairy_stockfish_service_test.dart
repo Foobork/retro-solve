@@ -76,4 +76,114 @@ void main() {
   test('EngineService default search depth', () {
     expect(EngineService.defaultSearchDepth, equals(16));
   });
+
+  group('DTW calculation from UCI mate score', () {
+    test('standard/atomic variant: positive mate M is 2M - 1 plies', () {
+      // Mate in 1 = 1 ply
+      const m1 = 1;
+      const dtw1 = 2 * m1 - 1;
+      expect(dtw1, equals(1));
+
+      // Mate in 7 = 13 plies
+      const m7 = 7;
+      const dtw7 = 2 * m7 - 1;
+      expect(dtw7, equals(13));
+    });
+
+    test('standard/atomic variant: negative mate -M is 2M plies', () {
+      // Losing in 1 move (opponent delivers mate) = 2 plies
+      const mMinus1 = -1;
+      final dtwMinus1 = 2 * mMinus1.abs();
+      expect(dtwMinus1, equals(2));
+
+      // Losing in 7 moves = 14 plies
+      const mMinus7 = -7;
+      final dtwMinus7 = 2 * mMinus7.abs();
+      expect(dtwMinus7, equals(14));
+    });
+
+    test('antichess variant: winning side mate M is 2M plies', () {
+      const m1 = 1;
+      const dtwAntichess = 2 * m1;
+      expect(dtwAntichess, equals(2));
+    });
+  });
+
+  group('EngineCache DTW and decisive score preservation', () {
+    const fen = '4k3/8/7P/8/8/8/1PP5/3K4 w - - 0 1';
+    final cache = EngineCache();
+
+    test('eval with DTW overrides tablebase +Mate lacking DTW', () {
+      // 1. Initial tablebase evaluation: proven win (+Mate), but DTW is null
+      const tbEval = EngineEvaluation(
+        centipawns: 20000,
+        candidateMove: 'h6h7',
+        depth: 16,
+      );
+      cache.put(DatasetVariant.atomic, fen, [tbEval], force: true);
+      expect(cache.get(DatasetVariant.atomic, fen)?.first.dtw, isNull);
+      expect(cache.get(DatasetVariant.atomic, fen)?.first.centipawns, equals(20000));
+
+      // 2. FSF discovers mate 7 (dtw: 13)
+      const fsfMateEval = EngineEvaluation(
+        mate: 7,
+        dtw: 13,
+        candidateMove: 'h6h7',
+        depth: 16,
+      );
+      cache.put(DatasetVariant.atomic, fen, [fsfMateEval], force: true);
+
+      // Verify that the evaluation with DTW overrode the one without DTW
+      final updated = cache.get(DatasetVariant.atomic, fen);
+      expect(updated, isNotNull);
+      expect(updated!.first.mate, equals(7));
+      expect(updated.first.dtw, equals(13));
+    });
+
+    test('evaluation without DTW cannot override existing evaluation with DTW', () {
+      final freshCache = EngineCache();
+      const mateEvalWithDtw = EngineEvaluation(
+        mate: 7,
+        dtw: 13,
+        candidateMove: 'h6h7',
+        depth: 16,
+      );
+      freshCache.put(DatasetVariant.atomic, fen, [mateEvalWithDtw], force: true);
+
+      // Try putting an eval without DTW
+      const evalWithoutDtw = EngineEvaluation(
+        centipawns: 20000,
+        candidateMove: 'h6h7',
+        depth: 20,
+      );
+      freshCache.put(DatasetVariant.atomic, fen, [evalWithoutDtw], force: true);
+
+      // Should still retain the DTW evaluation
+      final current = freshCache.get(DatasetVariant.atomic, fen);
+      expect(current!.first.dtw, equals(13));
+      expect(current.first.mate, equals(7));
+    });
+
+    test('heuristic evaluation cannot override decisive +Mate evaluation', () {
+      final freshCache = EngineCache();
+      const tbEval = EngineEvaluation(
+        centipawns: 20000,
+        candidateMove: 'h6h7',
+      );
+      freshCache.put(DatasetVariant.atomic, fen, [tbEval], force: true);
+
+      // FSF shallow search yields +4.50 cp (non-decisive)
+      const shallowCpEval = EngineEvaluation(
+        centipawns: 450,
+        depth: 10,
+        candidateMove: 'h6h7',
+      );
+      freshCache.put(DatasetVariant.atomic, fen, [shallowCpEval], force: false);
+
+      // Decisive +Mate must not be overwritten
+      final current = freshCache.get(DatasetVariant.atomic, fen, minDepth: 0);
+      expect(current!.first.centipawns, equals(20000));
+      expect(current.first.isPseudoMate, isTrue);
+    });
+  });
 }

@@ -94,6 +94,10 @@ class FairyStockfishService implements EngineService {
   /// True while Fairy-Stockfish is actively computing a search.
   bool _isSearching = false;
 
+  /// Holds tablebase evaluations when tablebase has proven +Mate but lacks DTW,
+  /// used as fallback if Stockfish search does not find an exact mate.
+  List<EngineEvaluation>? _activeTbFallback;
+
   @override
   Future<void> start() async {
     _isDisposed = false;
@@ -146,9 +150,26 @@ class FairyStockfishService implements EngineService {
           _currentEvals.add(const EngineEvaluation());
         }
         final existing = _currentEvals[idx - 1];
+        int? dtw;
+        if (parsedInfo.mate != null) {
+          final m = parsedInfo.mate!;
+          final absM = m.abs();
+          final sideToMoveIsWinning = m > 0;
+          dtw = _variant == DatasetVariant.antichess
+              ? (sideToMoveIsWinning ? 2 * absM : 2 * absM - 1)
+              : (sideToMoveIsWinning ? 2 * absM - 1 : 2 * absM);
+        }
+
+        // If we have an active tablebase fallback (+Mate) and FSF hasn't found mate yet,
+        // keep the +Mate score so the evaluation doesn't downgrade to heuristic centipawns.
+        final cp = (_activeTbFallback != null && parsedInfo.mate == null)
+            ? (existing.isPseudoMate ? existing.centipawns : _activeTbFallback!.first.centipawns)
+            : parsedInfo.centipawns;
+
         _currentEvals[idx - 1] = EngineEvaluation(
-          centipawns: parsedInfo.centipawns,
+          centipawns: cp,
           mate: parsedInfo.mate,
+          dtw: dtw ?? existing.dtw,
           depth: parsedInfo.depth ?? existing.depth,
           candidateMove: parsedInfo.candidateMove ?? existing.candidateMove,
           multipv: parsedInfo.multipv ?? existing.multipv,
@@ -166,11 +187,29 @@ class FairyStockfishService implements EngineService {
       } else if (line.startsWith('bestmove')) {
         if (_isSearching &&
             !_waitingForReadyOk &&
-            _activeFen.isNotEmpty &&
-            _currentEvals.isNotEmpty) {
-          cache.put(_variant, _activeFen, _currentEvals, force: true);
+            _activeFen.isNotEmpty) {
+          if (_currentEvals.isNotEmpty && _currentEvals.first.mate != null) {
+            cache.put(_variant, _activeFen, _currentEvals, force: true);
+          } else if (_activeTbFallback != null && _activeTbFallback!.isNotEmpty) {
+            // Stockfish search did not report an exact mate: restore +Mate from tablebase
+            final withDepth = _activeTbFallback!.map((e) => EngineEvaluation(
+              centipawns: e.centipawns,
+              mate: e.mate,
+              dtw: e.dtw,
+              depth: EngineService.defaultSearchDepth,
+              candidateMove: e.candidateMove,
+              multipv: e.multipv,
+              fen: _activeFen,
+            )).toList();
+            _currentEvals.clear();
+            _currentEvals.addAll(withDepth);
+            cache.put(_variant, _activeFen, _currentEvals, force: true);
+          } else if (_currentEvals.isNotEmpty) {
+            cache.put(_variant, _activeFen, _currentEvals, force: true);
+          }
         }
         _isSearching = false;
+        _activeTbFallback = null;
         if (!_waitingForReadyOk && _currentEvals.isNotEmpty) {
           _evaluationController.add(List.from(_currentEvals));
         }
@@ -268,15 +307,23 @@ class FairyStockfishService implements EngineService {
   @override
   Future<EngineEvaluation?> evaluatePositionSync(String fen, {int depth = 16}) async {
     final cached = cache.get(_variant, fen, minDepth: depth);
-    if (cached != null && cached.isNotEmpty && cached.first.dtw != null) {
+    if (cached != null && cached.isNotEmpty && (cached.first.dtw != null || cached.first.mate != null)) {
       return cached.first.copyWithFen(fen);
     }
 
+    List<EngineEvaluation>? tbFallbackEvals;
     if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
       final tbEvals = await TablebaseService.instance.probe(_variant, fen);
       if (tbEvals != null && tbEvals.isNotEmpty) {
-        cache.put(_variant, fen, tbEvals, force: true);
-        return tbEvals.first;
+        if (tbEvals.first.dtw != null || !tbEvals.first.isPseudoMate) {
+          // Tablebase already has exact DTW (e.g. 1-ply blast / mate) or is a proven Draw
+          cache.put(_variant, fen, tbEvals, force: true);
+          return tbEvals.first.copyWithFen(fen);
+        } else {
+          // Tablebase proves a win/loss (+Mate / -Mate) without exact DTW.
+          // Save it as fallback while we call FSF to attempt finding the exact mate distance.
+          tbFallbackEvals = tbEvals;
+        }
       }
     }
 
@@ -327,6 +374,43 @@ class FairyStockfishService implements EngineService {
     _isSearching = false;
 
     _writeLine('setoption name MultiPV value 5');
+    if (lastEval != null && lastEval!.mate != null) {
+      // FSF reported an exact mate distance! Compute DTW and record it.
+      final m = lastEval!.mate!;
+      final absM = m.abs();
+      final sideToMoveIsWinning = m > 0;
+      final dtw = _variant == DatasetVariant.antichess
+          ? (sideToMoveIsWinning ? 2 * absM : 2 * absM - 1)
+          : (sideToMoveIsWinning ? 2 * absM - 1 : 2 * absM);
+      final mateEval = EngineEvaluation(
+        centipawns: lastEval!.centipawns,
+        mate: lastEval!.mate,
+        dtw: dtw,
+        depth: lastEval!.depth,
+        candidateMove: lastEval!.candidateMove,
+        multipv: lastEval!.multipv,
+        fen: fen,
+      );
+      cache.put(_variant, fen, [mateEval], force: true);
+      return mateEval;
+    }
+
+    // FSF did not report a mate distance.
+    // If tablebase proved a win/loss, accept +Mate / -Mate from tablebase!
+    if (tbFallbackEvals != null && tbFallbackEvals.isNotEmpty) {
+      final withDepth = tbFallbackEvals.map((e) => EngineEvaluation(
+        centipawns: e.centipawns,
+        mate: e.mate,
+        dtw: e.dtw,
+        depth: depth,
+        candidateMove: e.candidateMove,
+        multipv: e.multipv,
+        fen: fen,
+      )).toList();
+      cache.put(_variant, fen, withDepth, force: true);
+      return withDepth.first;
+    }
+
     if (lastEval != null) {
       cache.put(_variant, fen, [lastEval!.copyWithFen(fen)], force: true);
     }
@@ -469,7 +553,7 @@ class FairyStockfishService implements EngineService {
     }
 
     final cached = cache.get(_variant, fen, minDepth: 16);
-    if (cached != null && cached.isNotEmpty && cached.first.dtw != null) {
+    if (cached != null && cached.isNotEmpty && (cached.first.dtw != null || cached.first.mate != null)) {
       if (_isStarted && _process != null && _isSearching) {
         _waitingForReadyOk = true;
         _isSearching = false;
@@ -486,24 +570,31 @@ class FairyStockfishService implements EngineService {
       return;
     }
 
+    List<EngineEvaluation>? activeTbFallback;
     if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
       final tbEvals = await TablebaseService.instance.probe(_variant, fen);
       if (tbEvals != null && tbEvals.isNotEmpty) {
-        if (_isStarted && _process != null && _isSearching) {
-          _waitingForReadyOk = true;
-          _isSearching = false;
-          try {
-            _writeLine('stop');
-            _writeLine('isready');
-            await _waitForLine('readyok');
-          } catch (_) {}
+        if (tbEvals.first.dtw != null || !tbEvals.first.isPseudoMate) {
+          if (_isStarted && _process != null && _isSearching) {
+            _waitingForReadyOk = true;
+            _isSearching = false;
+            try {
+              _writeLine('stop');
+              _writeLine('isready');
+              await _waitForLine('readyok');
+            } catch (_) {}
+          }
+          _activeFen = fen;
+          _currentEvals.clear();
+          _currentEvals.addAll(tbEvals);
+          cache.put(_variant, fen, tbEvals, force: true);
+          _evaluationController.add(List.from(_currentEvals));
+          return;
+        } else {
+          // Tablebase proves a win/loss (+Mate / -Mate) without exact DTW.
+          // Save it as fallback while we call FSF to attempt finding the exact mate distance.
+          activeTbFallback = tbEvals;
         }
-        _activeFen = fen;
-        _currentEvals.clear();
-        _currentEvals.addAll(tbEvals);
-        cache.put(_variant, fen, tbEvals, force: true);
-        _evaluationController.add(List.from(_currentEvals));
-        return;
       }
     }
 
@@ -533,6 +624,12 @@ class FairyStockfishService implements EngineService {
       _currentEvals.clear();
       _currentEvals.addAll(cached.map((e) => e.copyWithFen(fen)));
       _evaluationController.add(List.from(_currentEvals));
+    } else if (activeTbFallback != null && activeTbFallback.isNotEmpty) {
+      // Tablebase proves +Mate / -Mate. Populate immediately for UI responsiveness.
+      _activeFen = fen;
+      _currentEvals.clear();
+      _currentEvals.addAll(activeTbFallback);
+      _evaluationController.add(List.from(_currentEvals));
     } else {
       final shallower = cache.get(_variant, fen, minDepth: 0);
       if (shallower != null && shallower.isNotEmpty) {
@@ -559,7 +656,9 @@ class FairyStockfishService implements EngineService {
           EngineCache.canonicalKey(_variant, _activeFen) ==
               EngineCache.canonicalKey(_variant, fen);
       _activeFen = fen;
+      _activeTbFallback = activeTbFallback;
       if (!isSamePosition &&
+          (activeTbFallback == null || activeTbFallback.isEmpty) &&
           (cached == null || cached.isEmpty) &&
           (cache.get(_variant, fen, minDepth: 0)?.isEmpty ?? true)) {
         _currentEvals.clear();

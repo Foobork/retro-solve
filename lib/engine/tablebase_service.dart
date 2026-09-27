@@ -16,17 +16,30 @@ class TablebaseService {
   TablebaseService({
     http.Client? client,
     this.baseUrl = defaultBaseUrl,
+    String? localUrl,
     bool? enabled,
+    bool? localEnabled,
   })  : _client = client ?? http.Client(),
-        _enabled = enabled;
+        localUrl = localUrl ?? defaultLocalUrl,
+        _enabled = enabled,
+        _localEnabled = localEnabled,
+        _isCustomClient = client != null;
 
   final http.Client _client;
+  final bool _isCustomClient;
   static const String defaultBaseUrl = 'https://tablebase.lichess.ovh';
+  static const String defaultLocalUrl = 'http://127.0.0.1:8080';
   final String baseUrl;
+  final String localUrl;
   final bool? _enabled;
+  final bool? _localEnabled;
 
-  /// Whether tablebase probing is enabled.
+  /// Whether remote tablebase probing is enabled.
   bool get isEnabled => _enabled ?? Config.enableRemoteTablebase;
+
+  /// Whether local tablebase probing is enabled.
+  bool get isLocalEnabled =>
+      _localEnabled ?? (_isCustomClient ? false : Config.enableLocalTablebase);
 
   /// Default singleton instance.
   static final TablebaseService instance = TablebaseService();
@@ -69,11 +82,40 @@ class TablebaseService {
     }
   }
 
-  /// Probes the Lichess Tablebase API for [fen] in [variant].
+  /// Probes the local tablebase sidecar server for [fen] in [variant].
   ///
-  /// Returns a list of [EngineEvaluation] for candidate moves (MultiPV 1..N),
-  /// or `null` if unsupported, unknown, or if network probe fails.
-  Future<List<EngineEvaluation>?> probe(
+  /// Strictly queries the local sidecar without touching external networks.
+  Future<List<EngineEvaluation>?> probeLocal(
+    DatasetVariant variant,
+    String fen, {
+    Duration timeout = const Duration(milliseconds: 500),
+  }) async {
+    if (!isLocalEnabled || !isSupported(variant, fen)) return null;
+
+    final endpoint = endpointForVariant(variant);
+    if (endpoint == null) return null;
+
+    try {
+      final localUri =
+          Uri.parse('$localUrl/$endpoint?fen=${Uri.encodeComponent(fen)}');
+      final response = await _client.get(localUri).timeout(timeout);
+      if (response.statusCode != 200) return null;
+
+      final evals = parseTablebaseResponse(variant, fen, response.body);
+      if (evals != null && evals.isNotEmpty) {
+        return evals;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Probes the remote Lichess Tablebase API for [fen] in [variant].
+  ///
+  /// Queries tablebase.lichess.ovh. Avoid calling in tight exploration loops
+  /// to prevent HTTP 429 rate limiting.
+  Future<List<EngineEvaluation>?> probeRemote(
     DatasetVariant variant,
     String fen, {
     Duration timeout = const Duration(seconds: 3),
@@ -92,9 +134,34 @@ class TablebaseService {
 
       return parseTablebaseResponse(variant, fen, response.body);
     } catch (_) {
-      // Gracefully fall back to local engine on error or timeout
       return null;
     }
+  }
+
+  /// Probes tablebase for [fen] in [variant].
+  ///
+  /// When [isLocalEnabled] is true, queries ONLY the local tablebase sidecar.
+  /// Never falls back to remote Lichess to prevent API throttling and rate-limiting.
+  ///
+  /// Remote Lichess is only queried if [isLocalEnabled] is false and [isEnabled] is true.
+  Future<List<EngineEvaluation>?> probe(
+    DatasetVariant variant,
+    String fen, {
+    Duration timeout = const Duration(seconds: 3),
+    Duration localTimeout = const Duration(milliseconds: 500),
+  }) async {
+    if (!isSupported(variant, fen)) return null;
+
+    // When local tablebase is enabled, stay 100% offline to prevent Lichess throttling
+    if (isLocalEnabled) {
+      return probeLocal(variant, fen, timeout: localTimeout);
+    }
+
+    if (isEnabled) {
+      return probeRemote(variant, fen, timeout: timeout);
+    }
+
+    return null;
   }
 
   /// Parses tablebase JSON body into a list of [EngineEvaluation] objects.
@@ -148,7 +215,7 @@ class TablebaseService {
           }
         }
 
-        if (dtwPlies == null && !isCheckmate && !isVariantWin && !isVariantLoss) {
+        if (dtwPlies == null && !isCheckmate && !isVariantWin && !isVariantLoss && centipawns == null) {
           return null;
         }
 
@@ -234,10 +301,7 @@ class TablebaseService {
         ));
       }
 
-      // If the tablebase does not have DTW for this position or its candidate moves,
-      // return null so that the local engine evaluates instead.
-      final hasDtw = posDtw != null || evals.any((e) => e.dtw != null);
-      if (!hasDtw) {
+      if (evals.isEmpty) {
         return null;
       }
 

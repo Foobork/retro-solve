@@ -2,6 +2,11 @@
 *.db
 *.db-shm
 *.db-wal
+*.atbw
+*.atbz
+*.rtbw
+*.rtbz
+data/tablebases/
 
 # 3rd party
 *.exe

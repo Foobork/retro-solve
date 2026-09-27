@@ -57,7 +57,7 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, export_, analyzeGame, toggleBacksolve, toggleTablebase }
+enum _MoreAction { solve, export_, analyzeGame, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
 
 class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
@@ -65,6 +65,7 @@ class HomePageState extends State<HomePage> {
   List<EngineEvaluation>? _pendingEvals;
   bool _interactiveBacksolving = true;
   bool _enableTablebase = Config.enableRemoteTablebase;
+  bool _autosolveAfterExplore = true;
 
   @visibleForTesting
   bool get interactiveBacksolving => _interactiveBacksolving;
@@ -72,6 +73,13 @@ class HomePageState extends State<HomePage> {
   @visibleForTesting
   void setInteractiveBacksolvingForTesting(bool value) =>
       _toggleInteractiveBacksolving(value);
+
+  @visibleForTesting
+  bool get autosolveAfterExplore => _autosolveAfterExplore;
+
+  @visibleForTesting
+  void setAutosolveAfterExploreForTesting(bool value) =>
+      _toggleAutosolveAfterExplore(value);
 
   @visibleForTesting
   Future<void> solveForTesting() => _solve();
@@ -91,6 +99,14 @@ class HomePageState extends State<HomePage> {
     });
     InteractiveBacksolvingStore.save(value);
   }
+
+  void _toggleAutosolveAfterExplore(bool value) {
+    setState(() {
+      _autosolveAfterExplore = value;
+    });
+    AutosolveAfterExploreStore.save(value);
+  }
+
 
 
   @override
@@ -206,6 +222,11 @@ class HomePageState extends State<HomePage> {
           value: _MoreAction.toggleTablebase,
           checked: _enableTablebase,
           child: const Text('Online Tablebase (DTW)'),
+        ),
+        CheckedPopupMenuItem<_MoreAction>(
+          value: _MoreAction.toggleAutosolveAfterExplore,
+          checked: _autosolveAfterExplore,
+          child: const Text('Auto-solve after explore'),
         ),
       ],
     );
@@ -671,6 +692,9 @@ class HomePageState extends State<HomePage> {
         });
       }
     });
+    AutosolveAfterExploreStore.load().then((val) {
+      if (mounted) setState(() => _autosolveAfterExplore = val);
+    });
     _evalSub = widget.engineService.evaluationStream.listen((evals) {
       if (!mounted || _isBatchEvaluating) return;
       _pendingEvals = evals;
@@ -1103,6 +1127,9 @@ class HomePageState extends State<HomePage> {
           TablebaseStore.save(_enableTablebase);
         });
         break;
+      case _MoreAction.toggleAutosolveAfterExplore:
+        _toggleAutosolveAfterExplore(!_autosolveAfterExplore);
+        break;
     }
   }
 
@@ -1130,7 +1157,9 @@ class HomePageState extends State<HomePage> {
         });
       }
       print('[explore] Exploration ended/stopped.');
-      await _solve();
+      if (_autosolveAfterExplore) {
+        await _solve();
+      }
     }
   }
 
@@ -1536,7 +1565,9 @@ class HomePageState extends State<HomePage> {
         });
       }
       print('[analyze] Game/study analysis ended/stopped.');
-      await _solve();
+      if (_autosolveAfterExplore) {
+        await _solve();
+      }
     }
   }
 

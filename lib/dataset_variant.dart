@@ -132,3 +132,24 @@ class TablebaseStore {
     } catch (_) {}
   }
 }
+
+class AutosolveAfterExploreStore {
+  static const _key = 'autosolve_after_explore';
+
+  static Future<bool> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool(_key) ?? true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<void> save(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_key, enabled);
+    } catch (_) {}
+  }
+}
+

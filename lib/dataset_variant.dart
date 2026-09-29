@@ -2,9 +2,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum DatasetVariant {
   standard,
+  crazyhouse,
   koth,
   threeCheck,
-  crazyhouse,
   antichess,
   atomic,
   horde,
@@ -16,12 +16,12 @@ extension DatasetVariantX on DatasetVariant {
     switch (this) {
       case DatasetVariant.standard:
         return 'Standard';
+      case DatasetVariant.crazyhouse:
+        return 'Crazyhouse';
       case DatasetVariant.koth:
         return 'KOTH';
       case DatasetVariant.threeCheck:
         return 'Three-Check';
-      case DatasetVariant.crazyhouse:
-        return 'Crazyhouse';
       case DatasetVariant.antichess:
         return 'Antichess';
       case DatasetVariant.atomic:
@@ -37,12 +37,12 @@ extension DatasetVariantX on DatasetVariant {
     switch (this) {
       case DatasetVariant.standard:
         return 'data/Standard.txt';
+      case DatasetVariant.crazyhouse:
+        return 'data/Crazyhouse.txt';
       case DatasetVariant.koth:
         return 'data/KOTH.txt';
       case DatasetVariant.threeCheck:
         return 'data/ThreeCheck.txt';
-      case DatasetVariant.crazyhouse:
-        return 'data/Crazyhouse.txt';
       case DatasetVariant.antichess:
         return 'data/Antichess.txt';
       case DatasetVariant.atomic:

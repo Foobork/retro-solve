@@ -2148,7 +2148,6 @@ class HomePageState extends State<HomePage> {
       case DatasetVariant.racingKings:
         return RacingKingsChess();
       case DatasetVariant.standard:
-      default:
         return Chess();
     }
   }

@@ -133,4 +133,72 @@ void main() {
     expect(parentRow!['computed_result'], equals(GameResult.blackWins.value));
     expect(parentRow['computed_dtw'], isNull);
   });
+
+  test('CsrGraphSolver propagates assigned_cp 0 (0.00 / draw) and does not treat 0 as null', () async {
+    final dbService = DatabaseService.instance;
+
+    // Black to move has two choices:
+    // Move A: cp = 0 (0.00 / draw)
+    // Move B: cp = 76 (+0.76 for White, bad for Black)
+    const parentBfen = '8/7Q/q1k2K2/8/8/8/1rNnNBR1/1rbn1BR1 b - -'; // Kf6 position
+    const move0Bfen = 'child_move_0 w - -';
+    const move76Bfen = 'child_move_76 w - -';
+
+    dbService.upsertNode(parentBfen, null, null);
+    dbService.upsertNode(move0Bfen, const PositionEval(cp: 0), null);
+    dbService.upsertNode(move76Bfen, const PositionEval(cp: 76), null);
+
+    dbService.upsertEdge(parentBfen, move0Bfen);
+    dbService.upsertEdge(parentBfen, move76Bfen);
+    await dbService.flush();
+
+    await dbService.solveGlobalCsr();
+
+    final parentRow = await dbService.getNode(parentBfen);
+    expect(parentRow, isNotNull);
+    // Black should prefer cp = 0 over cp = +76
+    expect(parentRow!['computed_cp'], equals(0));
+    expect(parentRow['computed_result'], isNull);
+
+    final move0Row = await dbService.getNode(move0Bfen);
+    // Position with assigned_cp = 0 should have computed_cp = 0 persisted
+    expect(move0Row!['computed_cp'], equals(0));
+  });
+
+  test('CsrGraphSolver root with White to move chooses between moves leading to 0 correctly', () async {
+    final dbService = DatabaseService.instance;
+
+    const rootBfen = '8/7Q/q1k5/4K3/8/8/1rNnNBR1/1rbn1BR1 w - -';
+    const kf6Bfen = '8/7Q/q1k2K2/8/8/8/1rNnNBR1/1rbn1BR1 b - -';
+    const rg8Bfen = '8/7Q/q1k5/4K3/8/8/1rNnNBR1/1rbn1BRR b - -';
+
+    const kf6Child0 = 'kf6_child_0 w - -';
+    const kf6Child76 = 'kf6_child_76 w - -';
+    const rg8Child0 = 'rg8_child_0 w - -';
+
+    dbService.upsertNode(rootBfen, null, null);
+    dbService.upsertNode(kf6Bfen, null, null);
+    dbService.upsertNode(rg8Bfen, null, null);
+
+    dbService.upsertNode(kf6Child0, const PositionEval(cp: 0), null);
+    dbService.upsertNode(kf6Child76, const PositionEval(cp: 76), null);
+    dbService.upsertNode(rg8Child0, const PositionEval(cp: 0), null);
+
+    dbService.upsertEdge(rootBfen, kf6Bfen);
+    dbService.upsertEdge(rootBfen, rg8Bfen);
+
+    dbService.upsertEdge(kf6Bfen, kf6Child0);
+    dbService.upsertEdge(kf6Bfen, kf6Child76);
+
+    dbService.upsertEdge(rg8Bfen, rg8Child0);
+    await dbService.flush();
+
+    await dbService.solveGlobalCsr();
+
+    final kf6Row = await dbService.getNode(kf6Bfen);
+    expect(kf6Row!['computed_cp'], equals(0));
+
+    final rootRow = await dbService.getNode(rootBfen);
+    expect(rootRow!['computed_cp'], equals(0));
+  });
 }

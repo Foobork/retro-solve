@@ -32,6 +32,9 @@ class CsrSolveResult {
 /// Uses Compressed Sparse Row (CSR) flat Int32List arrays to solve arbitrary
 /// directed graphs with millions of positions in minimal constant memory (< 1 GB RAM for 133M edges).
 class CsrGraphSolver {
+  /// Sentinel for null/unassigned centipawns in flat Int16List arrays.
+  static const int kNullCp = -32768;
+
   static int _encodeGameResult(int? val) {
     if (val == null) return 0;
     if (val == 1) return 1; // whiteWins
@@ -121,6 +124,10 @@ class CsrGraphSolver {
     assignedDtw.fillRange(0, maxId + 1, -1);
     computedDtw.fillRange(0, maxId + 1, -1);
     origComputedDtw.fillRange(0, maxId + 1, -1);
+
+    assignedCp.fillRange(0, maxId + 1, kNullCp);
+    computedCp.fillRange(0, maxId + 1, kNullCp);
+    origComputedCp.fillRange(0, maxId + 1, kNullCp);
 
     final isWhiteToMove = Uint8List(maxId + 1);
 
@@ -354,7 +361,7 @@ class CsrGraphSolver {
         final id = dirtyIds[j];
         final cRes = _decodeGameResult(computedRes[id]);
         final cDtw = computedDtw[id] >= 0 ? computedDtw[id] : null;
-        final cCp = (computedRes[id] != 2 && computedCp[id] != 0) ? computedCp[id] : null;
+        final cCp = (computedRes[id] != 2 && computedCp[id] != kNullCp) ? computedCp[id] : null;
 
         batch.rawUpdate('''
           UPDATE positions
@@ -396,14 +403,14 @@ class CsrGraphSolver {
   ) {
     for (int i = 0; i < sccLen; i++) {
       final node = scc[i];
-      if (assignedRes[node] != 0 || assignedCp[node] != 0) {
+      if (assignedRes[node] != 0 || assignedCp[node] != kNullCp) {
         computedRes[node] = assignedRes[node];
         computedDtw[node] = assignedDtw[node];
         computedCp[node] = assignedCp[node];
       } else {
         computedRes[node] = 0;
         computedDtw[node] = -1;
-        computedCp[node] = 0;
+        computedCp[node] = kNullCp;
       }
     }
 
@@ -422,7 +429,7 @@ class CsrGraphSolver {
 
         int bestRes = 0;
         int bestDtw = -1;
-        int bestCp = 0;
+        int bestCp = kNullCp;
         bool hasBest = false;
 
         final edgeStart = rowPtrs[node];
@@ -431,9 +438,9 @@ class CsrGraphSolver {
         for (int e = edgeStart; e < edgeEnd; e++) {
           final child = colIndices[e];
           final childRes = computedRes[child] != 0 ? computedRes[child] : assignedRes[child];
-          final childCp = computedCp[child] != 0 ? computedCp[child] : assignedCp[child];
+          final childCp = computedCp[child] != kNullCp ? computedCp[child] : assignedCp[child];
 
-          if (childRes == 0 && childCp == 0) continue;
+          if (childRes == 0 && childCp == kNullCp) continue;
 
           final rawChildDtw = (computedRes[child] != 0 && (computedRes[child] == 1 || computedRes[child] == 3))
               ? computedDtw[child]
@@ -441,7 +448,7 @@ class CsrGraphSolver {
 
           int candRes = childRes;
           int candDtw = (rawChildDtw >= 0) ? (rawChildDtw + 1) : -1;
-          int candCp = candRes == 2 ? 0 : childCp;
+          int candCp = candRes == 2 ? kNullCp : childCp;
 
           if (!hasBest) {
             bestRes = candRes;
@@ -462,7 +469,7 @@ class CsrGraphSolver {
           }
         }
 
-        if (!hasBest && (assignedRes[node] != 0 || assignedCp[node] != 0)) {
+        if (!hasBest && (assignedRes[node] != 0 || assignedCp[node] != kNullCp)) {
           bestRes = assignedRes[node];
           bestDtw = assignedDtw[node];
           bestCp = assignedCp[node];
@@ -470,7 +477,7 @@ class CsrGraphSolver {
         }
 
         if (bestRes == 2) {
-          bestCp = 0;
+          bestCp = kNullCp;
         }
 
         if (hasBest) {
@@ -517,7 +524,7 @@ class CsrGraphSolver {
         return 1;
       }
 
-      if (aCp != 0 && bCp != 0) {
+      if (aCp != kNullCp && bCp != kNullCp) {
         return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
       }
       return 0;
@@ -539,7 +546,7 @@ class CsrGraphSolver {
         return -1;
       }
 
-      if (aCp != 0 && bCp != 0) {
+      if (aCp != kNullCp && bCp != kNullCp) {
         return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
       }
       return 0;
@@ -570,6 +577,7 @@ class CsrGraphSolver {
       // draw
       return 0.0;
     }
+    if (cp == kNullCp) return 0.0;
     return cp.toDouble() / 100.0;
   }
 }

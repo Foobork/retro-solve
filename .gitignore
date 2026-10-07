@@ -60,3 +60,4 @@ app.*.map.json
 /linux/
 /macos/
 /windows/
+go

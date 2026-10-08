@@ -699,23 +699,39 @@ class AtomicProofSearcher:
         self.path_stack_set.add(bfen)
 
         is_root = (len(self.path_stack) == 1)
+        root_stalled: Set[str] = set()
+        root_boost = 0
 
         # Interior loop: recurse into Most Proving Child
         while entry.pn < th_pn and entry.dn < th_dn and entry.proof_status == 0 and not self.interrupted:
             if entry.is_white:
                 # OR Node (White): pick child with minimum pn
+                eligible = entry.children
+                if is_root:
+                    candidates = [(m_u, c_b) for (m_u, c_b) in entry.children if c_b not in root_stalled]
+                    if not candidates:
+                        root_stalled.clear()
+                        root_boost += 1
+                        candidates = entry.children
+                    eligible = candidates
+
                 best_c = None
                 best_pn = INF
                 second_pn = INF
 
-                for m_uci, c_bfen in entry.children:
+                for m_uci, c_bfen in eligible:
                     c = self.tt[c_bfen]
                     c_pn = INF if (c_bfen in self.path_stack_set) else c.pn
                     if c_pn < best_pn:
-                        second_pn = best_pn
                         best_pn = c_pn
                         best_c = (m_uci, c_bfen)
-                    elif c_pn < second_pn:
+
+                for m_uci, c_bfen in entry.children:
+                    if best_c and c_bfen == best_c[1]:
+                        continue
+                    c = self.tt[c_bfen]
+                    c_pn = INF if (c_bfen in self.path_stack_set) else c.pn
+                    if c_pn < second_pn:
                         second_pn = c_pn
 
                 if not best_c or best_pn >= INF:
@@ -726,12 +742,15 @@ class AtomicProofSearcher:
                 c_entry = self.tt[c_bfen]
 
                 # 1@df-pn: cap threshold increment if child is cyclic
-                child_th_pn = min(th_pn, second_pn + 1)
+                child_th_pn = min(th_pn, second_pn + 1 + (root_boost if is_root else 0))
                 c_dn_val = 0 if (c_bfen in self.path_stack_set) else c_entry.dn
                 child_th_dn = th_dn - (entry.dn - c_dn_val)
 
                 # Non-advancing threshold guard:
                 if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
+                    if is_root:
+                        root_stalled.add(c_bfen)
+                        continue
                     break
 
                 m = chess.Move.from_uci(m_uci)
@@ -742,22 +761,43 @@ class AtomicProofSearcher:
 
                 self.update_node(entry)
                 if c_entry.pn == old_pn and c_entry.dn == old_dn:
+                    if is_root:
+                        root_stalled.add(c_bfen)
+                        continue
                     break
+                else:
+                    if is_root:
+                        root_stalled.clear()
+                        root_boost = 0
 
             else:
                 # AND Node (Black): pick child with minimum dn
+                eligible = entry.children
+                if is_root:
+                    candidates = [(m_u, c_b) for (m_u, c_b) in entry.children if c_b not in root_stalled]
+                    if not candidates:
+                        root_stalled.clear()
+                        root_boost += 1
+                        candidates = entry.children
+                    eligible = candidates
+
                 best_c = None
                 best_dn = INF
                 second_dn = INF
 
-                for m_uci, c_bfen in entry.children:
+                for m_uci, c_bfen in eligible:
                     c = self.tt[c_bfen]
                     c_dn = 0 if (c_bfen in self.path_stack_set) else c.dn
                     if c_dn < best_dn:
-                        second_dn = best_dn
                         best_dn = c_dn
                         best_c = (m_uci, c_bfen)
-                    elif c_dn < second_dn:
+
+                for m_uci, c_bfen in entry.children:
+                    if best_c and c_bfen == best_c[1]:
+                        continue
+                    c = self.tt[c_bfen]
+                    c_dn = 0 if (c_bfen in self.path_stack_set) else c.dn
+                    if c_dn < second_dn:
                         second_dn = c_dn
 
                 if not best_c or best_dn <= 0 or best_dn >= INF:
@@ -769,10 +809,13 @@ class AtomicProofSearcher:
 
                 c_pn_val = INF if (c_bfen in self.path_stack_set) else c_entry.pn
                 child_th_pn = th_pn - (entry.pn - c_pn_val)
-                child_th_dn = min(th_dn, second_dn + 1)
+                child_th_dn = min(th_dn, second_dn + 1 + (root_boost if is_root else 0))
 
                 # Non-advancing threshold guard:
                 if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
+                    if is_root:
+                        root_stalled.add(c_bfen)
+                        continue
                     break
 
                 m = chess.Move.from_uci(m_uci)
@@ -783,7 +826,14 @@ class AtomicProofSearcher:
 
                 self.update_node(entry)
                 if c_entry.pn == old_pn and c_entry.dn == old_dn:
+                    if is_root:
+                        root_stalled.add(c_bfen)
+                        continue
                     break
+                else:
+                    if is_root:
+                        root_stalled.clear()
+                        root_boost = 0
 
         self.path_stack.pop()
         self.path_stack_set.remove(bfen)

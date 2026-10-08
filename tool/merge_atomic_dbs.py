@@ -64,12 +64,12 @@ def merge_databases(source_path: str, target_path: str):
             pn = CASE 
                 WHEN excluded.proof_status != 0 THEN excluded.pn
                 WHEN positions.proof_status != 0 THEN positions.pn
-                ELSE MIN(COALESCE(positions.pn, 999999999), COALESCE(excluded.pn, 999999999))
+                ELSE COALESCE(excluded.pn, positions.pn)
             END,
             dn = CASE 
                 WHEN excluded.proof_status != 0 THEN excluded.dn
                 WHEN positions.proof_status != 0 THEN positions.dn
-                ELSE MAX(COALESCE(positions.dn, 1), COALESCE(excluded.dn, 1))
+                ELSE COALESCE(excluded.dn, positions.dn)
             END,
             proven_move_id = COALESCE(excluded.proven_move_id, positions.proven_move_id);
     """)

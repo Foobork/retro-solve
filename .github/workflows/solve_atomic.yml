@@ -75,6 +75,19 @@ jobs:
             atomic-db-${{ github.event.inputs.target_line }}-
             atomic-db-
 
+      - name: Download Seed Database (if cache miss)
+        if: steps.db-checkpoint-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          mkdir -p data
+          gh release download atomic-db-seed --repo ${{ github.repository }} --pattern "Atomic.db.gz" --dir data || true
+          if [ -f data/Atomic.db.gz ]; then
+            echo "Decompressing seed database..."
+            gzip -d data/Atomic.db.gz
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Run Proof-Number Search
         run: |
           python tool/solve_atomic_subtree.py \

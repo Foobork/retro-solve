@@ -2,12 +2,14 @@
 *.db
 *.db-shm
 *.db-wal
+*.db.gz
 *.atbw
 *.atbz
 *.rtbw
 *.rtbz
 data/tablebases/
 data/*.json
+*.proof
 
 # 3rd party
 *.exe

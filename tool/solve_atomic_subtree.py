@@ -150,8 +150,10 @@ class AtomicProofSearcher:
         self.engine_queries = 0
         self.start_time = 0.0
         self.last_heartbeat = 0.0
+        self.last_db_flush = 0.0
         self.interrupted = False
         self.path_stack: List[str] = []
+        self.path_stack_set: Set[str] = set()
 
         # Setup graceful signal handlers
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -288,6 +290,7 @@ class AtomicProofSearcher:
         if not self.db_path:
             return
 
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         self.ensure_db_schema(conn)
         cur = conn.cursor()
@@ -416,11 +419,11 @@ class AtomicProofSearcher:
         if len(moves) <= 1:
             return moves
 
-        # Engine move ranking if available
-        if self.engine and self.engine_depth > 0:
+        # Engine move ranking only at shallow root plies to maximize throughput
+        if self.engine and self.engine_depth > 0 and len(self.path_stack) <= 4:
             try:
                 self.engine_queries += 1
-                limit = chess.engine.Limit(depth=self.engine_depth)
+                limit = chess.engine.Limit(depth=self.engine_depth, time=0.05)
                 analysis = self.engine.analyse(board, limit, multipv=min(len(moves), 5))
                 ranked_mv = []
                 for entry in analysis:
@@ -526,23 +529,33 @@ class AtomicProofSearcher:
             best_dtw = None
 
             for m_uci, c_bfen in entry.children:
-                c_entry = self.tt[c_bfen]
-                if c_entry.pn < min_pn:
-                    min_pn = c_entry.pn
+                if c_bfen in self.path_stack_set:
+                    c_pn, c_dn = INF, 0
+                else:
+                    c_entry = self.tt[c_bfen]
+                    c_pn, c_dn = c_entry.pn, c_entry.dn
+
+                if c_pn < min_pn:
+                    min_pn = c_pn
                     best_move = m_uci
-                    if c_entry.dtw is not None:
+                    if c_bfen not in self.path_stack_set and c_entry.dtw is not None:
                         best_dtw = c_entry.dtw + 1
 
-                sum_dn = min(INF, sum_dn + c_entry.dn)
+                sum_dn = min(INF, sum_dn + c_dn)
 
-            entry.pn = min_pn
-            entry.dn = sum_dn
             if min_pn == 0:
                 entry.proof_status = 1
+                entry.pn = 0
+                entry.dn = INF
                 entry.proven_move = best_move
                 entry.dtw = best_dtw
-            elif sum_dn == 0:
+            elif sum_dn == 0 or min_pn >= INF:
                 entry.proof_status = -1
+                entry.pn = INF
+                entry.dn = 0
+            else:
+                entry.pn = min_pn
+                entry.dn = sum_dn
         else:
             # AND Node (Black to move)
             sum_pn = 0
@@ -551,23 +564,33 @@ class AtomicProofSearcher:
             all_won = True
 
             for m_uci, c_bfen in entry.children:
-                c_entry = self.tt[c_bfen]
-                sum_pn = min(INF, sum_pn + c_entry.pn)
-                if c_entry.dn < min_dn:
-                    min_dn = c_entry.dn
+                if c_bfen in self.path_stack_set:
+                    c_pn, c_dn = INF, 0
+                else:
+                    c_entry = self.tt[c_bfen]
+                    c_pn, c_dn = c_entry.pn, c_entry.dn
 
-                if c_entry.proof_status != 1 or c_entry.dtw is None:
+                sum_pn = min(INF, sum_pn + c_pn)
+                if c_dn < min_dn:
+                    min_dn = c_dn
+
+                if (c_bfen in self.path_stack_set) or c_entry.proof_status != 1 or c_entry.dtw is None:
                     all_won = False
                 elif c_entry.dtw is not None:
                     max_dtw = max(max_dtw, c_entry.dtw + 1)
 
-            entry.pn = sum_pn
-            entry.dn = min_dn
             if sum_pn == 0:
                 entry.proof_status = 1
+                entry.pn = 0
+                entry.dn = INF
                 entry.dtw = max_dtw if all_won else None
-            elif min_dn == 0:
+            elif min_dn == 0 or sum_pn >= INF:
                 entry.proof_status = -1
+                entry.pn = INF
+                entry.dn = 0
+            else:
+                entry.pn = sum_pn
+                entry.dn = min_dn
 
     # -------------------------------------------------------------------------
     # 1@df-pn Recursive Search
@@ -602,8 +625,12 @@ class AtomicProofSearcher:
         bfen = to_bfen(board)
         entry = self.tt.setdefault(bfen, TTEntry(bfen, board.turn == chess.WHITE))
 
+        # Check if already solved
+        if entry.proof_status != 0:
+            return (entry.pn, entry.dn)
+
         # Repetition cycle detection on current search path
-        if bfen in self.path_stack:
+        if bfen in self.path_stack_set:
             # Loop detected: Threefold repetition draw -> disproven for White win
             return (INF, 0)
 
@@ -619,9 +646,10 @@ class AtomicProofSearcher:
                 return (entry.pn, entry.dn)
 
         self.path_stack.append(bfen)
+        self.path_stack_set.add(bfen)
 
         # Interior loop: recurse into Most Proving Child
-        while entry.pn < th_pn and entry.dn < th_dn and not self.interrupted:
+        while entry.pn < th_pn and entry.dn < th_dn and entry.proof_status == 0 and not self.interrupted:
             if entry.is_white:
                 # OR Node (White): pick child with minimum pn
                 best_c = None
@@ -630,25 +658,38 @@ class AtomicProofSearcher:
 
                 for m_uci, c_bfen in entry.children:
                     c = self.tt[c_bfen]
-                    if c.pn < best_pn:
+                    c_pn = INF if (c_bfen in self.path_stack_set) else c.pn
+                    if c_pn < best_pn:
                         second_pn = best_pn
-                        best_pn = c.pn
+                        best_pn = c_pn
                         best_c = (m_uci, c_bfen)
-                    elif c.pn < second_pn:
-                        second_pn = c.pn
+                    elif c_pn < second_pn:
+                        second_pn = c_pn
 
                 if not best_c or best_pn >= INF:
+                    self.update_node(entry)
                     break
 
                 m_uci, c_bfen = best_c
+                c_entry = self.tt[c_bfen]
+
                 # 1@df-pn: cap threshold increment if child is cyclic
                 child_th_pn = min(th_pn, second_pn + 1)
-                child_th_dn = th_dn - (entry.dn - self.tt[c_bfen].dn)
+                child_th_dn = th_dn - (entry.dn - c_entry.dn)
+
+                # Non-advancing threshold guard:
+                if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
+                    break
 
                 m = chess.Move.from_uci(m_uci)
                 board.push(m)
+                old_pn, old_dn = c_entry.pn, c_entry.dn
                 self.df_pn(board, child_th_pn, child_th_dn)
                 board.pop()
+
+                self.update_node(entry)
+                if c_entry.pn == old_pn and c_entry.dn == old_dn:
+                    break
 
             else:
                 # AND Node (Black): pick child with minimum dn
@@ -658,28 +699,40 @@ class AtomicProofSearcher:
 
                 for m_uci, c_bfen in entry.children:
                     c = self.tt[c_bfen]
-                    if c.dn < best_dn:
+                    c_dn = 0 if (c_bfen in self.path_stack_set) else c.dn
+                    if c_dn < best_dn:
                         second_dn = best_dn
-                        best_dn = c.dn
+                        best_dn = c_dn
                         best_c = (m_uci, c_bfen)
-                    elif c.dn < second_dn:
-                        second_dn = c.dn
+                    elif c_dn < second_dn:
+                        second_dn = c_dn
 
-                if not best_c or best_dn >= INF:
+                if not best_c or best_dn <= 0 or best_dn >= INF:
+                    self.update_node(entry)
                     break
 
                 m_uci, c_bfen = best_c
-                child_th_pn = th_pn - (entry.pn - self.tt[c_bfen].pn)
+                c_entry = self.tt[c_bfen]
+
+                child_th_pn = th_pn - (entry.pn - c_entry.pn)
                 child_th_dn = min(th_dn, second_dn + 1)
+
+                # Non-advancing threshold guard:
+                if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
+                    break
 
                 m = chess.Move.from_uci(m_uci)
                 board.push(m)
+                old_pn, old_dn = c_entry.pn, c_entry.dn
                 self.df_pn(board, child_th_pn, child_th_dn)
                 board.pop()
 
-            self.update_node(entry)
+                self.update_node(entry)
+                if c_entry.pn == old_pn and c_entry.dn == old_dn:
+                    break
 
         self.path_stack.pop()
+        self.path_stack_set.remove(bfen)
         return (entry.pn, entry.dn)
 
     # -------------------------------------------------------------------------
@@ -687,7 +740,8 @@ class AtomicProofSearcher:
     # -------------------------------------------------------------------------
 
     def _log_telemetry(self):
-        elapsed = max(0.001, time.time() - self.start_time)
+        now = time.time()
+        elapsed = max(0.001, now - self.start_time)
         nps = int(self.nodes_expanded / elapsed)
         solved_count = sum(1 for e in self.tt.values() if e.proof_status == 1)
         depth = len(self.path_stack)
@@ -700,6 +754,10 @@ class AtomicProofSearcher:
 
         if self.status_file:
             self.write_status_checkpoint()
+
+        if self.db_path and (now - self.last_db_flush >= 60.0):
+            self.flush_to_db()
+            self.last_db_flush = time.time()
 
     def write_status_checkpoint(self, root_bfen: Optional[str] = None):
         """Writes current solve progress to JSON status file."""
@@ -749,7 +807,17 @@ class AtomicProofSearcher:
 
         self.start_time = time.time()
         self.last_heartbeat = self.start_time
+        self.last_db_flush = self.start_time
         self.nodes_expanded = 0
+        self.path_stack = []
+        self.path_stack_set = set()
+
+        # Ensure database directory and schema exist upfront
+        if self.db_path:
+            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+            conn = sqlite3.connect(self.db_path)
+            self.ensure_db_schema(conn)
+            conn.close()
 
         # Load existing progress if available
         self.load_from_db(root_bfen)

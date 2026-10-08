@@ -241,15 +241,17 @@ class AtomicProofSearcher:
         nodes_loaded = 0
 
         while frontier:
-            placeholders = ','.join('?' for _ in frontier)
-            cur.execute(f"SELECT source_id, target_id FROM edges WHERE source_id IN ({placeholders})", frontier)
-            edge_rows = cur.fetchall()
-
             next_frontier = []
-            for s_id, t_id in edge_rows:
-                if t_id not in visited_ids:
-                    visited_ids.add(t_id)
-                    next_frontier.append(t_id)
+            for i in range(0, len(frontier), 500):
+                chunk = frontier[i:i+500]
+                placeholders = ','.join('?' for _ in chunk)
+                cur.execute(f"SELECT source_id, target_id FROM edges WHERE source_id IN ({placeholders})", chunk)
+                edge_rows = cur.fetchall()
+
+                for s_id, t_id in edge_rows:
+                    if t_id not in visited_ids:
+                        visited_ids.add(t_id)
+                        next_frontier.append(t_id)
 
             frontier = next_frontier
 
@@ -266,18 +268,18 @@ class AtomicProofSearcher:
                 pid, bfen, p_status, pn, dn, c_res, c_dtw = row
                 is_white = (' w ' in bfen)
                 entry = TTEntry(bfen, is_white)
-                if c_res == 1:
+                if p_status == 1:
                     entry.pn = 0
                     entry.dn = INF
                     entry.proof_status = 1
-                elif c_res in (-1, 0):
+                elif p_status in (-1, 2):
                     entry.pn = INF
                     entry.dn = 0
-                    entry.proof_status = -1 if c_res == -1 else 2
+                    entry.proof_status = p_status
                 else:
                     entry.pn = pn if pn is not None else 1
                     entry.dn = dn if dn is not None else 1
-                    entry.proof_status = p_status or 0
+                    entry.proof_status = 0
                 entry.dtw = c_dtw
                 self.tt[bfen] = entry
                 nodes_loaded += 1
@@ -648,6 +650,8 @@ class AtomicProofSearcher:
         self.path_stack.append(bfen)
         self.path_stack_set.add(bfen)
 
+        is_root = (len(self.path_stack) == 1)
+
         # Interior loop: recurse into Most Proving Child
         while entry.pn < th_pn and entry.dn < th_dn and entry.proof_status == 0 and not self.interrupted:
             if entry.is_white:
@@ -675,10 +679,11 @@ class AtomicProofSearcher:
 
                 # 1@df-pn: cap threshold increment if child is cyclic
                 child_th_pn = min(th_pn, second_pn + 1)
-                child_th_dn = th_dn - (entry.dn - c_entry.dn)
+                c_dn_val = 0 if (c_bfen in self.path_stack_set) else c_entry.dn
+                child_th_dn = th_dn - (entry.dn - c_dn_val)
 
                 # Non-advancing threshold guard:
-                if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
+                if not is_root and (child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn):
                     break
 
                 m = chess.Move.from_uci(m_uci)
@@ -688,7 +693,7 @@ class AtomicProofSearcher:
                 board.pop()
 
                 self.update_node(entry)
-                if c_entry.pn == old_pn and c_entry.dn == old_dn:
+                if not is_root and (c_entry.pn == old_pn and c_entry.dn == old_dn):
                     break
 
             else:
@@ -714,11 +719,12 @@ class AtomicProofSearcher:
                 m_uci, c_bfen = best_c
                 c_entry = self.tt[c_bfen]
 
-                child_th_pn = th_pn - (entry.pn - c_entry.pn)
+                c_pn_val = INF if (c_bfen in self.path_stack_set) else c_entry.pn
+                child_th_pn = th_pn - (entry.pn - c_pn_val)
                 child_th_dn = min(th_dn, second_dn + 1)
 
                 # Non-advancing threshold guard:
-                if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
+                if not is_root and (child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn):
                     break
 
                 m = chess.Move.from_uci(m_uci)
@@ -728,7 +734,7 @@ class AtomicProofSearcher:
                 board.pop()
 
                 self.update_node(entry)
-                if c_entry.pn == old_pn and c_entry.dn == old_dn:
+                if not is_root and (c_entry.pn == old_pn and c_entry.dn == old_dn):
                     break
 
         self.path_stack.pop()

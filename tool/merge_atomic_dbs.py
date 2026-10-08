@@ -34,7 +34,8 @@ def merge_databases(source_path: str, target_path: str):
         if col not in target_cols:
             target_cur.execute(f"ALTER TABLE positions ADD COLUMN {col} {col_type};")
 
-    target_conn.commit()
+    target_cur.execute("PRAGMA user_version = 6;")
+    target_conn.commit();
 
     # Attach source database
     target_cur.execute(f"ATTACH DATABASE ? AS source;", (os.path.abspath(source_path),))

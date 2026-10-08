@@ -25,13 +25,20 @@ def to_bfen(board: chess.variant.AtomicBoard) -> str:
     return ' '.join(board.fen().split()[:4])
 
 def format_status(proof_status: Optional[int], comp_res: Optional[int], dtw: Optional[int]) -> str:
-    if proof_status == 1 or comp_res == 1:
+    if proof_status == 1:
         mate_str = f" (M{(dtw + 1) // 2})" if dtw is not None else ""
         return f"\033[92mPROVEN WIN{mate_str}\033[0m"
-    elif proof_status == -1 or comp_res == -1:
+    elif proof_status == -1:
         return "\033[91mPROVEN LOSS\033[0m"
-    elif proof_status == 2 or comp_res == 0:
+    elif proof_status == 2:
         return "\033[93mPROVEN DRAW\033[0m"
+    elif comp_res == 1:
+        mate_str = f" (M{(dtw + 1) // 2})" if dtw is not None else ""
+        return f"\033[36mPartial Win{mate_str}\033[0m"
+    elif comp_res == -1:
+        return "\033[35mPartial Loss\033[0m"
+    elif comp_res == 0:
+        return "\033[33mPartial Draw\033[0m"
     return "In Progress"
 
 def ensure_db_schema(conn: sqlite3.Connection):
@@ -93,17 +100,19 @@ def inspect_subtree(db_path: str, root_line: str, fen: Optional[str] = None, jso
     edges_count = 0
 
     while frontier:
-        placeholders = ','.join('?' for _ in frontier)
-        cur.execute(f"SELECT source_id, target_id FROM edges WHERE source_id IN ({placeholders})", frontier)
-        rows = cur.fetchall()
-        edges_count += len(rows)
-
         next_frontier = []
-        for s_id, t_id in rows:
-            if t_id not in visited:
-                visited.add(t_id)
-                parent_map[t_id] = s_id
-                next_frontier.append(t_id)
+        for i in range(0, len(frontier), 500):
+            chunk = frontier[i:i+500]
+            placeholders = ','.join('?' for _ in chunk)
+            cur.execute(f"SELECT source_id, target_id FROM edges WHERE source_id IN ({placeholders})", chunk)
+            rows = cur.fetchall()
+            edges_count += len(rows)
+
+            for s_id, t_id in rows:
+                if t_id not in visited:
+                    visited.add(t_id)
+                    parent_map[t_id] = s_id
+                    next_frontier.append(t_id)
 
         frontier = next_frontier
 

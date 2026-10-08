@@ -67,7 +67,7 @@ class Graph {
   void solve() {
     print("Preparing full graph solve (SCC)...");
     for (var vertex in v.values) {
-      vertex._originalComputed = vertex.computed;
+      vertex.originalComputed = vertex.computed;
       vertex.computed = null;
     }
 
@@ -100,7 +100,7 @@ class Graph {
       subGraphOutEdges[node] =
           vertex.links.where((l) => upstreamNodes.contains(l));
 
-      vertex._originalComputed = vertex.computed;
+      vertex.originalComputed = vertex.computed;
       if (vertex.assigned == null) {
         vertex.computed = null;
       }
@@ -187,7 +187,7 @@ class Graph {
 
     for (var bfen in scc) {
       final pos = v[bfen]!;
-      if (pos.computed != pos._originalComputed) {
+      if (pos.computed != pos.originalComputed) {
         onNodeUpdated?.call(bfen, pos.assigned, pos.computed);
       }
     }
@@ -211,7 +211,7 @@ class Vertex {
   late bool whiteToMove;
   PositionEval? assigned;
   PositionEval? computed;
-  PositionEval? _originalComputed;
+  PositionEval? originalComputed;
   bool inDatabase = false;
   bool queriedFromDb = false;
   Set<String> links = {};

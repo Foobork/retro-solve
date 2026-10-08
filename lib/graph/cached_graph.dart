@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import '../persistence/database_service.dart';
 import 'graph.dart';
 
@@ -172,5 +173,123 @@ class CachedGraph extends Graph {
 
     // 4. Solve the local subgraph in memory
     solveSubGraph(upstreamNodes);
+  }
+
+  @override
+  void solveSCC(List<String> scc) {
+    for (var bfen in scc) {
+      final pos = v[bfen]!;
+      if (pos.assigned != null) {
+        pos.computed = pos.assigned;
+      } else {
+        pos.computed = null;
+      }
+    }
+
+    bool changed = true;
+    int iterations = 0;
+    final int maxIterations = scc.length > 1 ? max(scc.length * 2, 20) : 5;
+    while (changed) {
+      changed = false;
+      iterations++;
+      if (iterations >= maxIterations) {
+        break;
+      }
+
+      for (var bfen in scc) {
+        final pos = v[bfen]!;
+        final isWhite = pos.whiteToMove;
+        final targetWin = isWhite ? GameResult.whiteWins : GameResult.blackWins;
+        final targetLoss = isWhite ? GameResult.blackWins : GameResult.whiteWins;
+
+        int winningCount = 0;
+        int minWinDtw = 999999;
+        PositionEval? bestWinCandidate;
+
+        int losingCount = 0;
+        int maxLoseDtw = -1;
+        PositionEval? bestLoseCandidate;
+
+        PositionEval? bestNonDecisiveCandidate;
+        bool hasDraw = false;
+
+        for (String link in pos.links) {
+          final child = v[link];
+          final childEval = child?.effectiveEval;
+          if (childEval == null) continue;
+
+          final candidate = adjustChildEval(pos, link, childEval);
+          if (candidate.result == targetWin) {
+            winningCount++;
+            final dtw = candidate.dtw;
+            if (dtw != null && dtw < minWinDtw) {
+              minWinDtw = dtw;
+              bestWinCandidate = candidate;
+            } else {
+              bestWinCandidate ??= candidate;
+            }
+          } else if (candidate.result == targetLoss) {
+            losingCount++;
+            final dtw = candidate.dtw;
+            if (dtw != null && dtw > maxLoseDtw) {
+              maxLoseDtw = dtw;
+              bestLoseCandidate = candidate;
+            } else {
+              bestLoseCandidate ??= candidate;
+            }
+          } else if (candidate.result == GameResult.draw) {
+            hasDraw = true;
+            if (bestNonDecisiveCandidate == null) {
+              bestNonDecisiveCandidate = candidate;
+            } else if (bestNonDecisiveCandidate.cp != null) {
+              if (isWhite ? 0 > bestNonDecisiveCandidate.cp! : 0 < bestNonDecisiveCandidate.cp!) {
+                bestNonDecisiveCandidate = candidate;
+              }
+            }
+          } else if (candidate.cp != null) {
+            if (bestNonDecisiveCandidate == null || bestNonDecisiveCandidate.cp == null) {
+              bestNonDecisiveCandidate = candidate;
+            } else {
+              if (isWhite ? candidate.cp! > bestNonDecisiveCandidate.cp! : candidate.cp! < bestNonDecisiveCandidate.cp!) {
+                bestNonDecisiveCandidate = candidate;
+              }
+            }
+          }
+        }
+
+        PositionEval? bestCandidate;
+        final numEdges = pos.links.length;
+
+        if (winningCount > 0) {
+          // 1. Any winning move -> Side to move WINS
+          bestCandidate = bestWinCandidate;
+        } else if (numEdges > 0 && losingCount == numEdges) {
+          // 2. ALL moves are proven losses -> Side to move is forced to LOSE
+          bestCandidate = bestLoseCandidate;
+        } else if (numEdges > 0 && losingCount + (hasDraw ? 1 : 0) == numEdges && hasDraw) {
+          // 3. All non-losing moves are draws -> Draw
+          bestCandidate = const PositionEval(result: GameResult.draw, cp: 0);
+        } else {
+          // 4. Undecided / unproven
+          if (bestNonDecisiveCandidate != null) {
+            bestCandidate = bestNonDecisiveCandidate;
+          } else if (pos.assigned != null) {
+            bestCandidate = pos.assigned;
+          }
+        }
+
+        if (pos.computed != bestCandidate) {
+          pos.computed = bestCandidate;
+          changed = true;
+        }
+      }
+    }
+
+    for (var bfen in scc) {
+      final pos = v[bfen]!;
+      if (pos.computed != pos.originalComputed) {
+        onNodeUpdated?.call(bfen, pos.assigned, pos.computed);
+      }
+    }
   }
 }

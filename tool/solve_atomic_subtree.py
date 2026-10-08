@@ -301,11 +301,15 @@ class AtomicProofSearcher:
         pos_records = []
         for bfen, entry in self.tt.items():
             c_res = 1 if entry.proof_status == 1 else (-1 if entry.proof_status == -1 else (0 if entry.proof_status == 2 else None))
+            is_terminal = (entry.dtw == 0 and c_res is not None)
+            a_res = c_res if is_terminal else None
+            a_dtw = entry.dtw if is_terminal else None
+            a_cp = entry.heuristic_score if is_terminal else None
             pos_records.append((
                 bfen,
-                c_res,
-                entry.dtw,
-                entry.heuristic_score,
+                a_res,
+                a_dtw,
+                a_cp,
                 c_res,
                 entry.dtw,
                 entry.heuristic_score,
@@ -421,27 +425,7 @@ class AtomicProofSearcher:
         if len(moves) <= 1:
             return moves
 
-        # Engine move ranking only at shallow root plies to maximize throughput
-        if self.engine and self.engine_depth > 0 and len(self.path_stack) <= 4:
-            try:
-                self.engine_queries += 1
-                limit = chess.engine.Limit(depth=self.engine_depth, time=0.05)
-                analysis = self.engine.analyse(board, limit, multipv=min(len(moves), 5))
-                ranked_mv = []
-                for entry in analysis:
-                    if 'pv' in entry and entry['pv']:
-                        ranked_mv.append(entry['pv'][0])
-                # Append remaining moves
-                seen = set(ranked_mv)
-                for m in moves:
-                    if m not in seen:
-                        ranked_mv.append(m)
-                return ranked_mv
-            except Exception:
-                pass
-
-        # Fast heuristic fallback:
-        # Prioritize captures that detonate pieces, checks, and knight invasions
+        # Tactical and positional heuristic scoring
         def move_score(m: chess.Move) -> int:
             score = 0
             if board.is_capture(m):
@@ -451,9 +435,42 @@ class AtomicProofSearcher:
                     score += dest_piece.piece_type * 100
             if board.gives_check(m):
                 score += 500
+
+            # Positional heuristics for quiet moves (avoid blunder walks in opening)
+            piece = board.piece_at(m.from_square)
+            if piece:
+                if piece.piece_type == chess.PAWN:
+                    to_file = chess.square_file(m.to_square)
+                    score += 200 if to_file in (2, 3, 4, 5) else 100
+                elif piece.piece_type in (chess.KNIGHT, chess.BISHOP):
+                    score += 50
+                elif piece.piece_type == chess.QUEEN:
+                    score -= 200
+                elif piece.piece_type == chess.KING:
+                    score -= 500
             return score
 
         moves.sort(key=move_score, reverse=True)
+
+        # Engine move ranking only at shallow root plies to maximize throughput
+        if self.engine and self.engine_depth > 0 and len(self.path_stack) <= 4:
+            try:
+                self.engine_queries += 1
+                limit = chess.engine.Limit(depth=self.engine_depth, time=0.2)
+                analysis = self.engine.analyse(board, limit, multipv=min(len(moves), 10))
+                ranked_mv = []
+                for entry in analysis:
+                    if 'pv' in entry and entry['pv']:
+                        ranked_mv.append(entry['pv'][0])
+                # Append remaining moves in heuristic sorted order
+                seen = set(ranked_mv)
+                for m in moves:
+                    if m not in seen:
+                        ranked_mv.append(m)
+                return ranked_mv
+            except Exception:
+                pass
+
         return moves
 
     # -------------------------------------------------------------------------
@@ -466,25 +483,28 @@ class AtomicProofSearcher:
         if term is not None:
             entry.proof_status, entry.pn, entry.dn = term
             entry.expanded = True
+            if entry.proof_status in (1, -1):
+                entry.dtw = 0
             return
 
         is_white = (board.turn == chess.WHITE)
 
-        # Instant killer check for White (OR node)
-        if is_white:
-            win_m = self.find_immediate_win(board)
-            if win_m:
-                board.push(win_m)
-                child_bfen = to_bfen(board)
-                board.pop()
+        # Instant killer check (explosive King captures in 1 ply)
+        win_m = self.find_immediate_win(board)
+        if win_m:
+            board.push(win_m)
+            child_bfen = to_bfen(board)
+            board.pop()
 
-                entry.children = [(win_m.uci(), child_bfen)]
-                entry.proven_move = win_m.uci()
+            entry.children = [(win_m.uci(), child_bfen)]
+            entry.proven_move = win_m.uci()
+            entry.expanded = True
+
+            if is_white:
                 entry.proof_status = 1
                 entry.pn = 0
                 entry.dn = INF
                 entry.dtw = 1
-                entry.expanded = True
 
                 c_entry = self.tt.setdefault(child_bfen, TTEntry(child_bfen, False))
                 c_entry.proof_status = 1
@@ -492,7 +512,19 @@ class AtomicProofSearcher:
                 c_entry.dn = INF
                 c_entry.dtw = 0
                 c_entry.expanded = True
-                return
+            else:
+                entry.proof_status = -1
+                entry.pn = INF
+                entry.dn = 0
+                entry.dtw = 1
+
+                c_entry = self.tt.setdefault(child_bfen, TTEntry(child_bfen, True))
+                c_entry.proof_status = -1
+                c_entry.pn = INF
+                c_entry.dn = 0
+                c_entry.dtw = 0
+                c_entry.expanded = True
+            return
 
         ordered_moves = self.rank_moves(board)
         entry.children = []
@@ -509,7 +541,7 @@ class AtomicProofSearcher:
                 if c_term is not None:
                     c_entry.proof_status, c_entry.pn, c_entry.dn = c_term
                     c_entry.expanded = True
-                    if c_entry.proof_status == 1:
+                    if c_entry.proof_status in (1, -1):
                         c_entry.dtw = 0
 
             board.pop()
@@ -555,6 +587,12 @@ class AtomicProofSearcher:
                 entry.proof_status = -1
                 entry.pn = INF
                 entry.dn = 0
+                max_loss_dtw = -1
+                for _, c_bfen in entry.children:
+                    c_entry = self.tt.get(c_bfen)
+                    if c_entry and c_entry.dtw is not None:
+                        max_loss_dtw = max(max_loss_dtw, c_entry.dtw + 1)
+                entry.dtw = max_loss_dtw if max_loss_dtw >= 0 else None
             else:
                 entry.pn = min_pn
                 entry.dn = sum_dn
@@ -564,6 +602,8 @@ class AtomicProofSearcher:
             min_dn = INF
             max_dtw = 0
             all_won = True
+            best_black_move = None
+            min_loss_dtw = INF
 
             for m_uci, c_bfen in entry.children:
                 if c_bfen in self.path_stack_set:
@@ -575,6 +615,12 @@ class AtomicProofSearcher:
                 sum_pn = min(INF, sum_pn + c_pn)
                 if c_dn < min_dn:
                     min_dn = c_dn
+
+                if c_dn == 0 or (c_bfen not in self.path_stack_set and self.tt[c_bfen].proof_status == -1):
+                    c_e = self.tt.get(c_bfen)
+                    if c_e and c_e.dtw is not None and (c_e.dtw + 1) < min_loss_dtw:
+                        min_loss_dtw = c_e.dtw + 1
+                        best_black_move = m_uci
 
                 if (c_bfen in self.path_stack_set) or c_entry.proof_status != 1 or c_entry.dtw is None:
                     all_won = False
@@ -590,6 +636,8 @@ class AtomicProofSearcher:
                 entry.proof_status = -1
                 entry.pn = INF
                 entry.dn = 0
+                entry.proven_move = best_black_move
+                entry.dtw = min_loss_dtw if min_loss_dtw < INF else None
             else:
                 entry.pn = sum_pn
                 entry.dn = min_dn

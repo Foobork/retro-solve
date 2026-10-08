@@ -201,4 +201,68 @@ void main() {
     final rootRow = await dbService.getNode(rootBfen);
     expect(rootRow!['computed_cp'], equals(0));
   });
+
+  test('CsrGraphSolver does not mark position as lost if unrated alternatives exist', () async {
+    final dbService = DatabaseService.instance;
+
+    // Black to move has two choices:
+    // Move A: loss (White win in 1)
+    // Move B: unrated alternative
+    const parentBfen = 'rnbqkbnr/ppp1pppp/3p4/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq -';
+    const losingChildBfen = 'losing_child w - -';
+    const unratedChildBfen = 'unrated_child w - -';
+
+    dbService.upsertNode(parentBfen, null, null);
+    dbService.upsertNode(
+      losingChildBfen,
+      const PositionEval(result: GameResult.whiteWins, dtw: 1),
+      null,
+    );
+    dbService.upsertNode(unratedChildBfen, null, null);
+
+    dbService.upsertEdge(parentBfen, losingChildBfen);
+    dbService.upsertEdge(parentBfen, unratedChildBfen);
+    await dbService.flush();
+
+    await dbService.solveGlobalCsr();
+
+    final parentRow = await dbService.getNode(parentBfen);
+    expect(parentRow!['computed_result'], isNull);
+    expect(parentRow['computed_dtw'], isNull);
+  });
+
+  test('CsrGraphSolver marks position as lost when ALL alternatives are proven losses', () async {
+    final dbService = DatabaseService.instance;
+
+    // Black to move has two choices:
+    // Move A: loss (White win in 1)
+    // Move B: loss (White win in 3)
+    const parentBfen = 'rnbqkbnr/ppp1pppp/3p4/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq -';
+    const losingChild1 = 'losing_child_1 w - -';
+    const losingChild2 = 'losing_child_2 w - -';
+
+    dbService.upsertNode(parentBfen, null, null);
+    dbService.upsertNode(
+      losingChild1,
+      const PositionEval(result: GameResult.whiteWins, dtw: 1),
+      null,
+    );
+    dbService.upsertNode(
+      losingChild2,
+      const PositionEval(result: GameResult.whiteWins, dtw: 3),
+      null,
+    );
+
+    dbService.upsertEdge(parentBfen, losingChild1);
+    dbService.upsertEdge(parentBfen, losingChild2);
+    await dbService.flush();
+
+    await dbService.solveGlobalCsr();
+
+    final parentRow = await dbService.getNode(parentBfen);
+    // Black is forced to lose, choosing the move that delays loss (dtw: 3 + 1 = 4)
+    expect(parentRow!['computed_result'], equals(GameResult.whiteWins.value));
+    expect(parentRow['computed_dtw'], equals(4));
+  });
 }
+

@@ -427,159 +427,120 @@ class CsrGraphSolver {
         final node = scc[i];
         final isWhite = isWhiteToMove[node] == 1;
 
-        int bestRes = 0;
-        int bestDtw = -1;
-        int bestCp = kNullCp;
-        bool hasBest = false;
-
         final edgeStart = rowPtrs[node];
         final edgeEnd = rowPtrs[node + 1];
+        final numEdges = edgeEnd - edgeStart;
+
+        final targetWin = isWhite ? 1 : 3;
+        final targetLoss = isWhite ? 3 : 1;
+
+        int winningCount = 0;
+        int minWinDtw = 999999;
+
+        int losingCount = 0;
+        int maxLoseDtw = -1;
+
+        int bestNonDecisiveCp = kNullCp;
+        bool hasDraw = false;
 
         for (int e = edgeStart; e < edgeEnd; e++) {
           final child = colIndices[e];
           final childRes = computedRes[child] != 0 ? computedRes[child] : assignedRes[child];
           final childCp = computedCp[child] != kNullCp ? computedCp[child] : assignedCp[child];
 
-          if (childRes == 0 && childCp == kNullCp) continue;
-
-          final rawChildDtw = (computedRes[child] != 0 && (computedRes[child] == 1 || computedRes[child] == 3))
-              ? computedDtw[child]
-              : assignedDtw[child];
-
-          int candRes = childRes;
-          int candDtw = (rawChildDtw >= 0) ? (rawChildDtw + 1) : -1;
-          int candCp = candRes == 2 ? kNullCp : childCp;
-
-          if (!hasBest) {
-            bestRes = candRes;
-            bestDtw = candDtw;
-            bestCp = candCp;
-            hasBest = true;
-          } else {
-            final cmp = _compareEvalValues(
-              candRes, candDtw, candCp,
-              bestRes, bestDtw, bestCp,
-              isWhite,
-            );
-            if (cmp < 0) {
-              bestRes = candRes;
-              bestDtw = candDtw;
-              bestCp = candCp;
+          if (childRes == targetWin) {
+            winningCount++;
+            final rawDtw = (computedRes[child] == targetWin) ? computedDtw[child] : assignedDtw[child];
+            final candDtw = (rawDtw >= 0) ? rawDtw + 1 : -1;
+            if (candDtw >= 0 && candDtw < minWinDtw) {
+              minWinDtw = candDtw;
+            }
+          } else if (childRes == targetLoss) {
+            losingCount++;
+            final rawDtw = (computedRes[child] == targetLoss) ? computedDtw[child] : assignedDtw[child];
+            final candDtw = (rawDtw >= 0) ? rawDtw + 1 : -1;
+            if (candDtw > maxLoseDtw) {
+              maxLoseDtw = candDtw;
+            }
+          } else if (childRes == 2) {
+            hasDraw = true;
+            if (bestNonDecisiveCp == kNullCp) {
+              bestNonDecisiveCp = 0;
+            } else {
+              if (isWhite ? 0 > bestNonDecisiveCp : 0 < bestNonDecisiveCp) {
+                bestNonDecisiveCp = 0;
+              }
+            }
+          } else if (childCp != kNullCp) {
+            if (bestNonDecisiveCp == kNullCp) {
+              bestNonDecisiveCp = childCp;
+            } else {
+              if (isWhite ? childCp > bestNonDecisiveCp : childCp < bestNonDecisiveCp) {
+                bestNonDecisiveCp = childCp;
+              }
             }
           }
         }
 
-        if (!hasBest && (assignedRes[node] != 0 || assignedCp[node] != kNullCp)) {
-          bestRes = assignedRes[node];
-          bestDtw = assignedDtw[node];
-          bestCp = assignedCp[node];
+        int bestRes = 0;
+        int bestDtw = -1;
+        int bestCp = kNullCp;
+        bool hasBest = false;
+
+        if (winningCount > 0) {
+          // 1. Any winning move -> Side to move WINS
+          bestRes = targetWin;
+          bestDtw = minWinDtw == 999999 ? -1 : minWinDtw;
+          bestCp = kNullCp;
           hasBest = true;
+        } else if (numEdges > 0 && losingCount == numEdges) {
+          // 2. ALL moves are proven losses -> Side to move is forced to LOSE
+          bestRes = targetLoss;
+          bestDtw = maxLoseDtw;
+          bestCp = kNullCp;
+          hasBest = true;
+        } else if (numEdges > 0 && losingCount + (hasDraw ? 1 : 0) == numEdges && hasDraw) {
+          // 3. All non-losing moves are draws -> Draw
+          bestRes = 2;
+          bestDtw = -1;
+          bestCp = kNullCp;
+          hasBest = true;
+        } else {
+          // 4. Position is undecided / unproven
+          if (bestNonDecisiveCp != kNullCp) {
+            bestRes = 0;
+            bestDtw = -1;
+            bestCp = bestNonDecisiveCp;
+            hasBest = true;
+          } else if (assignedRes[node] != 0 || assignedCp[node] != kNullCp) {
+            bestRes = assignedRes[node];
+            bestDtw = assignedDtw[node];
+            bestCp = assignedCp[node];
+            hasBest = true;
+          }
         }
 
         if (bestRes == 2) {
           bestCp = kNullCp;
         }
 
-        if (hasBest) {
-          if (computedRes[node] != bestRes ||
-              computedDtw[node] != bestDtw ||
-              computedCp[node] != bestCp) {
-            computedRes[node] = bestRes;
-            computedDtw[node] = bestDtw;
-            computedCp[node] = bestCp;
-            changed = true;
-          }
+        final finalRes = hasBest ? bestRes : 0;
+        final finalDtw = hasBest ? bestDtw : -1;
+        final finalCp = hasBest ? bestCp : kNullCp;
+
+        if (computedRes[node] != finalRes ||
+            computedDtw[node] != finalDtw ||
+            computedCp[node] != finalCp) {
+          computedRes[node] = finalRes;
+          computedDtw[node] = finalDtw;
+          computedCp[node] = finalCp;
+          changed = true;
         }
       }
     }
   }
 
-  static int _compareEvalValues(
-    int aRes, int aDtw, int aCp,
-    int bRes, int bDtw, int bCp,
-    bool whiteToMove,
-  ) {
-    final targetWin = whiteToMove ? 1 : 3;
-    final targetLoss = whiteToMove ? 3 : 1;
 
-    final aWins = aRes == targetWin;
-    final bWins = bRes == targetWin;
-    if (aWins != bWins) {
-      return aWins ? -1 : 1;
-    }
-
-    if (aWins && bWins) {
-      final aImmediate = aDtw >= 0 && aDtw <= 2;
-      final bImmediate = bDtw >= 0 && bDtw <= 2;
-      if (aImmediate != bImmediate) {
-        return aImmediate ? -1 : 1;
-      }
-
-      if (aDtw >= 0 && bDtw >= 0) {
-        final cmp = aDtw.compareTo(bDtw);
-        if (cmp != 0) return cmp;
-      } else if (aDtw >= 0 && bDtw < 0) {
-        return -1;
-      } else if (aDtw < 0 && bDtw >= 0) {
-        return 1;
-      }
-
-      if (aCp != kNullCp && bCp != kNullCp) {
-        return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
-      }
-      return 0;
-    }
-
-    final aLoses = aRes == targetLoss;
-    final bLoses = bRes == targetLoss;
-    if (aLoses != bLoses) {
-      return aLoses ? 1 : -1;
-    }
-
-    if (aLoses && bLoses) {
-      if (aDtw >= 0 && bDtw >= 0) {
-        final cmp = bDtw.compareTo(aDtw); // delay loss
-        if (cmp != 0) return cmp;
-      } else if (aDtw >= 0 && bDtw < 0) {
-        return 1;
-      } else if (aDtw < 0 && bDtw >= 0) {
-        return -1;
-      }
-
-      if (aCp != kNullCp && bCp != kNullCp) {
-        return whiteToMove ? bCp.compareTo(aCp) : aCp.compareTo(bCp);
-      }
-      return 0;
-    }
-
-    final aScore = _numericScore(aRes, aDtw, aCp);
-    final bScore = _numericScore(bRes, bDtw, bCp);
-    if (whiteToMove) {
-      if (aScore > bScore) return -1;
-      if (aScore < bScore) return 1;
-    } else {
-      if (aScore < bScore) return -1;
-      if (aScore > bScore) return 1;
-    }
-    return 0;
-  }
-
-  static double _numericScore(int code, int dtw, int cp) {
-    if (code == 1) {
-      // whiteWins
-      if (dtw >= 0) return 1000.0 - dtw.toDouble();
-      return 950.0;
-    } else if (code == 3) {
-      // blackWins
-      if (dtw >= 0) return -1000.0 + dtw.toDouble();
-      return -950.0;
-    } else if (code == 2) {
-      // draw
-      return 0.0;
-    }
-    if (cp == kNullCp) return 0.0;
-    return cp.toDouble() / 100.0;
-  }
 }
 
 // Background Isolate Messaging helpers

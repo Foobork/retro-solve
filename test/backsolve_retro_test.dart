@@ -145,4 +145,35 @@ void main() {
 
     await db.close();
   });
+
+  test('Incremental solve via solveBfenAsync does not mark position as lost if unrated alternatives exist', () async {
+    final db = DatabaseService.instance;
+    await db.init(inMemoryDatabasePath);
+
+    resetGraph(useCache: true);
+    graph.onNodeUpdated = (bfen, assigned, computed) {
+      db.upsertNode(bfen, assigned, computed);
+    };
+    graph.onEdgeAdded = (source, target) {
+      db.upsertEdge(source, target);
+    };
+
+    const parentBfen = 'rnbqkbnr/ppp1pppp/3p4/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq -'; // Black to move
+    const losingChild = 'losing_child w - -';
+    const unratedChild = 'unrated_child w - -';
+
+    await db.upsertNode(parentBfen, null, null);
+    await db.upsertNode(losingChild, const PositionEval(result: GameResult.whiteWins, dtw: 1), null);
+    await db.upsertNode(unratedChild, null, null);
+    await db.upsertEdge(parentBfen, losingChild);
+    await db.upsertEdge(parentBfen, unratedChild);
+    await db.flush();
+
+    await (graph as CachedGraph).solveBfenAsync(losingChild);
+
+    final parentRow = await db.getNode(parentBfen);
+    expect(parentRow!['computed_result'], isNull);
+
+    await db.close();
+  });
 }

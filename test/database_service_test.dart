@@ -34,7 +34,7 @@ void main() {
     }
   });
 
-  test('DatabaseService creates version 5 normalized schema on fresh init', () async {
+  test('DatabaseService creates version 6 normalized schema on fresh init', () async {
     final dbService = DatabaseService.instance;
     await dbService.init(dbPath);
     await dbService.close();
@@ -55,6 +55,10 @@ void main() {
     expect(posCols['computed_result'], equals('INTEGER'));
     expect(posCols['computed_dtw'], equals('INTEGER'));
     expect(posCols['computed_cp'], equals('INTEGER'));
+    expect(posCols['proof_status'], equals('INTEGER'));
+    expect(posCols['pn'], equals('INTEGER'));
+    expect(posCols['dn'], equals('INTEGER'));
+    expect(posCols['proven_move_id'], equals('INTEGER'));
     expect(posCols.containsKey('assigned_dtz'), isFalse);
     expect(posCols.containsKey('computed_dtz'), isFalse);
 
@@ -326,6 +330,64 @@ void main() {
     expect(posCols.contains('computed_dtz'), isFalse);
     expect(posCols.contains('assigned_dtw'), isTrue);
     expect(posCols.contains('computed_dtw'), isTrue);
+    await db.close();
+  });
+
+  test('DatabaseService seamlessly migrates v5 schema to v6 with proof number columns', () async {
+    final factory = getPlatformDatabaseFactory();
+    final v5Db = await factory.openDatabase(dbPath, options: OpenDatabaseOptions(
+      version: 5,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bfen TEXT UNIQUE NOT NULL,
+            assigned_result INTEGER,
+            assigned_dtw INTEGER,
+            assigned_cp INTEGER,
+            computed_result INTEGER,
+            computed_dtw INTEGER,
+            computed_cp INTEGER
+          );
+        ''');
+        await db.execute('''
+          CREATE TABLE edges (
+            source_id INTEGER NOT NULL,
+            target_id INTEGER NOT NULL,
+            PRIMARY KEY (source_id, target_id)
+          ) WITHOUT ROWID;
+        ''');
+      },
+    ));
+
+    await v5Db.insert('positions', {
+      'bfen': 'rnbqkbnr/ppp1pppp/3p4/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq -',
+      'assigned_result': null,
+      'assigned_dtw': null,
+      'assigned_cp': 738,
+      'computed_result': null,
+      'computed_dtw': null,
+      'computed_cp': null,
+    });
+    await v5Db.close();
+
+    final dbService = DatabaseService.instance;
+    await dbService.init(dbPath);
+    await dbService.close();
+
+    final db = await factory.openDatabase(dbPath);
+    final posInfo = await db.rawQuery("PRAGMA table_info('positions');");
+    final posCols = posInfo.map((r) => (r['name'] as String).toLowerCase()).toSet();
+    expect(posCols.contains('proof_status'), isTrue);
+    expect(posCols.contains('pn'), isTrue);
+    expect(posCols.contains('dn'), isTrue);
+    expect(posCols.contains('proven_move_id'), isTrue);
+
+    final row = await db.query('positions', where: "bfen LIKE '%3p4%'");
+    expect(row.length, equals(1));
+    expect(row.first['proof_status'], equals(0));
+    expect(row.first['pn'], equals(1));
+    expect(row.first['dn'], equals(1));
     await db.close();
   });
 }

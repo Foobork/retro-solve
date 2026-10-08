@@ -58,7 +58,7 @@ class DatabaseService {
     _db = await factory.openDatabase(
       dbPath,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE positions (
@@ -69,7 +69,11 @@ class DatabaseService {
               assigned_cp INTEGER,
               computed_result INTEGER,
               computed_dtw INTEGER,
-              computed_cp INTEGER
+              computed_cp INTEGER,
+              proof_status INTEGER DEFAULT 0,
+              pn INTEGER DEFAULT 1,
+              dn INTEGER DEFAULT 1,
+              proven_move_id INTEGER
             );
           ''');
           await db.execute('''
@@ -92,6 +96,9 @@ class DatabaseService {
           }
           if (oldVersion < 5) {
             await _migrateToVersion5(db);
+          }
+          if (oldVersion < 6) {
+            await _migrateToVersion6(db);
           }
         },
       ),
@@ -117,12 +124,15 @@ class DatabaseService {
         if (posCols.contains('assigned_dtz') || posCols.contains('computed_dtz')) {
           await _migrateToVersion5(_db!);
         }
+        if (!posCols.contains('proof_status') || !posCols.contains('pn')) {
+          await _migrateToVersion6(_db!);
+        }
       }
     } catch (e) {
       log("Warning checking schema version: $e");
     }
 
-    // Failsafe: Ensure v5 tables and reverse index always exist
+    // Failsafe: Ensure v6 tables and reverse index always exist
     await _db!.execute('''
       CREATE TABLE IF NOT EXISTS positions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +142,11 @@ class DatabaseService {
         assigned_cp INTEGER,
         computed_result INTEGER,
         computed_dtw INTEGER,
-        computed_cp INTEGER
+        computed_cp INTEGER,
+        proof_status INTEGER DEFAULT 0,
+        pn INTEGER DEFAULT 1,
+        dn INTEGER DEFAULT 1,
+        proven_move_id INTEGER
       );
     ''');
     await _db!.execute('''
@@ -231,6 +245,23 @@ class DatabaseService {
       ''');
       await db.execute('DROP TABLE positions;');
       await db.execute('ALTER TABLE positions_v5 RENAME TO positions;');
+    }
+  }
+
+  static Future<void> _migrateToVersion6(DatabaseExecutor db) async {
+    final posInfo = await db.rawQuery("PRAGMA table_info('positions');");
+    final colNames = posInfo.map((r) => (r['name'] as String?)?.toLowerCase()).toSet();
+    if (!colNames.contains('proof_status')) {
+      await db.execute('ALTER TABLE positions ADD COLUMN proof_status INTEGER DEFAULT 0;');
+    }
+    if (!colNames.contains('pn')) {
+      await db.execute('ALTER TABLE positions ADD COLUMN pn INTEGER DEFAULT 1;');
+    }
+    if (!colNames.contains('dn')) {
+      await db.execute('ALTER TABLE positions ADD COLUMN dn INTEGER DEFAULT 1;');
+    }
+    if (!colNames.contains('proven_move_id')) {
+      await db.execute('ALTER TABLE positions ADD COLUMN proven_move_id INTEGER;');
     }
   }
 

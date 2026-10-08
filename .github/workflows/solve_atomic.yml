@@ -1,0 +1,95 @@
+name: Solve Atomic Subtree
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_line:
+        description: 'UCI move line to solve from initial position (e.g. "g1f3 d7d6")'
+        required: true
+        default: 'g1f3 d7d6'
+      timeout_minutes:
+        description: 'Timeout in minutes (max 330 for standard GitHub runner)'
+        required: true
+        default: '300'
+      max_nodes:
+        description: 'Maximum nodes to expand'
+        required: true
+        default: '2000000'
+      engine_depth:
+        description: 'Depth for Fairy-Stockfish candidate move ordering'
+        required: true
+        default: '8'
+
+concurrency:
+  group: "solve-atomic"
+  cancel-in-progress: false
+
+jobs:
+  solve:
+    name: 1@df-pn Proof Searcher
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: pip install python-chess
+
+      - name: Cache Atomic Tablebases
+        uses: actions/cache@v4
+        id: tb-cache
+        with:
+          path: data/tablebases/atomic
+          key: atomic-tablebases-3-4-5-v1
+
+      - name: Download Tablebases (if cache miss)
+        if: steps.tb-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data/tablebases/atomic
+          dart run tool/download_atomic_tablebase.dart data/tablebases/atomic
+
+      - name: Download Fairy-Stockfish Linux
+        run: |
+          curl -L -o fairy-stockfish https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14_0_1_popcnt/fairy-stockfish_x86-64-modern
+          chmod +x fairy-stockfish
+
+      - name: Run Proof-Number Search
+        run: |
+          python tool/solve_atomic_subtree.py \
+            --line "${{ github.event.inputs.target_line }}" \
+            --timeout-minutes "${{ github.event.inputs.timeout_minutes }}" \
+            --max-nodes "${{ github.event.inputs.max_nodes }}" \
+            --engine-binary "./fairy-stockfish" \
+            --engine-depth "${{ github.event.inputs.engine_depth }}" \
+            --db "data/Atomic.db" \
+            --proof-out "data/atomic_subtree.proof" \
+            --status-file "data/solve_status.json" \
+            --resume \
+            --verify
+
+      - name: Inspect Subtree Progress
+        if: always()
+        run: |
+          python tool/inspect_proof_progress.py --db "data/Atomic.db" --line "${{ github.event.inputs.target_line }}"
+
+      - name: Upload Proof Artifacts & Database Checkpoint
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: atomic-proof-checkpoint-${{ github.run_number }}
+          retention-days: 7
+          path: |
+            data/Atomic.db
+            data/*.proof
+            data/solve_status.json

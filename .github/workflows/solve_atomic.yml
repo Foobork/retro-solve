@@ -44,7 +44,7 @@ jobs:
           cache: 'pip'
 
       - name: Install Python dependencies
-        run: pip install python-chess
+        run: pip install -r requirements.txt
 
       - name: Cache Atomic Tablebases
         uses: actions/cache@v4
@@ -55,13 +55,14 @@ jobs:
 
       - name: Download Tablebases (if cache miss)
         if: steps.tb-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
         run: |
           mkdir -p data/tablebases/atomic
           dart run tool/download_atomic_tablebase.dart data/tablebases/atomic
 
       - name: Download Fairy-Stockfish Linux
         run: |
-          curl -L -o fairy-stockfish https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14_0_1_popcnt/fairy-stockfish_x86-64-modern
+          curl -L -o fairy-stockfish https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14/fairy-stockfish_x86-64-modern
           chmod +x fairy-stockfish
 
       - name: Run Proof-Number Search

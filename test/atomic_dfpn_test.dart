@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:retro_solve/chess/chess.dart';
 import 'package:retro_solve/persistence/database_service.dart';
 import 'package:retro_solve/persistence/db_init.dart';
-import 'package:sqflite_common/sqlite_api.dart';
 
 String decodeMove(int mv) {
   if (mv == 0xfedc || mv == 0x0edc) return 'NULL';
@@ -26,14 +25,6 @@ String decodeMove(int mv) {
     res += promChars[promIdx];
   }
   return res;
-}
-
-class _ProofNode {
-  final int w;
-  final int d;
-  final String mv;
-
-  const _ProofNode(this.w, this.d, this.mv);
 }
 
 void main() {

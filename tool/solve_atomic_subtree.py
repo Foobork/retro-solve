@@ -731,7 +731,7 @@ class AtomicProofSearcher:
                 child_th_dn = th_dn - (entry.dn - c_dn_val)
 
                 # Non-advancing threshold guard:
-                if not is_root and (child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn):
+                if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
                     break
 
                 m = chess.Move.from_uci(m_uci)
@@ -741,7 +741,7 @@ class AtomicProofSearcher:
                 board.pop()
 
                 self.update_node(entry)
-                if not is_root and (c_entry.pn == old_pn and c_entry.dn == old_dn):
+                if c_entry.pn == old_pn and c_entry.dn == old_dn:
                     break
 
             else:
@@ -772,7 +772,7 @@ class AtomicProofSearcher:
                 child_th_dn = min(th_dn, second_dn + 1)
 
                 # Non-advancing threshold guard:
-                if not is_root and (child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn):
+                if child_th_pn <= c_entry.pn or child_th_dn <= c_entry.dn:
                     break
 
                 m = chess.Move.from_uci(m_uci)
@@ -782,7 +782,7 @@ class AtomicProofSearcher:
                 board.pop()
 
                 self.update_node(entry)
-                if not is_root and (c_entry.pn == old_pn and c_entry.dn == old_dn):
+                if c_entry.pn == old_pn and c_entry.dn == old_dn:
                     break
 
         self.path_stack.pop()

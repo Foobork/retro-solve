@@ -65,6 +65,16 @@ jobs:
           curl -L -o fairy-stockfish https://github.com/fairy-stockfish/Fairy-Stockfish/releases/download/fairy_sf_14/fairy-stockfish_x86-64-modern
           chmod +x fairy-stockfish
 
+      - name: Restore Atomic Database Checkpoint
+        uses: actions/cache/restore@v4
+        id: db-checkpoint-cache
+        with:
+          path: data/Atomic.db
+          key: atomic-db-${{ github.event.inputs.target_line }}-${{ github.run_id }}
+          restore-keys: |
+            atomic-db-${{ github.event.inputs.target_line }}-
+            atomic-db-
+
       - name: Run Proof-Number Search
         run: |
           python tool/solve_atomic_subtree.py \
@@ -78,6 +88,13 @@ jobs:
             --status-file "data/solve_status.json" \
             --resume \
             --verify
+
+      - name: Save Atomic Database Checkpoint
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/Atomic.db
+          key: atomic-db-${{ github.event.inputs.target_line }}-${{ github.run_id }}
 
       - name: Inspect Subtree Progress
         if: always()

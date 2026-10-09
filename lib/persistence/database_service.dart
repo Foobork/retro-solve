@@ -46,13 +46,14 @@ class DatabaseService {
   }
 
   Future<void> init(String dbPath) async {
-    _dbPath = dbPath;
     if (_db != null) {
-      await _db!.close();
-      _db = null;
+      await close();
     }
+    _dbPath = dbPath;
     _bfenToId.clear();
     _idToBfen.clear();
+    _updateQueue.clear();
+    _edgeQueue.clear();
 
     final factory = getPlatformDatabaseFactory();
     _db = await factory.openDatabase(

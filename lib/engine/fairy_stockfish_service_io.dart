@@ -50,12 +50,20 @@ class FairyStockfishService implements EngineService {
   Future<void> setVariant(DatasetVariant variant) async {
     if (_variant == variant) return;
     _variant = variant;
+    _activeFen = "";
+    _currentEvals.clear();
+    _isSearching = false;
+    _activeTbFallback = null;
     print('[engine] Configured variant: ${uciVariantForDataset(_variant)}');
     await _restart();
   }
 
   @override
   Future<void> newGame() async {
+    _activeFen = "";
+    _currentEvals.clear();
+    _isSearching = false;
+    _activeTbFallback = null;
     if (!_isStarted || _process == null) return;
     _writeLine('stop');
     _writeLine('ucinewgame');
@@ -434,11 +442,17 @@ class FairyStockfishService implements EngineService {
     _process = null;
     _isStarted = false;
     _useNNUE = true;
+    _activeFen = "";
+    _currentEvals.clear();
+    _isSearching = false;
+    _waitingForReadyOk = false;
+    _activeTbFallback = null;
   }
 
   Future<void> _sendAndWaitFor(String command, String expectedLine) async {
+    final future = _waitForLine(expectedLine);
     _writeLine(command);
-    await _waitForLine(expectedLine);
+    await future;
   }
 
   Future<void> _waitForLine(String expectedLine) async {

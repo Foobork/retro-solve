@@ -199,12 +199,17 @@ class FairyStockfishService implements EngineService {
   Future<void> setVariant(DatasetVariant variant) async {
     if (_variant == variant && _isStarted) return;
     _variant = variant;
+    _activeFen = "";
+    _currentEvals.clear();
+    _isSearching = false;
     await _restartWorker();
   }
 
   Future<void> _restartWorker() async {
     _isStarted = false;
     _isNNUE = false;
+    _activeFen = "";
+    _isSearching = false;
     try {
       _writeLine('quit');
       _worker?.terminate();
@@ -217,6 +222,9 @@ class FairyStockfishService implements EngineService {
 
   @override
   Future<void> newGame() async {
+    _activeFen = "";
+    _currentEvals.clear();
+    _isSearching = false;
     if (!_isStarted || _worker == null) return;
     try {
       _writeLine('stop');

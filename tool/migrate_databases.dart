@@ -67,14 +67,30 @@ Future<void> migrateDatabase(String dbPath) async {
     await db.execute('ALTER TABLE positions_v5 RENAME TO positions;');
 
     // 4. Update schema version
-    await db.execute('PRAGMA user_version = 5;');
+    await db.execute('PRAGMA user_version = 6;');
 
     await db.execute('COMMIT;');
     copyWatch.stop();
     print('Copy-and-swap completed in ${(copyWatch.elapsedMilliseconds / 1000).toStringAsFixed(2)} seconds.');
   } else {
-    print('No DTZ columns found. Ensuring user_version = 5...');
-    await db.execute('PRAGMA user_version = 5;');
+    print('No DTZ columns found. Ensuring user_version = 6...');
+    await db.execute('PRAGMA user_version = 6;');
+  }
+
+  // Ensure version 6 columns exist
+  final updatedPosInfo = await db.rawQuery("PRAGMA table_info('positions');");
+  final updatedColNames = updatedPosInfo.map((r) => (r['name'] as String?)?.toLowerCase()).toSet();
+  if (!updatedColNames.contains('proof_status')) {
+    await db.execute('ALTER TABLE positions ADD COLUMN proof_status INTEGER DEFAULT 0;');
+  }
+  if (!updatedColNames.contains('pn')) {
+    await db.execute('ALTER TABLE positions ADD COLUMN pn INTEGER DEFAULT 1;');
+  }
+  if (!updatedColNames.contains('dn')) {
+    await db.execute('ALTER TABLE positions ADD COLUMN dn INTEGER DEFAULT 1;');
+  }
+  if (!updatedColNames.contains('proven_move_id')) {
+    await db.execute('ALTER TABLE positions ADD COLUMN proven_move_id INTEGER;');
   }
 
   // Ensure edges table and reverse index exist

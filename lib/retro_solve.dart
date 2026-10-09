@@ -812,32 +812,41 @@ class HomePageState extends State<HomePage> {
       _variant = v;
       _isLoadingVariant = true;
     });
-    await widget.engineService.setVariant(_variant);
-    await widget.engineService.newGame();
-    _controller.setGame(_createGameForVariant(_variant));
-    _controller.resetBoard();
 
-    // Let the loading overlay paint before we block.
-    await Future<void>.delayed(const Duration(milliseconds: 16));
+    _controller.removeListener(_chessBoardListener);
 
-    resetGraph();
-    // Re-hook the callback after reset
-    graph.onNodeUpdated = (bfen, assigned, computed) {
-      DatabaseService.instance.upsertNode(bfen, assigned, computed);
-    };
-    graph.onEdgeAdded = (source, target) {
-      DatabaseService.instance.upsertEdge(source, target);
-    };
+    try {
+      await widget.engineService.setVariant(_variant);
+      await widget.engineService.newGame();
+      _controller.setGame(_createGameForVariant(_variant));
+      _controller.resetBoard();
 
-    await importGraph(_variant.dataPath);
-    await DatasetVariantStore.save(_variant);
+      // Let the loading overlay paint before we block.
+      await Future<void>.delayed(const Duration(milliseconds: 16));
 
-    if (!mounted) return;
-    setState(() {
-      _isLoadingVariant = false;
-      _update();
-    });
-    _chessBoardListener();
+      resetGraph();
+      // Re-hook the callback after reset
+      graph.onNodeUpdated = (bfen, assigned, computed) {
+        DatabaseService.instance.upsertNode(bfen, assigned, computed);
+      };
+      graph.onEdgeAdded = (source, target) {
+        DatabaseService.instance.upsertEdge(source, target);
+      };
+
+      await importGraph(_variant.dataPath);
+      await DatasetVariantStore.save(_variant);
+    } catch (e, st) {
+      print('[RetroSolve] Error switching variant to $v: $e\n$st');
+    } finally {
+      _controller.addListener(_chessBoardListener);
+      if (mounted) {
+        setState(() {
+          _isLoadingVariant = false;
+          _update();
+        });
+        _chessBoardListener();
+      }
+    }
   }
 
   int _chessBoardListenerSeq = 0;

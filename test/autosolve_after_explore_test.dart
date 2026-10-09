@@ -41,13 +41,13 @@ void main() {
   group('Auto-solve after explore Switch Tests', () {
     test('AutosolveAfterExploreStore loads and saves preference', () async {
       SharedPreferences.setMockInitialValues({});
-      expect(await AutosolveAfterExploreStore.load(), isTrue);
-
-      await AutosolveAfterExploreStore.save(false);
       expect(await AutosolveAfterExploreStore.load(), isFalse);
 
       await AutosolveAfterExploreStore.save(true);
       expect(await AutosolveAfterExploreStore.load(), isTrue);
+
+      await AutosolveAfterExploreStore.save(false);
+      expect(await AutosolveAfterExploreStore.load(), isFalse);
     });
 
     testWidgets('Toggles auto-solve after explore via ellipsis more menu', (WidgetTester tester) async {

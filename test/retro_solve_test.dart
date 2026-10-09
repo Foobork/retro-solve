@@ -464,11 +464,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(state.isExploring1Ply, isFalse);
+    expect(state.autosolveAfterExplore, isFalse);
     final knownMoves = state.knownMoves;
     expect(knownMoves.length, equals(2));
     expect(knownMoves.any((m) => m.move == 'a3'), isTrue);
     expect(knownMoves.any((m) => m.move == 'a4'), isTrue);
     expect(knownMoves.every((m) => m.eval != null), isTrue);
+
+    const rootBfen = '1q6/8/8/8/8/8/P7/K7 w - -';
+    expect(graph.v[rootBfen]?.computed, isNotNull);
   });
 }
 

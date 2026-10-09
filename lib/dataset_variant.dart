@@ -139,9 +139,9 @@ class AutosolveAfterExploreStore {
   static Future<bool> load() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool(_key) ?? true;
+      return prefs.getBool(_key) ?? false;
     } catch (_) {
-      return true;
+      return false;
     }
   }
 

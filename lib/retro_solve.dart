@@ -65,7 +65,7 @@ class HomePageState extends State<HomePage> {
   List<EngineEvaluation>? _pendingEvals;
   bool _interactiveBacksolving = true;
   bool _enableTablebase = Config.enableRemoteTablebase;
-  bool _autosolveAfterExplore = true;
+  bool _autosolveAfterExplore = false;
 
   @visibleForTesting
   bool get interactiveBacksolving => _interactiveBacksolving;
@@ -760,7 +760,7 @@ class HomePageState extends State<HomePage> {
                 if (canAssign) {
                   graph.assign(bfen, posEval);
                   graph.v[bfen]?.inDatabase = true;
-                if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
+                if (_interactiveBacksolving) {
                   if (graph is CachedGraph) {
                     await (graph as CachedGraph).solveBfenAsync(bfen);
                   } else {
@@ -982,7 +982,7 @@ class HomePageState extends State<HomePage> {
               if (posEval != null && canAssign) {
                 graph.assign(bfen, posEval);
                 graph.v[bfen]?.inDatabase = true;
-                if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
+                if (_interactiveBacksolving) {
                   if (graph is CachedGraph) {
                     (graph as CachedGraph).solveBfenAsync(bfen).then((_) {
                       if (mounted) setState(_update);
@@ -1176,6 +1176,14 @@ class HomePageState extends State<HomePage> {
         });
       }
       print('[explore] Exploration ended/stopped.');
+      if (_interactiveBacksolving) {
+        final currentBfen = _controller.game.bfen;
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).solveBfenAsync(currentBfen);
+        } else {
+          graph.solveBfen(currentBfen);
+        }
+      }
       if (_autosolveAfterExplore) {
         await _solve();
       }
@@ -1213,6 +1221,14 @@ class HomePageState extends State<HomePage> {
         });
       }
       print('[explore-1ply] Exploration ended/stopped.');
+      if (_interactiveBacksolving) {
+        final currentBfen = _controller.game.bfen;
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).solveBfenAsync(currentBfen);
+        } else {
+          graph.solveBfen(currentBfen);
+        }
+      }
       if (_autosolveAfterExplore) {
         await _solve();
       }
@@ -1269,6 +1285,13 @@ class HomePageState extends State<HomePage> {
         if (termEval != null && graph.v[childBfen]?.assigned == null) {
           graph.assign(childBfen, termEval);
           graph.v[childBfen]?.inDatabase = true;
+          if (_interactiveBacksolving) {
+            if (graph is CachedGraph) {
+              await (graph as CachedGraph).solveBfenAsync(childBfen);
+            } else {
+              graph.solveBfen(childBfen);
+            }
+          }
         }
         continue;
       }
@@ -1300,6 +1323,13 @@ class HomePageState extends State<HomePage> {
           if (posEval != null) {
             graph.assign(childBfen, posEval);
             graph.v[childBfen]?.inDatabase = true;
+            if (_interactiveBacksolving) {
+              if (graph is CachedGraph) {
+                await (graph as CachedGraph).solveBfenAsync(childBfen);
+              } else {
+                graph.solveBfen(childBfen);
+              }
+            }
           }
         }
       }
@@ -1515,6 +1545,13 @@ class HomePageState extends State<HomePage> {
             if (posEval != null) {
               graph.assign(bfen, posEval);
               graph.v[bfen]?.inDatabase = true;
+              if (_interactiveBacksolving) {
+                if (graph is CachedGraph) {
+                  await (graph as CachedGraph).solveBfenAsync(bfen);
+                } else {
+                  graph.solveBfen(bfen);
+                }
+              }
             }
           }
         }
@@ -1722,6 +1759,14 @@ class HomePageState extends State<HomePage> {
         });
       }
       print('[analyze] Game/study analysis ended/stopped.');
+      if (_interactiveBacksolving) {
+        final currentBfen = _controller.game.bfen;
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).solveBfenAsync(currentBfen);
+        } else {
+          graph.solveBfen(currentBfen);
+        }
+      }
       if (_autosolveAfterExplore) {
         await _solve();
       }

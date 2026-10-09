@@ -866,19 +866,23 @@ class HomePageState extends State<HomePage> {
       if (score != null && graph.v[a]?.assigned == null) {
         graph.assign(a, score);
       }
-      if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
-        if (graph is CachedGraph) {
-          await (graph as CachedGraph).solveBfenAsync(a);
-        } else {
-          graph.solveBfen(a);
-        }
-      }
       if (mounted && seq == _chessBoardListenerSeq) {
         setState(_update);
+      }
+      if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
+        if (graph is CachedGraph) {
+          (graph as CachedGraph).solveBfenAsync(a).then((_) {
+            if (mounted && seq == _chessBoardListenerSeq) setState(_update);
+          });
+        } else {
+          graph.solveBfen(a);
+          if (mounted && seq == _chessBoardListenerSeq) setState(_update);
+        }
       }
       return;
     }
 
+    bool hasNewTerminalAssignment = false;
     for (int i = 0; i < moves.length; i++) {
       final move = moves[i];
       final b = childBfens[i];
@@ -887,22 +891,31 @@ class HomePageState extends State<HomePage> {
         final score = game.terminalEvaluation;
         if (score != null && graph.v[b]?.assigned == null) {
           graph.assign(b, score);
+          hasNewTerminalAssignment = true;
         }
       }
       game.undo();
       graph.addLink(a, b);
     }
 
-    if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
-      if (graph is CachedGraph) {
-        await (graph as CachedGraph).solveBfenAsync(a);
-      } else {
-        graph.solveBfen(a);
-      }
-    }
-
+    // Immediately render board position, known moves table, and current eval
     if (mounted && seq == _chessBoardListenerSeq) {
       setState(_update);
+    }
+
+    // Backsolve asynchronously in background only when needed without blocking navigation
+    if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
+      final needsSolve = hasNewTerminalAssignment || graph.v[a]?.effectiveEval == null;
+      if (needsSolve) {
+        if (graph is CachedGraph) {
+          (graph as CachedGraph).solveBfenAsync(a).then((_) {
+            if (mounted && seq == _chessBoardListenerSeq) setState(_update);
+          });
+        } else {
+          graph.solveBfen(a);
+          if (mounted && seq == _chessBoardListenerSeq) setState(_update);
+        }
+      }
     }
   }
 

@@ -120,59 +120,87 @@ class CachedGraph extends Graph {
 
   /// Performs targeted retrograde back-propagation through SQLite reverse index (`idx_edges_target`).
   ///
-  /// 1. Discovers all upstream ancestor nodes via SQLite reverse index and memory backlinks.
-  /// 2. Ensures all affected ancestor positions and their 1-ply children are in the LRU cache.
-  /// 3. Contracts strongly connected components and propagates minimax evaluations upward.
-  /// 4. Enqueues updated evaluations to SQLite via [onNodeUpdated].
+  /// Evaluates [bfen] locally first. If [bfen]'s evaluation does not change, returns immediately.
+  /// If [bfen]'s evaluation changes, propagates minimax updates upward along ancestor paths
+  /// where parent evaluations are actively affected.
   Future<void> solveBfenAsync(String bfen) async {
     if (dbService.isOpen) {
       await dbService.flush();
     }
 
-    // 1. Upstream BFS searching both cache backLinks and SQLite reverse index idx_edges_target
-    final upstreamNodes = <String>{bfen};
-    final queue = [bfen];
+    var startVertex = v[bfen];
+    if (startVertex == null) {
+      await prefetchPositions([bfen]);
+      startVertex = v[bfen];
+    }
+    if (startVertex == null) return;
+
+    if (startVertex.links.isEmpty && dbService.isOpen) {
+      final dbChildren = await dbService.getChildrenBfens(bfen);
+      startVertex.links.addAll(dbChildren);
+    }
+
+    if (startVertex.links.isNotEmpty) {
+      final unEvaled = startVertex.links
+          .where((l) => v[l] == null || v[l]?.effectiveEval == null)
+          .toList();
+      if (unEvaled.isNotEmpty) {
+        await prefetchPositions(unEvaled);
+      }
+    }
+
+    startVertex.originalComputed = startVertex.computed;
+    solveSCC([bfen]);
+
+    // If bfen's computed evaluation did not change, no ancestors can change!
+    if (startVertex.computed == startVertex.originalComputed) {
+      return;
+    }
+
+    // Worklist propagation: propagate changes upward only where evaluations actually change!
+    final queue = <String>[bfen];
+    final visitedChangeCount = <String, int>{bfen: 1};
+
     while (queue.isNotEmpty) {
-      final curr = queue.removeLast();
+      final curr = queue.removeAt(0);
+
       final inMemParents = v[curr]?.backLinks ?? const <String>{};
       final dbParents = dbService.isOpen
           ? await dbService.getParentBfens(curr)
           : const <String>[];
       final allParents = {...inMemParents, ...dbParents};
-      for (final parent in allParents) {
-        if (upstreamNodes.add(parent)) {
-          queue.add(parent);
+      if (allParents.isEmpty) continue;
+
+      await prefetchPositions(allParents);
+
+      for (final parentBfen in allParents) {
+        final parentVertex = v[parentBfen];
+        if (parentVertex == null) continue;
+
+        if (parentVertex.links.isEmpty && dbService.isOpen) {
+          final dbChildren = await dbService.getChildrenBfens(parentBfen);
+          parentVertex.links.addAll(dbChildren);
+        }
+
+        final unEvaledChildren = parentVertex.links
+            .where((l) => v[l] == null || v[l]?.effectiveEval == null)
+            .toList();
+        if (unEvaledChildren.isNotEmpty) {
+          await prefetchPositions(unEvaledChildren);
+        }
+
+        parentVertex.originalComputed = parentVertex.computed;
+        solveSCC([parentBfen]);
+
+        if (parentVertex.computed != parentVertex.originalComputed) {
+          final count = (visitedChangeCount[parentBfen] ?? 0) + 1;
+          visitedChangeCount[parentBfen] = count;
+          if (count <= 10) {
+            queue.add(parentBfen);
+          }
         }
       }
     }
-
-    // 2. Ensure all upstream nodes are in cache
-    await prefetchPositions(upstreamNodes);
-
-    // 3. For every upstream node, ensure its children are in cache with their evaluations
-    final childrenToPrefetch = <String>{};
-    for (final node in upstreamNodes) {
-      final dbChildren = dbService.isOpen
-          ? await dbService.getChildrenBfens(node)
-          : const <String>[];
-      final vertex = v[node];
-      if (vertex != null) {
-        vertex.links.addAll(dbChildren);
-      }
-      final allChildren = {...?vertex?.links, ...dbChildren};
-      for (final child in allChildren) {
-        final childVertex = v[child];
-        if (childVertex == null || childVertex.effectiveEval == null) {
-          childrenToPrefetch.add(child);
-        }
-      }
-    }
-    if (childrenToPrefetch.isNotEmpty) {
-      await prefetchPositions(childrenToPrefetch);
-    }
-
-    // 4. Solve the local subgraph in memory
-    solveSubGraph(upstreamNodes);
   }
 
   @override

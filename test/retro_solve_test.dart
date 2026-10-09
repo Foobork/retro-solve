@@ -427,4 +427,48 @@ void main() {
     final knownMoves = state.knownMoves;
     expect(knownMoves.any((m) => m.move == 'e4'), isTrue);
   });
+
+  testWidgets('explore 1-ply evaluates legal moves from root position and stops', (WidgetTester tester) async {
+    resetGraph();
+
+    final engineService = _MockExploreEngineService();
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+
+    // Verify UI has "explore 1-ply" button
+    expect(find.text('explore 1-ply'), findsOneWidget);
+
+    // Load position with exactly 2 legal moves (a3, a4)
+    state.controller.loadFen('1q6/8/8/8/8/8/P7/K7 w - - 0 1');
+    await tester.pumpAndSettle();
+
+    // Start 1-ply exploration
+    final explore1PlyFuture = state.startExploring1Ply();
+    expect(state.isExploring1Ply, isTrue);
+
+    // Pump until exploration finishes
+    int pumps = 0;
+    while (state.isExploring1Ply && pumps < 100) {
+      await tester.pump(const Duration(milliseconds: 100));
+      pumps++;
+    }
+    await explore1PlyFuture;
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(state.isExploring1Ply, isFalse);
+    final knownMoves = state.knownMoves;
+    expect(knownMoves.length, equals(2));
+    expect(knownMoves.any((m) => m.move == 'a3'), isTrue);
+    expect(knownMoves.any((m) => m.move == 'a4'), isTrue);
+    expect(knownMoves.every((m) => m.eval != null), isTrue);
+  });
 }
+

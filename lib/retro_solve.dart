@@ -57,7 +57,7 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, export_, analyzeGame, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
+enum _MoreAction { solve, export_, analyzeGame, explore1Ply, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
 
 class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
@@ -80,6 +80,12 @@ class HomePageState extends State<HomePage> {
   @visibleForTesting
   void setAutosolveAfterExploreForTesting(bool value) =>
       _toggleAutosolveAfterExplore(value);
+
+  @visibleForTesting
+  bool get isExploring1Ply => _isExploring1Ply;
+
+  @visibleForTesting
+  Future<void> startExploring1Ply() => _startExploring1Ply();
 
   @visibleForTesting
   Future<void> solveForTesting() => _solve();
@@ -212,6 +218,11 @@ class HomePageState extends State<HomePage> {
           value: _MoreAction.analyzeGame,
           child: Text('Analyze Game'),
         ),
+        PopupMenuItem(
+          value: _MoreAction.explore1Ply,
+          enabled: !isBoardDisabled,
+          child: const Text('Explore legal moves (1-ply)'),
+        ),
         const PopupMenuDivider(),
         CheckedPopupMenuItem<_MoreAction>(
           value: _MoreAction.toggleBacksolve,
@@ -240,8 +251,12 @@ class HomePageState extends State<HomePage> {
         _button("reset", isBoardDisabled ? null : _reset),
         _button("back", isBoardDisabled ? null : _back),
         _button("flip", _flip),
-        _button(_isExploring ? "stop exploring" : "explore",
-            (_isPickingFile || _isAnalyzingGame) ? null : _exploreToggle),
+        _button(_isExploring && !_isExploring1Ply ? "stop exploring" : "explore",
+            (_isPickingFile || _isAnalyzingGame || _isExploring1Ply) ? null : _exploreToggle),
+        _button(_isExploring1Ply ? "stop 1-ply" : "explore 1-ply",
+            (_isPickingFile || _isAnalyzingGame || (_isExploring && !_isExploring1Ply))
+                ? null
+                : _explore1PlyToggle),
         moreMenu,
         if (Config.showBatchEval)
           _button("batch eval", isBoardDisabled ? null : _batchEval),
@@ -378,6 +393,7 @@ class HomePageState extends State<HomePage> {
 
   bool _isBatchEvaluating = false;
   bool _isExploring = false;
+  bool _isExploring1Ply = false;
   int _evalProgress = 0;
   int _evalTotal = 0;
   String _batchTimeText = "";
@@ -1130,6 +1146,9 @@ class HomePageState extends State<HomePage> {
       case _MoreAction.toggleAutosolveAfterExplore:
         _toggleAutosolveAfterExplore(!_autosolveAfterExplore);
         break;
+      case _MoreAction.explore1Ply:
+        _explore1PlyToggle();
+        break;
     }
   }
 
@@ -1160,6 +1179,144 @@ class HomePageState extends State<HomePage> {
       if (_autosolveAfterExplore) {
         await _solve();
       }
+    }
+  }
+
+  void _explore1PlyToggle() {
+    if (_isExploring1Ply || _isExploring) {
+      setState(() {
+        _isExploring = false;
+        _isExploring1Ply = false;
+      });
+    } else {
+      _startExploring1Ply();
+    }
+  }
+
+  Future<void> _startExploring1Ply() async {
+    if (!_engineAvailable || _isExploring || _isSolving || _isAnalyzingGame) return;
+    setState(() {
+      _isExploring = true;
+      _isExploring1Ply = true;
+    });
+    WakelockPlus.enable();
+    print('[explore-1ply] Started wide shallow exploration of legal moves');
+
+    try {
+      await _exploreLegalMoves();
+    } finally {
+      WakelockPlus.disable();
+      if (mounted) {
+        setState(() {
+          _isExploring = false;
+          _isExploring1Ply = false;
+        });
+      }
+      print('[explore-1ply] Exploration ended/stopped.');
+      if (_autosolveAfterExplore) {
+        await _solve();
+      }
+    }
+  }
+
+  Future<void> _exploreLegalMoves() async {
+    if (!_isExploring || !mounted) return;
+
+    final rootBfen = _controller.game.bfen;
+    final moves = _controller.game.generateMoves();
+    print('[explore-1ply] Position $rootBfen: Found ${moves.length} legal moves');
+
+    final moveSans = moves.map((m) => _controller.game.moveToSan(m)).toList();
+
+    // Prioritize candidate moves from current engine evaluations if available
+    final List<int> indices = List.generate(moves.length, (i) => i);
+    final engineCandidateSans = _engineEvals
+        .map((e) => _uciToSan(e.candidateMove))
+        .where((s) => s != '—')
+        .toList();
+
+    indices.sort((a, b) {
+      final aSan = moveSans[a];
+      final bSan = moveSans[b];
+      final aIdx = engineCandidateSans.indexOf(aSan);
+      final bIdx = engineCandidateSans.indexOf(bSan);
+      if (aIdx != -1 && bIdx != -1) return aIdx.compareTo(bIdx);
+      if (aIdx != -1) return -1;
+      if (bIdx != -1) return 1;
+      return 0;
+    });
+
+    final tempGame = _controller.game.copy();
+
+    for (final idx in indices) {
+      if (!_isExploring || !mounted) break;
+
+      final move = moves[idx];
+      final san = moveSans[idx];
+
+      // 1. Peek child BFEN and terminal status on copy
+      tempGame.makeMove(move);
+      final childBfen = tempGame.bfen;
+      final isGameOver = tempGame.gameOver;
+      final termEval = tempGame.terminalEvaluation;
+      tempGame.undoMove();
+
+      // Ensure graph link exists from root to child
+      graph.addLink(rootBfen, childBfen);
+
+      // If game over, assign terminal evaluation directly
+      if (isGameOver) {
+        if (termEval != null && graph.v[childBfen]?.assigned == null) {
+          graph.assign(childBfen, termEval);
+          graph.v[childBfen]?.inDatabase = true;
+        }
+        continue;
+      }
+
+      // Check if child already has an evaluation in graph
+      final existingAssigned = graph.v[childBfen]?.assigned;
+      final existingComputed = graph.v[childBfen]?.computed;
+      if (existingAssigned != null || existingComputed != null) {
+        print('[explore-1ply] Move $san ($childBfen) already evaluated: ${existingAssigned ?? existingComputed}. Skipping.');
+        continue;
+      }
+
+      // 2. Play the move on the board to evaluate with engine
+      print('[explore-1ply] Evaluating unassigned move: $san ($childBfen)');
+      _controller.makeMoveWithNormalNotation(san);
+
+      // Wait for engine evaluation on the resulting position
+      await _waitForEngineStabilization();
+
+      // Assign engine evaluation if available
+      if (graph.v[childBfen]?.assigned == null && _engineEvals.isNotEmpty) {
+        final bestEval = _engineEvals.first;
+        final currentFen = _controller.game.fen;
+        final currentKey = EngineCache.canonicalKey(_variant, currentFen);
+        if (bestEval.fen != null &&
+            EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey) {
+          final posEval = _engineEvalToPositionEval(
+              bestEval, _controller.game.turn == white);
+          if (posEval != null) {
+            graph.assign(childBfen, posEval);
+            graph.v[childBfen]?.inDatabase = true;
+          }
+        }
+      }
+
+      // 3. Undo move to return to root position
+      _controller.undoMove();
+      if (mounted) {
+        setState(_update);
+      }
+    }
+
+    if (_controller.game.bfen != rootBfen) {
+      _controller.undoMove();
+    }
+    if (mounted) {
+      setState(_update);
+      _requestEngineEval();
     }
   }
 

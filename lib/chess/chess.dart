@@ -1629,6 +1629,7 @@ class Chess {
     final moves = generateMoves();
 
     if (move is String) {
+      move = move.trim().replaceFirst(RegExp(r'^\d+\.{1,3}\s*'), '');
       move = normalizeDropNotation(move);
       final cleanMove = move.trim().replaceAll('-', '').toLowerCase();
       /* convert the move string to a move object */

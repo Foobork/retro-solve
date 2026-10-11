@@ -338,12 +338,12 @@ class HomePageState extends State<HomePage> {
                 ),
                 const SizedBox(width: 16),
                 SizedBox(
-                  width: 250,
+                  width: 280,
                   child: _movesColumn(),
                 ),
                 const SizedBox(width: 16),
                 SizedBox(
-                  width: 250,
+                  width: 280,
                   child: _engineColumn(),
                 ),
               ],
@@ -412,11 +412,21 @@ class HomePageState extends State<HomePage> {
   String _analyzeChapterText = "";
   final Stopwatch _analyzeStopwatch = Stopwatch();
 
+  @visibleForTesting
+  String formatMoveWithNumber(String move) {
+    if (move.isEmpty || move == '—') return move;
+    if (RegExp(r'^\d+\.{1,3}\s*').hasMatch(move)) return move;
+    final isWhite = _controller.game.turn == white;
+    final num = _controller.game.moveNumber;
+    return isWhite ? '$num. $move' : '$num... $move';
+  }
+
   TableRow _buildMoveRow(String move, String evalStr, {Color? color}) {
+    final displayText = formatMoveWithNumber(move);
     return TableRow(
       children: [
         Padding(
-          padding: const EdgeInsets.only(bottom: 8.0, right: 28.0),
+          padding: const EdgeInsets.only(bottom: 8.0, right: 24.0),
           child: Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
@@ -425,10 +435,11 @@ class HomePageState extends State<HomePage> {
                 minimumSize: const Size(0, 0),
                 alignment: Alignment.centerLeft,
               ),
-              onPressed: _isExploring
+              onPressed: _isExploring || move == '—'
                   ? null
                   : () => _controller.makeMoveWithNormalNotation(move),
-              child: Text(move,
+              child: Text(displayText,
+                  softWrap: false,
                   style: TextStyle(
                       fontSize: 20, fontWeight: FontWeight.bold, color: color)),
             ),
@@ -438,6 +449,7 @@ class HomePageState extends State<HomePage> {
           padding: const EdgeInsets.only(bottom: 8.0, right: 16.0),
           child: Text(
             evalStr,
+            softWrap: false,
             style: TextStyle(
                 fontSize: 20,
                 color: color,
@@ -2111,7 +2123,7 @@ class HomePageState extends State<HomePage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 200,
+          width: 240,
           child: InputDecorator(
             decoration: InputDecoration(
               labelText: widget.engineService.isNNUE ? 'Engine (NNUE)' : 'Engine (Classical)',
@@ -2149,7 +2161,7 @@ class HomePageState extends State<HomePage> {
 
   _textField(label, TextEditingController controller, onSubmitted) {
     return SizedBox(
-      width: 200,
+      width: 240,
       child: TextField(
         controller: controller,
         decoration: InputDecoration(

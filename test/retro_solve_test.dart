@@ -388,6 +388,12 @@ void main() {
     expect(knownMoves.any((m) => m.move == 'e4'), isTrue);
     final e4Move = knownMoves.firstWhere((m) => m.move == 'e4');
     expect(e4Move.eval, isNotNull);
+
+    expect(state.controller.game.bfen, equals(Chess().bfen));
+    final rootEval = graph.v[Chess().bfen]?.effectiveEval;
+    expect(rootEval, isNotNull);
+    final expectedFormat = rootEval!.format();
+    expect(state.evalController.text, anyOf(equals(expectedFormat), equals('($expectedFormat)')));
   });
 
   testWidgets('analyze mode analyzes moves and solves once at the end', (WidgetTester tester) async {
@@ -472,7 +478,10 @@ void main() {
     expect(knownMoves.every((m) => m.eval != null), isTrue);
 
     const rootBfen = '1q6/8/8/8/8/8/P7/K7 w - -';
+    expect(state.controller.game.bfen, equals(rootBfen));
     expect(graph.v[rootBfen]?.computed, isNotNull);
+    final expectedFormat = graph.v[rootBfen]!.effectiveEval!.format();
+    expect(state.evalController.text, anyOf(equals(expectedFormat), equals('($expectedFormat)')));
   });
 }
 

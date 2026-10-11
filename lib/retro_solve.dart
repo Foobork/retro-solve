@@ -738,6 +738,7 @@ class HomePageState extends State<HomePage> {
           });
 
           // Auto-populate node directly if not in database and depth is sufficient
+          if (_isExploring || _isAnalyzingGame || _isBatchEvaluating) return;
           final bfen = _controller.game.bfen;
           final existingAssigned = graph.v[bfen]?.assigned;
           if (_engineEvals.isNotEmpty) {
@@ -767,7 +768,7 @@ class HomePageState extends State<HomePage> {
                     graph.solveBfen(bfen);
                   }
                 }
-                if (mounted) {
+                if (mounted && _controller.game.bfen == bfen) {
                   setState(() {
                     _knownMovesToSan();
                     final assigned = graph.v[bfen]?.assigned;
@@ -1188,27 +1189,35 @@ class HomePageState extends State<HomePage> {
     WakelockPlus.enable();
     print('[explore] Started exploring');
 
+    final rootBfen = _controller.game.bfen;
+
     try {
       await _exploreRecursive(isRoot: true);
     } finally {
       WakelockPlus.disable();
-      if (mounted) {
-        setState(() {
-          _isExploring = false;
-        });
+
+      while (_controller.game.bfen != rootBfen && _controller.game.history.isNotEmpty) {
+        _controller.undoMove();
       }
-      print('[explore] Exploration ended/stopped.');
+
       if (_interactiveBacksolving) {
-        final currentBfen = _controller.game.bfen;
         if (graph is CachedGraph) {
-          await (graph as CachedGraph).solveBfenAsync(currentBfen);
+          await (graph as CachedGraph).solveBfenAsync(rootBfen);
         } else {
-          graph.solveBfen(currentBfen);
+          graph.solveBfen(rootBfen);
         }
       }
       if (_autosolveAfterExplore) {
         await _solve();
       }
+
+      if (mounted) {
+        setState(() {
+          _isExploring = false;
+          _update();
+        });
+      }
+      print('[explore] Exploration ended/stopped.');
     }
   }
 
@@ -1232,28 +1241,36 @@ class HomePageState extends State<HomePage> {
     WakelockPlus.enable();
     print('[explore-1ply] Started wide shallow exploration of legal moves');
 
+    final rootBfen = _controller.game.bfen;
+
     try {
       await _exploreLegalMoves();
     } finally {
       WakelockPlus.disable();
-      if (mounted) {
-        setState(() {
-          _isExploring = false;
-          _isExploring1Ply = false;
-        });
+
+      while (_controller.game.bfen != rootBfen && _controller.game.history.isNotEmpty) {
+        _controller.undoMove();
       }
-      print('[explore-1ply] Exploration ended/stopped.');
+
       if (_interactiveBacksolving) {
-        final currentBfen = _controller.game.bfen;
         if (graph is CachedGraph) {
-          await (graph as CachedGraph).solveBfenAsync(currentBfen);
+          await (graph as CachedGraph).solveBfenAsync(rootBfen);
         } else {
-          graph.solveBfen(currentBfen);
+          graph.solveBfen(rootBfen);
         }
       }
       if (_autosolveAfterExplore) {
         await _solve();
       }
+
+      if (mounted) {
+        setState(() {
+          _isExploring = false;
+          _isExploring1Ply = false;
+          _update();
+        });
+      }
+      print('[explore-1ply] Exploration ended/stopped.');
     }
   }
 
@@ -1590,10 +1607,10 @@ class HomePageState extends State<HomePage> {
 
       print('[explore] Returning to parent position.');
       _controller.undoMove();
-      await _waitForEngineStabilization();
       if (mounted) {
         setState(_update);
       }
+      await _waitForEngineStabilization();
     }
   }
 
@@ -1791,6 +1808,9 @@ class HomePageState extends State<HomePage> {
       }
       if (_autosolveAfterExplore) {
         await _solve();
+      }
+      if (mounted) {
+        setState(_update);
       }
     }
   }
@@ -2354,6 +2374,12 @@ class HomePageState extends State<HomePage> {
 
   @visibleForTesting
   Future<void> analyzeGame(String pgnText) => _analyzeGame(pgnText);
+
+  @visibleForTesting
+  TextEditingController get evalController => _evalController;
+
+  @visibleForTesting
+  String get evalText => _eval;
 
   Chess _createGameForVariant(DatasetVariant variant) {
     switch (variant) {

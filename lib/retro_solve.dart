@@ -289,8 +289,8 @@ class HomePageState extends State<HomePage> {
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    _evaluationWidget(),
-                    _engineWidget(),
+                    _evaluationWidget(width: 280),
+                    _engineWidget(width: 280),
                   ],
                 ),
                 if (_isAnalyzingGame) ...[
@@ -316,40 +316,43 @@ class HomePageState extends State<HomePage> {
           );
         }
 
-        return Center(
-          child: _padded(
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    children: <Widget>[
-                      Expanded(
-                        child: Center(
-                          child: chessboard,
+                final double columnWidth = constraints.maxWidth >= 1100
+                    ? 340.0
+                    : (constraints.maxWidth >= 950 ? 310.0 : 280.0);
+                return Center(
+                  child: _padded(
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            children: <Widget>[
+                              Expanded(
+                                child: Center(
+                                  child: chessboard,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              turn,
+                              const SizedBox(height: 4),
+                              actionButtons,
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 6),
-                      turn,
-                      const SizedBox(height: 4),
-                      actionButtons,
-                    ],
+                        const SizedBox(width: 16),
+                        SizedBox(
+                          width: columnWidth,
+                          child: _movesColumn(columnWidth),
+                        ),
+                        const SizedBox(width: 16),
+                        SizedBox(
+                          width: columnWidth,
+                          child: _engineColumn(columnWidth),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 16),
-                SizedBox(
-                  width: 280,
-                  child: _movesColumn(),
-                ),
-                const SizedBox(width: 16),
-                SizedBox(
-                  width: 280,
-                  child: _engineColumn(),
-                ),
-              ],
-            ),
-          ),
-        );
+                );
       },
     );
 
@@ -426,7 +429,7 @@ class HomePageState extends State<HomePage> {
     return TableRow(
       children: [
         Padding(
-          padding: const EdgeInsets.only(bottom: 8.0, right: 24.0),
+          padding: const EdgeInsets.only(bottom: 8.0, right: 20.0),
           child: Align(
             alignment: Alignment.centerLeft,
             child: TextButton(
@@ -440,16 +443,18 @@ class HomePageState extends State<HomePage> {
                   : () => _controller.makeMoveWithNormalNotation(move),
               child: Text(displayText,
                   softWrap: false,
+                  maxLines: 1,
                   style: TextStyle(
                       fontSize: 20, fontWeight: FontWeight.bold, color: color)),
             ),
           ),
         ),
         Padding(
-          padding: const EdgeInsets.only(bottom: 8.0, right: 16.0),
+          padding: const EdgeInsets.only(bottom: 8.0, right: 12.0),
           child: Text(
             evalStr,
             softWrap: false,
+            maxLines: 1,
             style: TextStyle(
                 fontSize: 20,
                 color: color,
@@ -482,12 +487,13 @@ class HomePageState extends State<HomePage> {
     );
   }
 
-  _movesColumn() {
+  _movesColumn([double? width]) {
+    final widgetWidth = (width != null ? width - 16 : 280.0).clamp(240.0, 340.0);
     return _padded(
       Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _evaluationWidget(),
+          _evaluationWidget(width: widgetWidth),
           if (_isSolving) ...[
             const SizedBox(height: 8),
             _solveProgressWidget(),
@@ -672,7 +678,8 @@ class HomePageState extends State<HomePage> {
     );
   }
 
-  _engineColumn() {
+  _engineColumn([double? width]) {
+    final widgetWidth = (width != null ? width - 16 : 280.0).clamp(240.0, 340.0);
     return _padded(
       Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -683,7 +690,7 @@ class HomePageState extends State<HomePage> {
             _batchEvalProgress(),
           Expanded(
             child: SingleChildScrollView(
-              child: _engineWidget(),
+              child: _engineWidget(width: widgetWidth),
             ),
           ),
         ],
@@ -1971,8 +1978,8 @@ class HomePageState extends State<HomePage> {
     return Container(padding: padding, child: child);
   }
 
-  _evaluationWidget() {
-    return _textField("Evaluation", _evalController, _updateEval);
+  _evaluationWidget({double width = 280.0}) {
+    return _textField("Evaluation", _evalController, _updateEval, width: width);
   }
 
   Set<String> _getKnownMoveSans() {
@@ -2016,7 +2023,7 @@ class HomePageState extends State<HomePage> {
     return uci;
   }
 
-  Widget _engineWidget() {
+  Widget _engineWidget({double width = 280.0}) {
     Widget content;
     final currentFen = _controller.game.fen;
     final currentKey = EngineCache.canonicalKey(_variant, currentFen);
@@ -2123,7 +2130,7 @@ class HomePageState extends State<HomePage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
-          width: 240,
+          width: width,
           child: InputDecorator(
             decoration: InputDecoration(
               labelText: widget.engineService.isNNUE ? 'Engine (NNUE)' : 'Engine (Classical)',
@@ -2159,9 +2166,9 @@ class HomePageState extends State<HomePage> {
     }
   }
 
-  _textField(label, TextEditingController controller, onSubmitted) {
+  _textField(label, TextEditingController controller, onSubmitted, {double width = 280.0}) {
     return SizedBox(
-      width: 240,
+      width: width,
       child: TextField(
         controller: controller,
         decoration: InputDecoration(

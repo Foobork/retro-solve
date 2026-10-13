@@ -483,5 +483,54 @@ void main() {
     final expectedFormat = graph.v[rootBfen]!.effectiveEval!.format();
     expect(state.evalController.text, anyOf(equals(expectedFormat), equals('($expectedFormat)')));
   });
+
+  testWidgets('stop exploring button is enabled and stops PGN analysis', (WidgetTester tester) async {
+    resetGraph();
+
+    final engineService = _MockExploreEngineService();
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+
+    const pgn = '''
+[Event "Long Game"]
+[Variant "Standard"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6
+''';
+
+    final analyzeFuture = state.analyzeGame(pgn);
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(state.isAnalyzingGame, isTrue);
+    expect(state.isExploring, isTrue);
+
+    // Stop exploring button should be visible and enabled
+    final stopExploringFinder = find.widgetWithText(TextButton, 'stop exploring');
+    expect(stopExploringFinder, findsOneWidget);
+    final stopExploringButton = tester.widget<TextButton>(stopExploringFinder);
+    expect(stopExploringButton.onPressed, isNotNull);
+
+    // Tap "stop exploring"
+    await tester.tap(stopExploringFinder);
+    await tester.pump();
+
+    // Analysis should stop gracefully
+    for (int i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (!state.isAnalyzingGame) break;
+    }
+    await analyzeFuture;
+    await tester.pumpAndSettle();
+
+    expect(state.isAnalyzingGame, isFalse);
+    expect(state.isExploring, isFalse);
+  });
 }
 

@@ -252,7 +252,7 @@ class HomePageState extends State<HomePage> {
         _button("back", isBoardDisabled ? null : _back),
         _button("flip", _flip),
         _button(_isExploring && !_isExploring1Ply ? "stop exploring" : "explore",
-            (_isPickingFile || _isAnalyzingGame || _isExploring1Ply) ? null : _exploreToggle),
+            (_isPickingFile || _isExploring1Ply || (_isAnalyzingGame && !_isExploring)) ? null : _exploreToggle),
         _button(_isExploring1Ply ? "stop 1-ply" : "explore 1-ply",
             (_isPickingFile || _isAnalyzingGame || (_isExploring && !_isExploring1Ply))
                 ? null
@@ -393,6 +393,9 @@ class HomePageState extends State<HomePage> {
   String _turn = "";
   PlayerColor _orientation = white;
   final TextEditingController _evalController = TextEditingController();
+  final ScrollController _knownMovesScrollController = ScrollController();
+  @visibleForTesting
+  ScrollController get knownMovesScrollController => _knownMovesScrollController;
 
   bool _isBatchEvaluating = false;
   bool _isExploring = false;
@@ -436,6 +439,7 @@ class HomePageState extends State<HomePage> {
               style: TextButton.styleFrom(
                 padding: EdgeInsets.zero,
                 minimumSize: const Size(0, 0),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 alignment: Alignment.centerLeft,
               ),
               onPressed: _isExploring || move == '—'
@@ -466,7 +470,11 @@ class HomePageState extends State<HomePage> {
     );
   }
 
-  _movesTable() {
+  static const int _maxVisibleKnownMoves = 8;
+  static const double _moveRowHeight = 37.0;
+  static const double _maxKnownMovesHeight = _maxVisibleKnownMoves * _moveRowHeight;
+
+  Widget _movesTable() {
     var rows = _knownMoves.map((MoveInfo info) {
       String evalStr = "";
       if (info.eval != null) {
@@ -476,18 +484,29 @@ class HomePageState extends State<HomePage> {
     }).toList();
 
     return _padded(
-      Table(
-        columnWidths: const <int, TableColumnWidth>{
-          0: IntrinsicColumnWidth(),
-          1: IntrinsicColumnWidth(),
-        },
-        children: rows,
-        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: _maxKnownMovesHeight),
+        child: Scrollbar(
+          controller: _knownMovesScrollController,
+          thumbVisibility: _knownMoves.length > _maxVisibleKnownMoves ? true : null,
+          child: SingleChildScrollView(
+            controller: _knownMovesScrollController,
+            padding: const EdgeInsets.only(right: 16.0),
+            child: Table(
+              columnWidths: const <int, TableColumnWidth>{
+                0: IntrinsicColumnWidth(),
+                1: IntrinsicColumnWidth(),
+              },
+              children: rows,
+              defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  _movesColumn([double? width]) {
+  Widget _movesColumn([double? width]) {
     final widgetWidth = (width != null ? width - 16 : 280.0).clamp(240.0, 340.0);
     return _padded(
       Column(
@@ -498,10 +517,8 @@ class HomePageState extends State<HomePage> {
             const SizedBox(height: 8),
             _solveProgressWidget(),
           ],
-          Expanded(
-            child: SingleChildScrollView(
-              child: _movesTable(),
-            ),
+          Flexible(
+            child: _movesTable(),
           ),
         ],
       ),
@@ -817,6 +834,7 @@ class HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _knownMovesScrollController.dispose();
     _evalController.dispose();
     _evalTimer?.cancel();
     _evalSub?.cancel();
@@ -1096,6 +1114,11 @@ class HomePageState extends State<HomePage> {
     _controller.getPossibleMoves().forEach(_addMoveIfKnown);
     _knownMoves.sort(_compare(_controller.game.turn));
     print('[KNOWN-MOVES] bfen="${_controller.game.bfen}" count=${_knownMoves.length} moves=${_knownMoves.map((m) => "${m.move} (${m.eval})").toList()}');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_knownMovesScrollController.hasClients) {
+        _knownMovesScrollController.jumpTo(0);
+      }
+    });
   }
 
   void _addMoveIfKnown(Move move) {
@@ -1197,7 +1220,7 @@ class HomePageState extends State<HomePage> {
   void _exploreToggle() {
     if (_isExploring) {
       setState(() => _isExploring = false);
-    } else {
+    } else if (!_isAnalyzingGame) {
       _startExploring();
     }
   }

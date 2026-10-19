@@ -532,5 +532,102 @@ void main() {
     expect(state.isAnalyzingGame, isFalse);
     expect(state.isExploring, isFalse);
   });
+
+  testWidgets('explore move history explores current position and all ancestor positions backward, then restores board', (WidgetTester tester) async {
+    resetGraph();
+
+    final engineService = _MockExploreEngineService();
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+
+    final pos0Bfen = state.controller.game.bfen;
+    state.controller.makeMoveWithNormalNotation('e4');
+    final pos1Bfen = state.controller.game.bfen;
+    state.controller.makeMoveWithNormalNotation('e5');
+    final pos2Bfen = state.controller.game.bfen;
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(state.controller.game.history.length, equals(2));
+
+    final historyFuture = state.startExploringHistory();
+    expect(state.isExploringHistory, isTrue);
+    expect(state.isExploring, isTrue);
+
+    int pumps = 0;
+    while (state.isExploringHistory && pumps < 120) {
+      await tester.pump(const Duration(milliseconds: 100));
+      pumps++;
+    }
+    await historyFuture;
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(state.isExploringHistory, isFalse);
+    expect(state.isExploring, isFalse);
+
+    // Board should be restored to pos2 with its 2-move history intact
+    expect(state.controller.game.bfen, equals(pos2Bfen));
+    expect(state.controller.game.history.length, equals(2));
+
+    // Current position and all ancestor positions in history should be evaluated in the graph
+    expect(graph.v[pos2Bfen]?.effectiveEval, isNotNull);
+    expect(graph.v[pos1Bfen]?.effectiveEval, isNotNull);
+    expect(graph.v[pos0Bfen]?.effectiveEval, isNotNull);
+  });
+
+  testWidgets('stop exploring button stops move history exploration and restores board position', (WidgetTester tester) async {
+    resetGraph();
+
+    final engineService = _MockExploreEngineService();
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: engineService,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+
+    for (final move in ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6']) {
+      state.controller.makeMoveWithNormalNotation(move);
+    }
+    final targetBfen = state.controller.game.bfen;
+    final targetHistoryLen = state.controller.game.history.length;
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final historyFuture = state.startExploringHistory();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(state.isExploringHistory, isTrue);
+    expect(state.isExploring, isTrue);
+
+    final stopExploringFinder = find.widgetWithText(TextButton, 'stop exploring');
+    expect(stopExploringFinder, findsOneWidget);
+    final stopExploringButton = tester.widget<TextButton>(stopExploringFinder);
+    expect(stopExploringButton.onPressed, isNotNull);
+
+    await tester.tap(stopExploringFinder);
+    await tester.pump();
+
+    for (int i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (!state.isExploringHistory) break;
+    }
+    await historyFuture;
+    await tester.pumpAndSettle();
+
+    expect(state.isExploringHistory, isFalse);
+    expect(state.isExploring, isFalse);
+    expect(state.controller.game.bfen, equals(targetBfen));
+    expect(state.controller.game.history.length, equals(targetHistoryLen));
+  });
 }
 

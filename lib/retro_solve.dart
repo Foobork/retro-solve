@@ -57,7 +57,7 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, export_, analyzeGame, explore1Ply, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
+enum _MoreAction { solve, export_, analyzeGame, exploreHistory, explore1Ply, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
 
 class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
@@ -86,6 +86,12 @@ class HomePageState extends State<HomePage> {
 
   @visibleForTesting
   Future<void> startExploring1Ply() => _startExploring1Ply();
+
+  @visibleForTesting
+  bool get isExploringHistory => _isExploringHistory;
+
+  @visibleForTesting
+  Future<void> startExploringHistory() => _startExploringHistory();
 
   @visibleForTesting
   Future<void> solveForTesting() => _solve();
@@ -118,7 +124,7 @@ class HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final bool isBoardDisabled =
-        _isExploring || _isAnalyzingGame || _isBatchEvaluating || _isLoadingVariant || _isPickingFile || _isSolving;
+        _isExploring || _isAnalyzingGame || _isExploringHistory || _isBatchEvaluating || _isLoadingVariant || _isPickingFile || _isSolving;
 
     final lastMove = _controller.game.history.isNotEmpty ? _controller.game.history.last.move : null;
     final lastMoveFrom = lastMove?.fromAlgebraic;
@@ -219,6 +225,11 @@ class HomePageState extends State<HomePage> {
           child: Text('Analyze Game'),
         ),
         PopupMenuItem(
+          value: _MoreAction.exploreHistory,
+          enabled: !isBoardDisabled,
+          child: const Text('Explore move history'),
+        ),
+        PopupMenuItem(
           value: _MoreAction.explore1Ply,
           enabled: !isBoardDisabled,
           child: const Text('Explore legal moves (1-ply)'),
@@ -252,9 +263,9 @@ class HomePageState extends State<HomePage> {
         _button("back", isBoardDisabled ? null : _back),
         _button("flip", _flip),
         _button(_isExploring && !_isExploring1Ply ? "stop exploring" : "explore",
-            (_isPickingFile || _isExploring1Ply || (_isAnalyzingGame && !_isExploring)) ? null : _exploreToggle),
+            (_isPickingFile || _isExploring1Ply || ((_isAnalyzingGame || _isExploringHistory) && !_isExploring)) ? null : _exploreToggle),
         _button(_isExploring1Ply ? "stop 1-ply" : "explore 1-ply",
-            (_isPickingFile || _isAnalyzingGame || (_isExploring && !_isExploring1Ply))
+            (_isPickingFile || _isAnalyzingGame || _isExploringHistory || (_isExploring && !_isExploring1Ply))
                 ? null
                 : _explore1PlyToggle),
         moreMenu,
@@ -293,7 +304,7 @@ class HomePageState extends State<HomePage> {
                     _engineWidget(width: 280),
                   ],
                 ),
-                if (_isAnalyzingGame) ...[
+                if (_isAnalyzingGame || _isExploringHistory) ...[
                   const SizedBox(height: 12),
                   _analyzeGameProgress(),
                 ],
@@ -400,6 +411,7 @@ class HomePageState extends State<HomePage> {
   bool _isBatchEvaluating = false;
   bool _isExploring = false;
   bool _isExploring1Ply = false;
+  bool _isExploringHistory = false;
   int _evalProgress = 0;
   int _evalTotal = 0;
   String _batchTimeText = "";
@@ -701,7 +713,7 @@ class HomePageState extends State<HomePage> {
       Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          if (_isAnalyzingGame)
+          if (_isAnalyzingGame || _isExploringHistory)
             _analyzeGameProgress(),
           if (Config.showBatchEval && _isBatchEvaluating)
             _batchEvalProgress(),
@@ -1198,6 +1210,9 @@ class HomePageState extends State<HomePage> {
       case _MoreAction.analyzeGame:
         _pickAndAnalyzeGame();
         break;
+      case _MoreAction.exploreHistory:
+        _startExploringHistory();
+        break;
       case _MoreAction.toggleBacksolve:
         _toggleInteractiveBacksolving(!_interactiveBacksolving);
         break;
@@ -1220,7 +1235,7 @@ class HomePageState extends State<HomePage> {
   void _exploreToggle() {
     if (_isExploring) {
       setState(() => _isExploring = false);
-    } else if (!_isAnalyzingGame) {
+    } else if (!_isAnalyzingGame && !_isExploringHistory) {
       _startExploring();
     }
   }
@@ -1263,6 +1278,153 @@ class HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _ensureCurrentPositionLinked() async {
+    final game = _controller.game.copy();
+    final a = game.bfen;
+
+    final moves = game.generateMoves();
+    final childBfens = <String>[];
+    for (final move in moves) {
+      game.makeMove(move);
+      childBfens.add(game.bfen);
+      game.undo();
+    }
+
+    if (graph is CachedGraph) {
+      await (graph as CachedGraph).prefetchPositions([a, ...childBfens]);
+    }
+
+    if (game.gameOver) {
+      final score = game.terminalEvaluation;
+      if (score != null && graph.v[a]?.assigned == null) {
+        graph.assign(a, score);
+      }
+      return;
+    }
+
+    for (int i = 0; i < moves.length; i++) {
+      final move = moves[i];
+      final b = childBfens[i];
+      game.makeMove(move);
+      if (game.gameOver) {
+        final score = game.terminalEvaluation;
+        if (score != null && graph.v[b]?.assigned == null) {
+          graph.assign(b, score);
+        }
+      }
+      game.undo();
+      graph.addLink(a, b);
+    }
+  }
+
+  Future<void> _startExploringHistory() async {
+    if (!_engineAvailable ||
+        _isExploring ||
+        _isSolving ||
+        _isAnalyzingGame ||
+        _isExploringHistory ||
+        _isBatchEvaluating) {
+      return;
+    }
+
+    final savedGame = _controller.game.copy();
+    final savedBfen = savedGame.bfen;
+
+    _analyzeTotal = _controller.game.history.length + 1;
+    _analyzeProgress = 0;
+    _analyzeTimeText = "";
+    _analyzeChapterText = "Exploring move history";
+    _analyzeStopwatch.reset();
+    _analyzeStopwatch.start();
+
+    setState(() {
+      _isExploring = true;
+      _isExploringHistory = true;
+    });
+    WakelockPlus.enable();
+    print('[explore-history] Started exploring move history ($_analyzeTotal positions)');
+
+    try {
+      while (_isExploring && mounted) {
+        _recordAnalyzeProgress();
+
+        final targetHistoryLen = _controller.game.history.length;
+        final stepBfen = _controller.game.bfen;
+
+        await _ensureCurrentPositionLinked();
+        if (!mounted || !_isExploring) break;
+        setState(_update);
+
+        await _waitForEngineStabilization();
+        if (!mounted || !_isExploring) break;
+
+        if (graph.v[stepBfen]?.assigned == null && _engineEvals.isNotEmpty) {
+          final bestEval = _engineEvals.first;
+          final currentFen = _controller.game.fen;
+          final currentKey = EngineCache.canonicalKey(_variant, currentFen);
+          if (bestEval.fen != null &&
+              EngineCache.canonicalKey(_variant, bestEval.fen!) == currentKey) {
+            final posEval =
+                _engineEvalToPositionEval(bestEval, _controller.game.turn == white);
+            if (posEval != null) {
+              graph.assign(stepBfen, posEval);
+              graph.v[stepBfen]?.inDatabase = true;
+            }
+          }
+        }
+
+        await _exploreRecursive(isRoot: true);
+
+        while (_controller.game.history.length > targetHistoryLen &&
+            _controller.game.history.isNotEmpty) {
+          _controller.undoMove();
+        }
+
+        if (_interactiveBacksolving) {
+          if (graph is CachedGraph) {
+            await (graph as CachedGraph).solveBfenAsync(stepBfen);
+          } else {
+            graph.solveBfen(stepBfen);
+          }
+        }
+
+        if (!_isExploring || !mounted) break;
+        if (_controller.game.history.isEmpty) break;
+
+        print('[explore-history] Stepping back in move history');
+        _controller.undoMove();
+      }
+    } finally {
+      _analyzeStopwatch.stop();
+      WakelockPlus.disable();
+
+      _controller.setGame(savedGame);
+      await _ensureCurrentPositionLinked();
+
+      if (_interactiveBacksolving) {
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).solveBfenAsync(savedBfen);
+        } else {
+          graph.solveBfen(savedBfen);
+        }
+      }
+      if (_autosolveAfterExplore) {
+        await _solve();
+      }
+
+      if (mounted) {
+        setState(() {
+          _isExploring = false;
+          _isExploringHistory = false;
+          _analyzeTimeText = "";
+          _analyzeChapterText = "";
+          _update();
+        });
+      }
+      print('[explore-history] Move history exploration ended/stopped.');
+    }
+  }
+
   void _explore1PlyToggle() {
     if (_isExploring1Ply || _isExploring) {
       setState(() {
@@ -1275,7 +1437,7 @@ class HomePageState extends State<HomePage> {
   }
 
   Future<void> _startExploring1Ply() async {
-    if (!_engineAvailable || _isExploring || _isSolving || _isAnalyzingGame) return;
+    if (!_engineAvailable || _isExploring || _isSolving || _isAnalyzingGame || _isExploringHistory) return;
     setState(() {
       _isExploring = true;
       _isExploring1Ply = true;

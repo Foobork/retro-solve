@@ -236,6 +236,7 @@ class CachedGraph extends Graph {
 
         int losingCount = 0;
         int maxLoseDtw = -1;
+        bool hasNullLoseDtw = false;
         PositionEval? bestLoseCandidate;
 
         PositionEval? bestNonDecisiveCandidate;
@@ -259,7 +260,10 @@ class CachedGraph extends Graph {
           } else if (candidate.result == targetLoss) {
             losingCount++;
             final dtw = candidate.dtw;
-            if (dtw != null && dtw > maxLoseDtw) {
+            if (dtw == null) {
+              hasNullLoseDtw = true;
+              bestLoseCandidate = candidate;
+            } else if (!hasNullLoseDtw && dtw > maxLoseDtw) {
               maxLoseDtw = dtw;
               bestLoseCandidate = candidate;
             } else {

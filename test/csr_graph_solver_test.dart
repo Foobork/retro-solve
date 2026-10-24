@@ -264,5 +264,39 @@ void main() {
     expect(parentRow!['computed_result'], equals(GameResult.whiteWins.value));
     expect(parentRow['computed_dtw'], equals(4));
   });
+
+  test('CsrGraphSolver prefers unknown +Mate (null DTW) over known +Mn when all moves lose', () async {
+    final dbService = DatabaseService.instance;
+
+    // Black to move has two losing choices:
+    // Move A: known White win in 1 ply (dtw: 1)
+    // Move B: tablebase / proof cutoff White win with unknown distance (dtw: null)
+    const parentBfen = 'rnbqkbnr/ppp1pppp/3p4/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq -';
+    const knownLossChild = 'known_loss_child w - -';
+    const unknownDtwLossChild = 'unknown_dtw_loss_child w - -';
+
+    dbService.upsertNode(parentBfen, null, null);
+    dbService.upsertNode(
+      knownLossChild,
+      const PositionEval(result: GameResult.whiteWins, dtw: 1),
+      null,
+    );
+    dbService.upsertNode(
+      unknownDtwLossChild,
+      const PositionEval(result: GameResult.whiteWins),
+      null,
+    );
+
+    dbService.upsertEdge(parentBfen, knownLossChild);
+    dbService.upsertEdge(parentBfen, unknownDtwLossChild);
+    await dbService.flush();
+
+    await dbService.solveGlobalCsr();
+
+    final parentRow = await dbService.getNode(parentBfen);
+    // Black prefers unknown +Mate (dtw: null) over a short known mate (+M1)
+    expect(parentRow!['computed_result'], equals(GameResult.whiteWins.value));
+    expect(parentRow['computed_dtw'], isNull);
+  });
 }
 

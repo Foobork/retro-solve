@@ -629,5 +629,60 @@ void main() {
     expect(state.controller.game.bfen, equals(targetBfen));
     expect(state.controller.game.history.length, equals(targetHistoryLen));
   });
+
+  testWidgets('displays move history in paragraph form and updates on moves, undo, and reset', (WidgetTester tester) async {
+    resetGraph();
+
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.standard,
+        engineService: _NoopEngineService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final state = tester.state<HomePageState>(find.byType(HomePage));
+    final historyFinder = find.byKey(const ValueKey('move-history-text'));
+    expect(historyFinder, findsOneWidget);
+    expect(tester.widget<Text>(historyFinder).data, equals('—'));
+
+    // Verify move history box spans across both columns and sits below both move lists
+    final evalFieldFinder = find.byType(TextField);
+    final historyBoxFinder = find.ancestor(
+      of: historyFinder,
+      matching: find.byType(InputDecorator),
+    ).first;
+    final evalRect = tester.getRect(evalFieldFinder);
+    final historyRect = tester.getRect(historyBoxFinder);
+    final initialHistoryTop = historyRect.top;
+    expect(historyRect.width, greaterThan(evalRect.width * 1.8));
+    expect(historyRect.top, greaterThanOrEqualTo(evalRect.bottom));
+
+    state.controller.makeMoveWithNormalNotation('e4');
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(historyFinder).data, equals('1. e4'));
+    expect(tester.getRect(historyBoxFinder).top, equals(initialHistoryTop));
+
+    state.controller.makeMoveWithNormalNotation('e5');
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(historyFinder).data, equals('1. e4 e5'));
+    expect(tester.getRect(historyBoxFinder).top, equals(initialHistoryTop));
+
+    state.controller.makeMoveWithNormalNotation('Nf3');
+    state.controller.makeMoveWithNormalNotation('Nc6');
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(historyFinder).data, equals('1. e4 e5 2. Nf3 Nc6'));
+    expect(tester.getRect(historyBoxFinder).top, equals(initialHistoryTop));
+
+    state.controller.undoMove();
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(historyFinder).data, equals('1. e4 e5 2. Nf3'));
+    expect(tester.getRect(historyBoxFinder).top, equals(initialHistoryTop));
+
+    state.controller.resetBoard();
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(historyFinder).data, equals('—'));
+    expect(tester.getRect(historyBoxFinder).top, equals(initialHistoryTop));
+  });
 }
 

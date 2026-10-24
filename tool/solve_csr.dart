@@ -31,19 +31,23 @@ Future<void> main(List<String> args) async {
   print('SCC count:       ${result.sccCount}');
   print('Updated nodes:   ${result.updatedPositions}');
 
-  final remainingNullDtw = await db.rawQuery('''
+  final remainingWhiteNullDtw = await db.rawQuery('''
+    SELECT count(1) as cnt
+    FROM positions
+    WHERE computed_result = 1 AND computed_dtw IS NULL;
+  ''');
+  print(
+    'Positions with computed_result = 1 (+Mate, NULL DTW): ${remainingWhiteNullDtw.first['cnt']}',
+  );
+
+  final remainingBlackNullDtw = await db.rawQuery('''
     SELECT count(1) as cnt
     FROM positions
     WHERE computed_result = -1 AND computed_dtw IS NULL;
   ''');
-  print('Positions with computed_result = -1 and NULL DTW: ${remainingNullDtw.first['cnt']}');
-
-  final mate1Count = await db.rawQuery('''
-    SELECT count(1) as cnt
-    FROM positions
-    WHERE computed_result = -1 AND computed_dtw = 1;
-  ''');
-  print('Positions with computed_result = -1 and DTW = 1 (-M1): ${mate1Count.first['cnt']}');
+  print(
+    'Positions with computed_result = -1 (-Mate, NULL DTW): ${remainingBlackNullDtw.first['cnt']}',
+  );
 
   await db.close();
 }

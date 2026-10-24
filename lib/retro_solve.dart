@@ -321,6 +321,8 @@ class HomePageState extends State<HomePage> {
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                 const SizedBox(height: 8),
                 _movesTable(),
+                const SizedBox(height: 16),
+                _moveHistoryWidget(width: (constraints.maxWidth - 24).clamp(280.0, 572.0)),
                 const SizedBox(height: 32),
               ],
             ),
@@ -352,13 +354,36 @@ class HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(width: 16),
                         SizedBox(
-                          width: columnWidth,
-                          child: _movesColumn(columnWidth),
-                        ),
-                        const SizedBox(width: 16),
-                        SizedBox(
-                          width: columnWidth,
-                          child: _engineColumn(columnWidth),
+                          width: columnWidth * 2 + 16,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                height: _maxKnownMovesHeight + 92.0,
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SizedBox(
+                                      width: columnWidth,
+                                      child: _movesColumn(columnWidth),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    SizedBox(
+                                      width: columnWidth,
+                                      child: _engineColumn(columnWidth),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Expanded(
+                                child: SingleChildScrollView(
+                                  child: _padded(
+                                    _moveHistoryWidget(width: columnWidth * 2),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
@@ -2326,6 +2351,57 @@ class HomePageState extends State<HomePage> {
           ),
         ),
       ],
+    );
+  }
+
+  @visibleForTesting
+  String formatMoveHistory() {
+    if (_controller.game.history.isEmpty) return '';
+    final game = _controller.game.copy();
+    final reversedMoves = <Move>[];
+    while (game.history.isNotEmpty) {
+      final m = game.undoMove();
+      if (m == null) break;
+      reversedMoves.add(m);
+    }
+
+    final parts = <String>[];
+    bool isFirst = true;
+    while (reversedMoves.isNotEmpty) {
+      final move = reversedMoves.removeLast();
+      final san = game.moveToSan(move);
+      if (move.color == white) {
+        parts.add('${game.moveNumber}. $san');
+      } else if (isFirst) {
+        parts.add('${game.moveNumber}... $san');
+      } else {
+        parts.add(san);
+      }
+      isFirst = false;
+      game.makeMove(move);
+    }
+    return parts.join(' ');
+  }
+
+  Widget _moveHistoryWidget({double width = 280.0}) {
+    final historyText = formatMoveHistory();
+    return SizedBox(
+      width: width,
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Move History',
+          border: OutlineInputBorder(),
+          contentPadding: EdgeInsets.all(12),
+        ),
+        child: Text(
+          historyText.isEmpty ? '—' : historyText,
+          key: const ValueKey('move-history-text'),
+          style: TextStyle(
+            fontSize: historyText.isEmpty ? 20 : 16,
+            height: historyText.isEmpty ? null : 1.4,
+          ),
+        ),
+      ),
     );
   }
 

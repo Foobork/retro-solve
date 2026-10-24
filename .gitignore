@@ -48,6 +48,7 @@ data/*.json
 .pub-cache/
 .pub/
 /build/
+/scratch/
 
 # Web related
 

@@ -439,6 +439,7 @@ class CsrGraphSolver {
 
         int losingCount = 0;
         int maxLoseDtw = -1;
+        bool hasNullLoseDtw = false;
 
         int bestNonDecisiveCp = kNullCp;
         bool hasDraw = false;
@@ -459,7 +460,10 @@ class CsrGraphSolver {
             losingCount++;
             final rawDtw = (computedRes[child] == targetLoss) ? computedDtw[child] : assignedDtw[child];
             final candDtw = (rawDtw >= 0) ? rawDtw + 1 : -1;
-            if (candDtw > maxLoseDtw) {
+            if (candDtw < 0) {
+              hasNullLoseDtw = true;
+              maxLoseDtw = -1;
+            } else if (!hasNullLoseDtw && candDtw > maxLoseDtw) {
               maxLoseDtw = candDtw;
             }
           } else if (childRes == 2) {

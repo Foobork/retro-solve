@@ -495,12 +495,20 @@ class CsrGraphSolver {
           // 1. Any winning move -> Side to move WINS
           bestRes = targetWin;
           bestDtw = minWinDtw == 999999 ? -1 : minWinDtw;
+          if (assignedRes[node] == targetWin && assignedDtw[node] >= 0) {
+            if (bestDtw < 0 || assignedDtw[node] < bestDtw) {
+              bestDtw = assignedDtw[node];
+            }
+          }
           bestCp = kNullCp;
           hasBest = true;
         } else if (numEdges > 0 && losingCount == numEdges) {
           // 2. ALL moves are proven losses -> Side to move is forced to LOSE
           bestRes = targetLoss;
           bestDtw = maxLoseDtw;
+          if (bestDtw < 0 && assignedRes[node] == targetLoss && assignedDtw[node] >= 0) {
+            bestDtw = assignedDtw[node];
+          }
           bestCp = kNullCp;
           hasBest = true;
         } else if (numEdges > 0 && losingCount + (hasDraw ? 1 : 0) == numEdges && hasDraw) {

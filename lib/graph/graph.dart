@@ -217,7 +217,19 @@ class Vertex {
   Set<String> links = {};
   Set<String> backLinks = {};
 
-  PositionEval? get effectiveEval => computed ?? assigned;
+  PositionEval? get effectiveEval {
+    if (computed == null) return assigned;
+    if (assigned == null) return computed;
+    if (computed!.result != null &&
+        assigned!.result != null &&
+        computed!.result == assigned!.result) {
+      if (computed!.dtw != null && assigned!.dtw != null) {
+        return computed!.dtw! <= assigned!.dtw! ? computed : assigned;
+      }
+      return computed!.dtw != null ? computed : assigned;
+    }
+    return computed ?? assigned;
+  }
 
   /// Legacy double getters for backward compatibility
   double? get assignedScore => assigned?.toLegacyScore();

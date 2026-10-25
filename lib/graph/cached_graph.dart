@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import '../persistence/database_service.dart';
 import 'graph.dart';
+import 'watkins_proof_index.dart';
 
 /// A bounded, on-demand cached graph backed by SQLite storage.
 ///
@@ -18,21 +19,70 @@ class CachedGraph extends Graph {
   })  : dbService = dbService ?? DatabaseService.instance,
         super(vertexMap: LruMap<String, Vertex>(capacity: cacheCapacity));
 
+  bool get _isAntichess =>
+      (dbService.dbPath ?? '').toLowerCase().contains('antichess');
+
   /// Loads a single vertex by BFEN from SQLite if not present in memory.
   ///
   /// Automatically populates the vertex's outgoing links and incoming backlinks
   /// from the SQLite database. Returns `null` if the position does not exist in the database.
   Future<Vertex?> loadVertex(String bfen) async {
-    if (v.containsKey(bfen)) {
-      return v[bfen];
+    final existing = v[bfen];
+    if (existing != null &&
+        (existing.queriedFromDb ||
+            existing.inDatabase ||
+            existing.assigned != null ||
+            existing.computed != null)) {
+      return existing;
     }
     if (!dbService.isOpen) return null;
 
     final row = await dbService.getNode(bfen);
-    if (row == null) return null;
+    if (row == null) {
+      if (_isAntichess) {
+        final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
+        if (idxEntry != null) {
+          final proofEval = PositionEval(
+            result: GameResult.whiteWins,
+            dtw: idxEntry.dtw,
+          );
+          final vertex = addFullVertex(bfen, proofEval, proofEval);
+          vertex.queriedFromDb = true;
+          dbService.upsertNode(bfen, proofEval, proofEval);
+          return vertex;
+        }
+      }
+      return null;
+    }
 
-    final assigned = DatabaseService.evalFromRow(row, 'assigned');
-    final computed = DatabaseService.evalFromRow(row, 'computed');
+    var assigned = DatabaseService.evalFromRow(row, 'assigned');
+    var computed = DatabaseService.evalFromRow(row, 'computed');
+
+    if (_isAntichess) {
+      final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
+      if (idxEntry != null) {
+        final proofEval = PositionEval(
+          result: GameResult.whiteWins,
+          dtw: idxEntry.dtw,
+        );
+        bool shouldUpdate = false;
+        if (assigned == null ||
+            (assigned.result == GameResult.whiteWins &&
+                (assigned.dtw == null || proofEval.dtw! < assigned.dtw!))) {
+          assigned = proofEval;
+          shouldUpdate = true;
+        }
+        if (computed == null ||
+            (computed.result == GameResult.whiteWins &&
+                (computed.dtw == null || proofEval.dtw! < computed.dtw!))) {
+          computed = proofEval;
+          shouldUpdate = true;
+        }
+        if (shouldUpdate) {
+          dbService.upsertNode(bfen, assigned, computed);
+        }
+      }
+    }
 
     final vertex = addFullVertex(bfen, assigned, computed);
 
@@ -59,13 +109,52 @@ class CachedGraph extends Graph {
     if (missing.isEmpty) return;
 
     final rows = await dbService.getNodes(missing);
+    final checkProofIdx = _isAntichess && WatkinsProofIndexManager.instance.hasIndices;
     for (final bfen in missing) {
       final row = rows[bfen];
       if (row != null) {
-        final assigned = DatabaseService.evalFromRow(row, 'assigned');
-        final computed = DatabaseService.evalFromRow(row, 'computed');
+        var assigned = DatabaseService.evalFromRow(row, 'assigned');
+        var computed = DatabaseService.evalFromRow(row, 'computed');
+        if (checkProofIdx) {
+          final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
+          if (idxEntry != null) {
+            final proofEval = PositionEval(
+              result: GameResult.whiteWins,
+              dtw: idxEntry.dtw,
+            );
+            bool shouldUpdate = false;
+            if (assigned == null ||
+                (assigned.result == GameResult.whiteWins &&
+                    (assigned.dtw == null || proofEval.dtw! < assigned.dtw!))) {
+              assigned = proofEval;
+              shouldUpdate = true;
+            }
+            if (computed == null ||
+                (computed.result == GameResult.whiteWins &&
+                    (computed.dtw == null || proofEval.dtw! < computed.dtw!))) {
+              computed = proofEval;
+              shouldUpdate = true;
+            }
+            if (shouldUpdate) {
+              dbService.upsertNode(bfen, assigned, computed);
+            }
+          }
+        }
         addFullVertex(bfen, assigned, computed);
       } else {
+        if (checkProofIdx) {
+          final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
+          if (idxEntry != null) {
+            final proofEval = PositionEval(
+              result: GameResult.whiteWins,
+              dtw: idxEntry.dtw,
+            );
+            final vertex = addFullVertex(bfen, proofEval, proofEval);
+            vertex.queriedFromDb = true;
+            dbService.upsertNode(bfen, proofEval, proofEval);
+            continue;
+          }
+        }
         final vertex = addVertex(bfen);
         vertex.queriedFromDb = true;
       }
@@ -303,7 +392,9 @@ class CachedGraph extends Graph {
           bestCandidate = const PositionEval(result: GameResult.draw, cp: 0);
         } else {
           // 4. Undecided / unproven
-          if (bestNonDecisiveCandidate != null) {
+          if (pos.assigned?.result != null) {
+            bestCandidate = pos.assigned;
+          } else if (bestNonDecisiveCandidate != null) {
             bestCandidate = bestNonDecisiveCandidate;
           } else if (pos.assigned != null) {
             bestCandidate = pos.assigned;

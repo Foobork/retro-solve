@@ -989,13 +989,13 @@ class HomePageState extends State<HomePage> {
 
     // Backsolve asynchronously in background only when needed without blocking navigation
     if (_interactiveBacksolving && !_isExploring && !_isAnalyzingGame) {
-      final needsSolve = hasNewTerminalAssignment || graph.v[a]?.effectiveEval == null;
-      if (needsSolve) {
-        if (graph is CachedGraph) {
-          (graph as CachedGraph).solveBfenAsync(a).then((_) {
-            if (mounted && seq == _chessBoardListenerSeq) setState(_update);
-          });
-        } else {
+      if (graph is CachedGraph) {
+        (graph as CachedGraph).solveBfenAsync(a).then((_) {
+          if (mounted && seq == _chessBoardListenerSeq) setState(_update);
+        });
+      } else {
+        final needsSolve = hasNewTerminalAssignment || graph.v[a]?.effectiveEval == null;
+        if (needsSolve) {
           graph.solveBfen(a);
           if (mounted && seq == _chessBoardListenerSeq) setState(_update);
         }
@@ -1801,6 +1801,19 @@ class HomePageState extends State<HomePage> {
       _controller.makeMoveWithNormalNotation(nextMoveToExplore);
 
       final bfen = _controller.game.bfen;
+      if (graph is CachedGraph) {
+        final g = _controller.game.copy();
+        final children = <String>[];
+        for (final m in g.generateMoves()) {
+          g.makeMove(m);
+          children.add(g.bfen);
+          g.undo();
+        }
+        await (graph as CachedGraph).prefetchPositions([bfen, ...children]);
+        if (mounted) {
+          setState(_update);
+        }
+      }
       if (graph.v[bfen]?.assigned == null && graph.v[bfen]?.computed == null) {
         await _waitForEngineStabilization();
         if (graph.v[bfen]?.assigned == null && _engineEvals.isNotEmpty) {

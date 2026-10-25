@@ -10,6 +10,8 @@
 data/tablebases/
 data/*.json
 *.proof
+*.proof.idx
+*.proof.dtw
 
 # 3rd party
 *.exe

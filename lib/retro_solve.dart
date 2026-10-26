@@ -57,7 +57,7 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, export_, analyzeGame, exploreHistory, explore1Ply, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
+enum _MoreAction { solve, mateSolver, export_, analyzeGame, exploreHistory, explore1Ply, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
 
 class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
@@ -94,6 +94,31 @@ class HomePageState extends State<HomePage> {
   Future<void> startExploringHistory() => _startExploringHistory();
 
   @visibleForTesting
+  String get mateSolverTitle => _mateSolverTitle;
+
+  @visibleForTesting
+  MateSolverResult? get mateSolverResult => _mateSolverResult;
+
+  @visibleForTesting
+  void jumpToFailurePoint() => _jumpToFailurePoint();
+
+  @visibleForTesting
+  void returnToStartPoint() => _returnToStartPoint();
+
+  @visibleForTesting
+  int get mateSolverNodesCount => _mateSolverNodesCount;
+
+  @visibleForTesting
+  bool get isMateSolving => _isMateSolving;
+
+  @visibleForTesting
+  Future<bool> startMateSolver({int maxDepth = 20, PlayerColor? attackingColor}) =>
+      _startMateSolver(maxDepth: maxDepth, attackingColor: attackingColor);
+
+  @visibleForTesting
+  void stopMateSolver() => _stopMateSolver();
+
+  @visibleForTesting
   Future<void> solveForTesting() => _solve();
 
   @visibleForTesting
@@ -124,7 +149,7 @@ class HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final bool isBoardDisabled =
-        _isExploring || _isAnalyzingGame || _isExploringHistory || _isBatchEvaluating || _isLoadingVariant || _isPickingFile || _isSolving;
+        _isExploring || _isAnalyzingGame || _isExploringHistory || _isBatchEvaluating || _isLoadingVariant || _isPickingFile || _isSolving || _isMateSolving;
 
     final lastMove = _controller.game.history.isNotEmpty ? _controller.game.history.last.move : null;
     final lastMoveFrom = lastMove?.fromAlgebraic;
@@ -201,11 +226,28 @@ class HomePageState extends State<HomePage> {
       itemBuilder: (_) => [
         PopupMenuItem(
           value: _MoreAction.solve,
-          enabled: !_isSolving,
+          enabled: !_isSolving && !_isMateSolving,
           child: Row(
             children: [
               const Text('Solve'),
               if (_isSolving) ...[
+                const SizedBox(width: 8),
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: _MoreAction.mateSolver,
+          enabled: !_isSolving && !_isExploring && !_isExploringHistory && !_isAnalyzingGame,
+          child: Row(
+            children: [
+              Text(_isMateSolving ? 'Stop Mate Solver' : 'Mate Solver'),
+              if (_isMateSolving) ...[
                 const SizedBox(width: 8),
                 const SizedBox(
                   width: 12,
@@ -263,11 +305,13 @@ class HomePageState extends State<HomePage> {
         _button("back", isBoardDisabled ? null : _back),
         _button("flip", _flip),
         _button(_isExploring && !_isExploring1Ply ? "stop exploring" : "explore",
-            (_isPickingFile || _isExploring1Ply || ((_isAnalyzingGame || _isExploringHistory) && !_isExploring)) ? null : _exploreToggle),
+            (_isPickingFile || _isExploring1Ply || _isMateSolving || ((_isAnalyzingGame || _isExploringHistory) && !_isExploring)) ? null : _exploreToggle),
         _button(_isExploring1Ply ? "stop 1-ply" : "explore 1-ply",
-            (_isPickingFile || _isAnalyzingGame || _isExploringHistory || (_isExploring && !_isExploring1Ply))
+            (_isPickingFile || _isAnalyzingGame || _isExploringHistory || _isMateSolving || (_isExploring && !_isExploring1Ply))
                 ? null
                 : _explore1PlyToggle),
+        if (_isMateSolving)
+          _button("stop mate", _stopMateSolver),
         moreMenu,
         if (Config.showBatchEval)
           _button("batch eval", isBoardDisabled ? null : _batchEval),
@@ -323,6 +367,10 @@ class HomePageState extends State<HomePage> {
                 _movesTable(),
                 const SizedBox(height: 16),
                 _moveHistoryWidget(width: (constraints.maxWidth - 24).clamp(280.0, 572.0)),
+                if (_isMateSolving || _mateSolverResult != null) ...[
+                  const SizedBox(height: 12),
+                  _mateSolverCard(width: (constraints.maxWidth - 24).clamp(280.0, 572.0)),
+                ],
                 const SizedBox(height: 32),
               ],
             ),
@@ -378,7 +426,16 @@ class HomePageState extends State<HomePage> {
                               Expanded(
                                 child: SingleChildScrollView(
                                   child: _padded(
-                                    _moveHistoryWidget(width: columnWidth * 2),
+                                    Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        _moveHistoryWidget(width: columnWidth * 2),
+                                        if (_isMateSolving || _mateSolverResult != null) ...[
+                                          const SizedBox(height: 12),
+                                          _mateSolverCard(width: columnWidth * 2),
+                                        ],
+                                      ],
+                                    ),
                                   ),
                                 ),
                               ),
@@ -437,6 +494,11 @@ class HomePageState extends State<HomePage> {
   bool _isExploring = false;
   bool _isExploring1Ply = false;
   bool _isExploringHistory = false;
+  bool _isMateSolving = false;
+  String _mateSolverTitle = "";
+  String _mateSolverStatus = "";
+  int _mateSolverNodesCount = 0;
+  MateSolverResult? _mateSolverResult;
   int _evalProgress = 0;
   int _evalTotal = 0;
   String _batchTimeText = "";
@@ -614,6 +676,268 @@ class HomePageState extends State<HomePage> {
               valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple.shade600),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(Duration d) {
+    if (d.inHours > 0) {
+      final hours = d.inHours;
+      final minutes = d.inMinutes % 60;
+      final seconds = d.inSeconds % 60;
+      return '${hours}h ${minutes}m ${seconds}s';
+    } else if (d.inMinutes > 0) {
+      final minutes = d.inMinutes;
+      final seconds = d.inSeconds % 60;
+      return '${minutes}m ${seconds}s';
+    } else {
+      return '${(d.inMilliseconds / 1000).toStringAsFixed(1)}s';
+    }
+  }
+
+  Widget _mateSolverCard({double? width}) {
+    if (_isMateSolving) {
+      return _mateSolverProgressWidget(width: width);
+    } else if (_mateSolverResult != null) {
+      return _mateSolverResultWidget(width: width);
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _mateSolverResultWidget({double? width}) {
+    if (_mateSolverResult == null) return const SizedBox.shrink();
+    final result = _mateSolverResult!;
+
+    final Color bgColor;
+    final Color borderColor;
+    final Color primaryColor;
+    final IconData icon;
+
+    if (result.proven) {
+      bgColor = Colors.green.shade50;
+      borderColor = Colors.green.shade300;
+      primaryColor = Colors.green.shade900;
+      icon = Icons.check_circle_outline;
+    } else if (result.stopped) {
+      bgColor = Colors.grey.shade100;
+      borderColor = Colors.grey.shade400;
+      primaryColor = Colors.grey.shade900;
+      icon = Icons.stop_circle_outlined;
+    } else {
+      bgColor = Colors.amber.shade50;
+      borderColor = Colors.amber.shade400;
+      primaryColor = Colors.brown.shade900;
+      icon = Icons.error_outline;
+    }
+
+    return Container(
+      width: width ?? double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: primaryColor, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  result.title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: primaryColor,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  result.message,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: primaryColor,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Nodes explored: ${result.nodes} • Time: ${_formatDuration(result.elapsed)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: primaryColor.withValues(alpha: 0.85),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (!result.proven && result.failureMoves != null && result.failureMoves!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Builder(
+                    builder: (context) {
+                      final isAtFailure =
+                          result.failureBfen != null && _controller.game.bfen == result.failureBfen;
+                      return OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: primaryColor,
+                          side: BorderSide(color: primaryColor.withValues(alpha: 0.5)),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          minimumSize: const Size(0, 28),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        icon: Icon(
+                          isAtFailure ? Icons.replay : Icons.arrow_forward,
+                          size: 14,
+                        ),
+                        label: Text(
+                          isAtFailure
+                              ? 'Return to start'
+                              : 'Jump to failure (${result.failureMoves!.length} ${result.failureMoves!.length == 1 ? 'ply' : 'plies'})',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                        ),
+                        onPressed: isAtFailure ? _returnToStartPoint : _jumpToFailurePoint,
+                      );
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            color: primaryColor,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            tooltip: 'Dismiss',
+            onPressed: () {
+              setState(() {
+                _mateSolverResult = null;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _jumpToFailurePoint() {
+    final result = _mateSolverResult;
+    if (result == null || result.failureMoves == null || result.failureMoves!.isEmpty) return;
+
+    if (result.rootBfen != null) {
+      while (_controller.game.bfen != result.rootBfen && _controller.game.history.isNotEmpty) {
+        _controller.undoMove();
+      }
+      if (_controller.game.bfen != result.rootBfen && result.rootFen != null) {
+        _controller.load(result.rootFen!);
+      }
+    }
+
+    for (final move in result.failureMoves!) {
+      final san = _controller.game.moveToSan(move);
+      final success = _controller.makeMoveWithNormalNotation(san);
+      if (!success) {
+        if (move.promotion != null) {
+          _controller.makeMoveWithPromotion(
+            from: move.fromAlgebraic,
+            to: move.toAlgebraic,
+            pieceToPromoteTo: move.promotion!.name.toUpperCase(),
+          );
+        } else {
+          _controller.makeMove(
+            from: move.fromAlgebraic,
+            to: move.toAlgebraic,
+          );
+        }
+      }
+    }
+
+    if (result.failureFen != null && _controller.game.fen != result.failureFen) {
+      _controller.load(result.failureFen!);
+    }
+
+    if (mounted) {
+      setState(_update);
+      _requestEngineEval();
+    }
+  }
+
+  void _returnToStartPoint() {
+    final result = _mateSolverResult;
+    if (result == null || result.rootBfen == null) return;
+
+    while (_controller.game.bfen != result.rootBfen && _controller.game.history.isNotEmpty) {
+      _controller.undoMove();
+    }
+    if (_controller.game.bfen != result.rootBfen && result.rootFen != null) {
+      _controller.load(result.rootFen!);
+    }
+
+    if (mounted) {
+      setState(_update);
+      _requestEngineEval();
+    }
+  }
+
+  Widget _mateSolverProgressWidget({double? width}) {
+    return Container(
+      width: width ?? double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.only(bottom: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.deepPurple.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.deepPurple.shade200),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple.shade700),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  _mateSolverTitle.isNotEmpty ? _mateSolverTitle : "Searching for forced mate...",
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.deepPurple.shade900,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+          if (_mateSolverStatus.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              _mateSolverStatus,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.deepPurple.shade900,
+                fontWeight: FontWeight.w600,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ],
         ],
       ),
     );
@@ -1174,7 +1498,10 @@ class HomePageState extends State<HomePage> {
   }
 
   void _reset() {
-    if (_isExploring) return;
+    if (_isExploring || _isMateSolving) return;
+    setState(() {
+      _mateSolverResult = null;
+    });
     _controller.resetBoard();
   }
 
@@ -1228,6 +1555,13 @@ class HomePageState extends State<HomePage> {
     switch (action) {
       case _MoreAction.solve:
         _solve();
+        break;
+      case _MoreAction.mateSolver:
+        if (_isMateSolving) {
+          _stopMateSolver();
+        } else {
+          _startMateSolver();
+        }
         break;
       case _MoreAction.export_:
         _export();
@@ -1618,6 +1952,454 @@ class HomePageState extends State<HomePage> {
     }
   }
 
+  bool _mateSolverStopRequested = false;
+
+  void _stopMateSolver() {
+    if (_isMateSolving) {
+      _mateSolverStopRequested = true;
+      setState(() {
+        _isMateSolving = false;
+        _mateSolverStatus = 'Stopping mate solver...';
+      });
+      print('[mate-solver] Stop requested.');
+    }
+  }
+
+  String _formatStartPositionDescription(PlayerColor attackingColor) {
+    final targetColor = attackingColor == white ? 'white' : 'black';
+    if (_controller.game.history.isEmpty) {
+      return 'Finding mate for $targetColor from starting position';
+    }
+    final g = _controller.game.copy();
+    final lastMove = g.undoMove();
+    if (lastMove == null) {
+      return 'Finding mate for $targetColor';
+    }
+    final san = g.moveToSan(lastMove);
+    final num = g.moveNumber;
+    final isWhite = lastMove.color == white;
+    final moveStr = isWhite ? '$num. $san' : '$num... $san';
+    return 'Finding mate for $targetColor after $moveStr';
+  }
+
+  Future<bool> _startMateSolver({int maxDepth = 20, PlayerColor? attackingColor}) async {
+    if (!_engineAvailable ||
+        _isMateSolving ||
+        _isExploring ||
+        _isSolving ||
+        _isAnalyzingGame ||
+        _isExploringHistory) {
+      return false;
+    }
+
+    attackingColor ??= _controller.game.turn;
+    final targetColor = attackingColor == white ? 'white' : 'black';
+
+    final startDesc = _formatStartPositionDescription(attackingColor);
+
+    setState(() {
+      _isMateSolving = true;
+      _mateSolverResult = null;
+      _mateSolverTitle = startDesc;
+      _mateSolverStatus = 'Starting search...';
+      _mateSolverNodesCount = 0;
+    });
+    WakelockPlus.enable();
+    print('[mate-solver] Started mate-solver (maxDepth: $maxDepth, attackingColor: $attackingColor)');
+
+    _mateSolverStopRequested = false;
+    final rootBfen = _controller.game.bfen;
+    final rootFen = _controller.game.fen;
+    final rootHistoryLength = _controller.game.history.length;
+    final pathBfens = <String>{};
+    bool proven = false;
+    final stopwatch = Stopwatch()..start();
+
+    List<Move>? failureMoves;
+    String? failureBfen;
+    String? failureFen;
+    String? failureReason;
+
+    void onLeafFailure(String reason) {
+      failureMoves = _controller.game.history.length >= rootHistoryLength
+          ? _controller.game.history.sublist(rootHistoryLength).map((h) => h.move).toList()
+          : <Move>[];
+      failureBfen = _controller.game.bfen;
+      failureFen = _controller.game.fen;
+      failureReason = reason;
+    }
+
+    try {
+      proven = await _proveMateRecursive(
+        ply: 0,
+        maxDepth: maxDepth,
+        attackingColor: attackingColor,
+        pathBfens: pathBfens,
+        onLeafFailure: onLeafFailure,
+      );
+      if (proven) {
+        print('[mate-solver] Successfully proven mate from $rootBfen!');
+      } else {
+        print('[mate-solver] Failed to prove mate within cutoff.');
+      }
+    } catch (e, st) {
+      print('[mate-solver] Error during mate search: $e\n$st');
+    } finally {
+      stopwatch.stop();
+      final elapsed = stopwatch.elapsed;
+      WakelockPlus.disable();
+
+      while (_controller.game.bfen != rootBfen && _controller.game.history.isNotEmpty) {
+        _controller.undoMove();
+      }
+
+      final nodesExplored = _mateSolverNodesCount;
+      final wasStopRequested = _mateSolverStopRequested;
+
+      if (mounted) {
+        final resultTitle = proven
+            ? 'Mate Search Complete'
+            : (wasStopRequested ? 'Mate Search Stopped' : 'Mate Search Failed');
+        final resultMessage = proven
+            ? 'Forced mate proven for $targetColor!'
+            : (wasStopRequested
+                ? 'Search stopped by user.'
+                : 'Could not prove forced mate for $targetColor within depth cutoff.');
+
+        setState(() {
+          _isMateSolving = false;
+          _mateSolverTitle = '';
+          _mateSolverStatus = '';
+          _mateSolverResult = MateSolverResult(
+            title: resultTitle,
+            message: resultMessage,
+            nodes: nodesExplored,
+            elapsed: elapsed,
+            proven: proven,
+            stopped: wasStopRequested,
+            rootBfen: rootBfen,
+            rootFen: rootFen,
+            failureBfen: failureBfen,
+            failureFen: failureFen,
+            failureMoves: failureMoves,
+            failureReason: failureReason,
+          );
+          _update();
+          _requestEngineEval();
+        });
+      }
+      print('[mate-solver] Mate solver ended/stopped in ${_formatDuration(elapsed)}.');
+    }
+    return proven;
+  }
+
+  Future<bool> _proveMateRecursive({
+    required int ply,
+    required int maxDepth,
+    required PlayerColor attackingColor,
+    required Set<String> pathBfens,
+    required void Function(String reason) onLeafFailure,
+  }) async {
+    if (!_isMateSolving || !mounted) {
+      onLeafFailure('Search stopped');
+      return false;
+    }
+
+    _mateSolverNodesCount++;
+    final bfen = _controller.game.bfen;
+    final isWhiteToMove = _controller.game.turn == white;
+    final isAttackerToMove = _controller.game.turn == attackingColor;
+
+    // 1. Cycle avoidance:
+    // If the position is already on the current search path, it is a repetition!
+    // A repetition avoids mate, so it fails to prove mate for the attacker.
+    if (pathBfens.contains(bfen)) {
+      print('[mate-solver] Cycle detected at $bfen (ply $ply)');
+      onLeafFailure('Repetition / cycle detected at ply $ply');
+      return false;
+    }
+
+    // 2. Terminal Game Over check:
+    if (_controller.game.gameOver) {
+      final termEval = _controller.game.terminalEvaluation;
+      if (termEval != null && (termEval >= 999.0 || termEval <= -999.0)) {
+        final isWhiteWin = termEval > 0;
+        final isAttackerWin = attackingColor == white ? isWhiteWin : !isWhiteWin;
+        if (isAttackerWin) {
+          final posEval = PositionEval.fromLegacyScore(termEval);
+          if (posEval != null && graph.v[bfen]?.assigned == null) {
+            graph.assign(bfen, posEval);
+            graph.v[bfen]?.inDatabase = true;
+            if (_interactiveBacksolving) {
+              if (graph is CachedGraph) {
+                await (graph as CachedGraph).solveBfenAsync(bfen);
+              } else {
+                graph.solveBfen(bfen);
+              }
+            }
+          }
+          return true;
+        }
+      }
+      onLeafFailure('Game over (non-mate) at ply $ply');
+      return false; // Draw, stalemate, or defender checkmate
+    }
+
+    // 3. Transposition check in graph:
+    final existingEval = graph.v[bfen]?.effectiveEval;
+    if (existingEval != null) {
+      final isAttackerWin = attackingColor == white
+          ? existingEval.result == GameResult.whiteWins
+          : existingEval.result == GameResult.blackWins;
+      if (isAttackerWin) {
+        return true;
+      }
+      if (existingEval.result == GameResult.draw ||
+          (attackingColor == white
+              ? existingEval.result == GameResult.blackWins
+              : existingEval.result == GameResult.whiteWins)) {
+        onLeafFailure('Transposition already proven non-mate at ply $ply');
+        return false;
+      }
+    }
+
+    // 4. Wait for FSF evaluation to stabilize at this position:
+    await _waitForEngineStabilization();
+    if (!_isMateSolving || !mounted) {
+      onLeafFailure('Search stopped');
+      return false;
+    }
+
+    // 5. Check if FSF confirms mate for the attacker:
+    final currentKey = EngineCache.canonicalKey(_variant, _controller.game.fen);
+    final currentEvals = _engineEvals
+        .where((e) =>
+            e.fen != null &&
+            EngineCache.canonicalKey(_variant, e.fen!) == currentKey &&
+            (e.candidateMove == null ||
+                EngineCache.isMoveColorConsistentWithFen(_controller.game.fen, e.candidateMove!)))
+        .toList();
+
+    if (currentEvals.isNotEmpty) {
+      final bestEval = currentEvals.first;
+      if (bestEval.mate != null) {
+        final isAttackerMate = attackingColor == white ? bestEval.mate! > 0 : bestEval.mate! < 0;
+        if (isAttackerMate) {
+          final posEval = _engineEvalToPositionEval(bestEval, isWhiteToMove);
+          if (posEval != null &&
+              (attackingColor == white
+                  ? posEval.result == GameResult.whiteWins
+                  : posEval.result == GameResult.blackWins)) {
+            graph.assign(bfen, posEval);
+            graph.v[bfen]?.inDatabase = true;
+            if (_interactiveBacksolving) {
+              if (graph is CachedGraph) {
+                await (graph as CachedGraph).solveBfenAsync(bfen);
+              } else {
+                graph.solveBfen(bfen);
+              }
+            }
+            print('[mate-solver] FSF confirmed mate at $bfen (mate ${bestEval.mate})');
+            return true;
+          }
+        } else {
+          // Defender has forced mate
+          print('[mate-solver] Defender has forced mate at $bfen (mate ${bestEval.mate})');
+          onLeafFailure('Defender forced mate (M${bestEval.mate!.abs()}) at ply $ply');
+          return false;
+        }
+      }
+    }
+
+    // 6. Check depth cutoff:
+    if (ply >= maxDepth) {
+      print('[mate-solver] Depth cutoff ($maxDepth) reached at $bfen without confirmed mate');
+      onLeafFailure('Depth cutoff ($maxDepth plies) reached');
+      return false;
+    }
+
+    // 7. Branching (Attacker = OR node / Defender = AND node):
+    pathBfens.add(bfen);
+    try {
+      if (isAttackerToMove) {
+        // ATTACKER (White): Probe ONLY the single top move. If it fails, it fails.
+        if (currentEvals.isEmpty) {
+          onLeafFailure('No candidate moves evaluated at ply $ply');
+          return false;
+        }
+        final bestEval = currentEvals.first;
+        final san = _uciToSan(bestEval.candidateMove);
+        if (san == '—') {
+          onLeafFailure('No candidate move available at ply $ply');
+          return false;
+        }
+
+        // Ensure link in graph
+        final moves = _controller.game.generateMoves();
+        final matchedMove = moves.firstWhere(
+          (m) =>
+              _controller.game.moveToSan(m) == san ||
+              _controller.game.normalizeMoveString(_controller.game.moveToSan(m)) ==
+                  _controller.game.normalizeMoveString(san),
+          orElse: () => moves.first,
+        );
+
+        final tempGame = _controller.game.copy();
+        tempGame.makeMove(matchedMove);
+        final childBfen = tempGame.bfen;
+        graph.addLink(bfen, childBfen);
+
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).prefetchPositions([childBfen]);
+        }
+
+        if (mounted) {
+          setState(() {
+            _mateSolverStatus = 'Ply $ply: $san (nodes: $_mateSolverNodesCount)';
+          });
+        }
+
+        final moveSuccess = _controller.makeMoveWithNormalNotation(san);
+        if (!moveSuccess) {
+          if (matchedMove.promotion != null) {
+            _controller.makeMoveWithPromotion(
+              from: matchedMove.fromAlgebraic,
+              to: matchedMove.toAlgebraic,
+              pieceToPromoteTo: matchedMove.promotion!.name.toUpperCase(),
+            );
+          } else {
+            _controller.makeMove(
+              from: matchedMove.fromAlgebraic,
+              to: matchedMove.toAlgebraic,
+            );
+          }
+        }
+
+        final success = await _proveMateRecursive(
+          ply: ply + 1,
+          maxDepth: maxDepth,
+          attackingColor: attackingColor,
+          pathBfens: pathBfens,
+          onLeafFailure: onLeafFailure,
+        );
+        _controller.undoMove();
+
+        if (success) {
+          if (_interactiveBacksolving) {
+            if (graph is CachedGraph) {
+              await (graph as CachedGraph).solveBfenAsync(bfen);
+            } else {
+              graph.solveBfen(bfen);
+            }
+          }
+          return true;
+        }
+        return false;
+      } else {
+        // DEFENDER (Black): AND-node. Must refute ALL legal moves.
+        final moves = _controller.game.generateMoves();
+        if (moves.isEmpty) {
+          onLeafFailure('No legal moves at ply $ply');
+          return false;
+        }
+
+        final moveSans = moves.map((m) => _controller.game.moveToSan(m)).toList();
+
+        // Order defender moves best-first (defensive order: FSF best defenses first)
+        final List<int> indices = List.generate(moves.length, (i) => i);
+        final engineCandidateSans = currentEvals
+            .map((e) => _uciToSan(e.candidateMove))
+            .where((s) => s != '—')
+            .toList();
+
+        indices.sort((a, b) {
+          final aSan = moveSans[a];
+          final bSan = moveSans[b];
+          final aIdx = engineCandidateSans.indexOf(aSan);
+          final bIdx = engineCandidateSans.indexOf(bSan);
+          if (aIdx != -1 && bIdx != -1) return aIdx.compareTo(bIdx);
+          if (aIdx != -1) return -1;
+          if (bIdx != -1) return 1;
+          return 0;
+        });
+
+        // Ensure links in graph
+        final tempGame = _controller.game.copy();
+        final childBfens = <String>[];
+        for (final idx in indices) {
+          tempGame.makeMove(moves[idx]);
+          final childBfen = tempGame.bfen;
+          childBfens.add(childBfen);
+          graph.addLink(bfen, childBfen);
+          tempGame.undo();
+        }
+        if (graph is CachedGraph) {
+          await (graph as CachedGraph).prefetchPositions(childBfens);
+        }
+
+        // Test each defense. If ANY defense avoids mate, fail-fast!
+        for (int i = 0; i < indices.length; i++) {
+          if (!_isMateSolving || !mounted) {
+            onLeafFailure('Search stopped');
+            return false;
+          }
+
+          final idx = indices[i];
+          final san = moveSans[idx];
+          final move = moves[idx];
+
+          if (mounted) {
+            setState(() {
+              _mateSolverStatus = 'Ply $ply: defend $san (${i + 1}/${indices.length}, nodes: $_mateSolverNodesCount)';
+            });
+          }
+
+          final moveSuccess = _controller.makeMoveWithNormalNotation(san);
+          if (!moveSuccess) {
+            if (move.promotion != null) {
+              _controller.makeMoveWithPromotion(
+                from: move.fromAlgebraic,
+                to: move.toAlgebraic,
+                pieceToPromoteTo: move.promotion!.name.toUpperCase(),
+              );
+            } else {
+              _controller.makeMove(
+                from: move.fromAlgebraic,
+                to: move.toAlgebraic,
+              );
+            }
+          }
+
+          final childSuccess = await _proveMateRecursive(
+            ply: ply + 1,
+            maxDepth: maxDepth,
+            attackingColor: attackingColor,
+            pathBfens: pathBfens,
+            onLeafFailure: onLeafFailure,
+          );
+          _controller.undoMove();
+
+          if (!childSuccess) {
+            print('[mate-solver] Defender move $san refutes line (did not lead to mate)');
+            return false;
+          }
+        }
+
+        // All defender moves led to mate!
+        if (_interactiveBacksolving) {
+          if (graph is CachedGraph) {
+            await (graph as CachedGraph).solveBfenAsync(bfen);
+          } else {
+            graph.solveBfen(bfen);
+          }
+        }
+        return true;
+      }
+    } finally {
+      pathBfens.remove(bfen);
+    }
+  }
+
   Future<void> _exploreRecursive({required bool isRoot}) async {
     if (!_isExploring || !mounted) return;
 
@@ -1857,6 +2639,7 @@ class HomePageState extends State<HomePage> {
   }
 
   Future<void> _waitForEngineStabilization() async {
+    if ((!_isExploring && !_isMateSolving) || !mounted) return;
     final currentFen = _controller.game.fen;
     final currentKey = EngineCache.canonicalKey(_variant, currentFen);
     if (!_engineEvalPending && _engineEvals.isNotEmpty) {
@@ -1875,7 +2658,7 @@ class HomePageState extends State<HomePage> {
     }
     await Future.delayed(const Duration(milliseconds: 150));
     final stopwatch = Stopwatch()..start();
-    while (_isExploring &&
+    while ((_isExploring || _isMateSolving) &&
         mounted &&
         (_engineEvalPending || _engineEvals.isEmpty)) {
       if (stopwatch.elapsedMilliseconds > 3000 && !widget.engineService.isSearching) {
@@ -1883,7 +2666,7 @@ class HomePageState extends State<HomePage> {
       }
       await Future.delayed(const Duration(milliseconds: 100));
     }
-    while (_isExploring && mounted) {
+    while ((_isExploring || _isMateSolving) && mounted) {
       if (_engineEvals.isNotEmpty) {
         final bestEval = _engineEvals.first;
         final bool isCurrentPos = bestEval.fen != null &&
@@ -2709,4 +3492,34 @@ class MoveInfo {
   }
 
   double? get score => eval?.toLegacyScore();
+}
+
+class MateSolverResult {
+  final String title;
+  final String message;
+  final int nodes;
+  final Duration elapsed;
+  final bool proven;
+  final bool stopped;
+  final String? rootBfen;
+  final String? rootFen;
+  final String? failureBfen;
+  final String? failureFen;
+  final List<Move>? failureMoves;
+  final String? failureReason;
+
+  const MateSolverResult({
+    required this.title,
+    required this.message,
+    required this.nodes,
+    this.elapsed = Duration.zero,
+    this.proven = false,
+    this.stopped = false,
+    this.rootBfen,
+    this.rootFen,
+    this.failureBfen,
+    this.failureFen,
+    this.failureMoves,
+    this.failureReason,
+  });
 }

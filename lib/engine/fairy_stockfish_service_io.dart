@@ -4,17 +4,19 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../config.dart';
 import '../dataset_variant.dart';
 import 'engine_service.dart';
 
 class FairyStockfishService implements EngineService {
   FairyStockfishService({
-    this.binaryName = 'fairy-stockfish_x86-64-modern.exe',
+    String? binaryName,
     this.searchDepth = 16,
     this.commandTimeout = const Duration(seconds: 5),
     DatasetVariant initialVariant = DatasetVariant.koth,
     EngineCache? cache,
-  })  : _variant = initialVariant,
+  })  : binaryName = binaryName ?? Config.engineBinaryName,
+        _variant = initialVariant,
         cache = cache ?? EngineCache();
 
   @override
@@ -283,6 +285,14 @@ class FairyStockfishService implements EngineService {
       
       _writeLine(
           'setoption name UCI_Variant value ${uciVariantForDataset(_variant)}');
+      if (_variant == DatasetVariant.antichess) {
+        final antichessTbDir = _resolveAntichessTbPath();
+        if (antichessTbDir != null) {
+          _writeLine('setoption name SyzygyPath value $antichessTbDir');
+          _writeLine('setoption name SyzygyProbeLimit value 4');
+          print('[engine] Using SyzygyPath: $antichessTbDir');
+        }
+      }
       await _sendAndWaitFor('isready', 'readyok');
       _isStarted = true;
       print('[engine] Ready: $binaryPath');
@@ -469,23 +479,54 @@ class FairyStockfishService implements EngineService {
   }
 
   String? _resolveBinaryPath() {
+    final names = <String>[binaryName];
+    if (binaryName != 'fairy-stockfish_x86-64-modern.exe') {
+      names.add('fairy-stockfish_x86-64-modern.exe');
+    }
+
+    final cwd = Directory.current.path;
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+
+    for (final name in names) {
+      final candidates = <String>[];
+      candidates.add('$cwd\\$name');
+
+      var probe = Directory(cwd);
+      for (var i = 0; i < 6; i++) {
+        candidates.add('${probe.path}\\$name');
+        final parent = probe.parent;
+        if (parent.path == probe.path) break;
+        probe = parent;
+      }
+
+      candidates.add('$exeDir\\$name');
+
+      for (final candidate in candidates) {
+        if (File(candidate).existsSync()) return candidate;
+      }
+    }
+    return null;
+  }
+
+
+  String? _resolveAntichessTbPath() {
     final candidates = <String>[];
     final cwd = Directory.current.path;
-    candidates.add('$cwd\\$binaryName');
+    candidates.add('$cwd\\data\\tablebases\\antichess');
 
     var probe = Directory(cwd);
     for (var i = 0; i < 6; i++) {
-      candidates.add('${probe.path}\\$binaryName');
+      candidates.add('${probe.path}\\data\\tablebases\\antichess');
       final parent = probe.parent;
       if (parent.path == probe.path) break;
       probe = parent;
     }
 
     final exeDir = File(Platform.resolvedExecutable).parent.path;
-    candidates.add('$exeDir\\$binaryName');
+    candidates.add('$exeDir\\data\\tablebases\\antichess');
 
     for (final candidate in candidates) {
-      if (File(candidate).existsSync()) return candidate;
+      if (Directory(candidate).existsSync()) return candidate;
     }
     return null;
   }

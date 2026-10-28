@@ -57,7 +57,7 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, mateSolver, export_, analyzeGame, exploreHistory, explore1Ply, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
+enum _MoreAction { solve, mateSolver, export_, analyzeGame, exploreHistory, explore1Ply, copyFen, copyMoveHistory, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
 
 class HomePageState extends State<HomePage> {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
@@ -275,6 +275,14 @@ class HomePageState extends State<HomePage> {
           value: _MoreAction.explore1Ply,
           enabled: !isBoardDisabled,
           child: const Text('Explore legal moves (1-ply)'),
+        ),
+        const PopupMenuItem(
+          value: _MoreAction.copyFen,
+          child: Text('Copy FEN to clipboard'),
+        ),
+        const PopupMenuItem(
+          value: _MoreAction.copyMoveHistory,
+          child: Text('Copy move history to clipboard'),
         ),
         const PopupMenuDivider(),
         CheckedPopupMenuItem<_MoreAction>(
@@ -1339,7 +1347,6 @@ class HomePageState extends State<HomePage> {
     } else {
       _turn = _controller.game.turn == white ? "White to move" : "Black to move";
     }
-    Clipboard.setData(ClipboardData(text: _bfen));
     final vertex = graph.v[_bfen];
     if (vertex != null) {
       final assigned = vertex.assigned;
@@ -1588,6 +1595,53 @@ class HomePageState extends State<HomePage> {
       case _MoreAction.explore1Ply:
         _explore1PlyToggle();
         break;
+      case _MoreAction.copyFen:
+        _copyFenToClipboard();
+        break;
+      case _MoreAction.copyMoveHistory:
+        _copyMoveHistoryToClipboard();
+        break;
+    }
+  }
+
+
+  void _copyMoveHistoryToClipboard() {
+    final history = formatMoveHistory();
+    if (history.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No move history to copy'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      return;
+    }
+    Clipboard.setData(ClipboardData(text: history));
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Move history copied to clipboard'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _copyFenToClipboard() {
+    final fen = _controller.game.fen;
+    Clipboard.setData(ClipboardData(text: fen));
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('FEN copied to clipboard'),
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -3184,10 +3238,17 @@ class HomePageState extends State<HomePage> {
     return SizedBox(
       width: width,
       child: InputDecorator(
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: 'Move History',
-          border: OutlineInputBorder(),
-          contentPadding: EdgeInsets.all(12),
+          border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          suffixIcon: historyText.isNotEmpty
+              ? IconButton(
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: 'Copy move history',
+                  onPressed: _copyMoveHistoryToClipboard,
+                )
+              : null,
         ),
         child: Text(
           historyText.isEmpty ? '—' : historyText,

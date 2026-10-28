@@ -224,7 +224,15 @@ class Vertex {
         assigned!.result != null &&
         computed!.result == assigned!.result) {
       if (computed!.dtw != null && assigned!.dtw != null) {
-        return computed!.dtw! <= assigned!.dtw! ? computed : assigned;
+        final isAttacker = (whiteToMove && computed!.result == GameResult.whiteWins) ||
+            (!whiteToMove && computed!.result == GameResult.blackWins);
+        if (isAttacker) {
+          // Attacker chooses shortest path to win
+          return computed!.dtw! <= assigned!.dtw! ? computed : assigned;
+        } else {
+          // Defender's true resistance against optimal play is the minimax computed DTW.
+          return computed;
+        }
       }
       return computed!.dtw != null ? computed : assigned;
     }

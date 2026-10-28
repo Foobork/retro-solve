@@ -1,16 +1,20 @@
 import 'dart:async';
+import '../config.dart';
 import '../dataset_variant.dart';
 import 'engine_service.dart';
 
 class FairyStockfishService implements EngineService {
   FairyStockfishService({
-    String binaryName = 'fairy-stockfish_x86-64-modern.exe',
+    String? binaryName,
     int searchDepth = 16,
     Duration commandTimeout = const Duration(seconds: 5),
     DatasetVariant initialVariant = DatasetVariant.koth,
     EngineCache? cache,
-  })  : _variant = initialVariant,
+  })  : binaryName = binaryName ?? Config.engineBinaryName,
+        _variant = initialVariant,
         cache = cache ?? EngineCache();
+
+  final String binaryName;
 
   @override
   final EngineCache cache;

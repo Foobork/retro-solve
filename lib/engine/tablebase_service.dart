@@ -103,6 +103,8 @@ class TablebaseService {
 
       final evals = parseTablebaseResponse(variant, fen, response.body);
       if (evals != null && evals.isNotEmpty) {
+        // ignore: avoid_print
+        print('[tablebase] Local sidecar ($variant): ${evals.first.candidateMove ?? "pos"} (dtw=${evals.first.dtw}, mate=${evals.first.mate})');
         return evals;
       }
       return null;
@@ -151,6 +153,7 @@ class TablebaseService {
     Duration localTimeout = const Duration(milliseconds: 500),
   }) async {
     if (!isSupported(variant, fen)) return null;
+    if (_enabled == false && _localEnabled != true) return null;
 
     // When local tablebase is enabled, stay 100% offline to prevent Lichess throttling
     if (isLocalEnabled) {

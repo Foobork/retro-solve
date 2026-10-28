@@ -1,6 +1,9 @@
 class Config {
   static const bool showBatchEval = false;
 
+  /// Name of the Fairy-Stockfish engine executable.
+  static String engineBinaryName = 'fairySF_egtb_avx2.exe';
+
   /// Whether to query the online Lichess Tablebase API (tablebase.lichess.ovh).
   static bool enableRemoteTablebase = true;
 

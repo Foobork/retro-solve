@@ -364,10 +364,6 @@ class HomePageState extends State<HomePage> {
                   const SizedBox(height: 12),
                   _batchEvalProgress(),
                 ],
-                if (_isSolving) ...[
-                  const SizedBox(height: 12),
-                  _solveProgressWidget(),
-                ],
                 const SizedBox(height: 16),
                 const Text('Known Moves',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -375,6 +371,10 @@ class HomePageState extends State<HomePage> {
                 _movesTable(),
                 const SizedBox(height: 16),
                 _moveHistoryWidget(width: (constraints.maxWidth - 24).clamp(280.0, 572.0)),
+                if (_isSolving) ...[
+                  const SizedBox(height: 12),
+                  _solveProgressWidget(width: (constraints.maxWidth - 24).clamp(280.0, 572.0)),
+                ],
                 if (_isMateSolving || _mateSolverResult != null) ...[
                   const SizedBox(height: 12),
                   _mateSolverCard(width: (constraints.maxWidth - 24).clamp(280.0, 572.0)),
@@ -438,6 +438,10 @@ class HomePageState extends State<HomePage> {
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         _moveHistoryWidget(width: columnWidth * 2),
+                                        if (_isSolving) ...[
+                                          const SizedBox(height: 12),
+                                          _solveProgressWidget(width: columnWidth * 2),
+                                        ],
                                         if (_isMateSolving || _mateSolverResult != null) ...[
                                           const SizedBox(height: 12),
                                           _mateSolverCard(width: columnWidth * 2),
@@ -620,10 +624,6 @@ class HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           _evaluationWidget(width: widgetWidth),
-          if (_isSolving) ...[
-            const SizedBox(height: 8),
-            _solveProgressWidget(),
-          ],
           Flexible(
             child: _movesTable(),
           ),
@@ -632,10 +632,10 @@ class HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _solveProgressWidget() {
+  Widget _solveProgressWidget({double? width}) {
     final percent = _solveProgress.clamp(0.0, 1.0);
     return Container(
-      width: double.infinity,
+      width: width ?? double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       margin: const EdgeInsets.only(bottom: 8.0),
       decoration: BoxDecoration(

@@ -255,23 +255,31 @@ void main(List<String> args) async {
         final entry = book.probe(key);
 
         if (entry != null) {
-          final targetDtw = entry.dtwPlies;
+          // Tolius weight encoding (positioninfo.h):
+          //   weight > 32577: exact proven mate in (32767 - weight) moves
+          //   weight <= 32577: unverified (#N?) or skipped ("Draw?") branch
+          final isExactMate = entry.weight > 32577;
+          final int? targetRes = isExactMate ? winningResult : null;
+          final int? targetDtw = isExactMate ? entry.dtwPlies : null;
 
           // Position tracking
           final existingId = bfenToId[bfen];
           if (existingId == null) {
             pendingPosInserts.add({
               'bfen': bfen,
-              'assigned_result': winningResult,
+              'assigned_result': targetRes,
               'assigned_dtw': targetDtw,
             });
             bfenToId[bfen] = -1;
             bfenToDtw[bfen] = targetDtw;
-          } else if (existingId > 0) {
+          } else if (existingId > 0 && targetRes != null) {
             final curDtw = bfenToDtw[bfen];
-            if (curDtw == null || targetDtw < curDtw || curDtw.isOdd) {
-              pendingPosUpdates.add((existingId, winningResult, targetDtw));
+            if (targetDtw != null &&
+                (curDtw == null || targetDtw < curDtw || curDtw.isOdd)) {
+              pendingPosUpdates.add((existingId, targetRes, targetDtw));
               bfenToDtw[bfen] = targetDtw;
+            } else if (targetDtw == null && curDtw == null) {
+              pendingPosUpdates.add((existingId, targetRes, null));
             }
           }
 
@@ -294,23 +302,24 @@ void main(List<String> args) async {
             pendingEdges.add((bfen, childBfen));
 
             if (enqueued.add(childBfen)) {
-              queue.add((childBfen, targetDtw));
+              queue.add((childBfen, isExactMate ? targetDtw : -1));
             }
           }
         } else {
           // Non-book leaf node: can only be a true terminal (dtw=0) if parent was #1 (dtwPlies <= 2)
           bool isTerminal = false;
-          if (parentDtw == null || parentDtw <= 2) {
+          if (parentDtw == null || (parentDtw >= 0 && parentDtw <= 2)) {
             final game = AntichessChess()..load('$bfen 0 1');
             isTerminal = game.hasNoPieces(PlayerColor.white) ||
                 game.hasNoPieces(PlayerColor.black) ||
                 game.generateMoves().isEmpty;
           }
+          final leafRes = (parentDtw == -1 && !isTerminal) ? null : winningResult;
           final existingId = bfenToId[bfen];
           if (existingId == null) {
             pendingPosInserts.add({
               'bfen': bfen,
-              'assigned_result': winningResult,
+              'assigned_result': leafRes,
               'assigned_dtw': isTerminal ? 0 : null,
             });
             bfenToId[bfen] = -1;
@@ -321,12 +330,13 @@ void main(List<String> args) async {
           }
         }
       } else {
-        // Defender node: winning side still wins (assigned_result = winningResult)
+        // Defender node: winning side still wins unless parent was a skipped "Draw?" branch (parentDtw == -1)
+        final defRes = (parentDtw == -1) ? null : winningResult;
         final existingId = bfenToId[bfen];
         if (existingId == null) {
           pendingPosInserts.add({
             'bfen': bfen,
-            'assigned_result': winningResult,
+            'assigned_result': defRes,
             'assigned_dtw': null,
           });
           bfenToId[bfen] = -1;

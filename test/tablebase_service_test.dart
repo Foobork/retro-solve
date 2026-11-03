@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:retro_solve/config.dart';
 import 'package:retro_solve/dataset_variant.dart';
+import 'package:retro_solve/engine/tablebase_launcher.dart';
 import 'package:retro_solve/engine/tablebase_service.dart';
 
 void main() {
@@ -580,5 +581,203 @@ void main() {
       expect(evals.first.centipawns, equals(20000));
       expect(evals.first.isPseudoMate, isTrue);
     });
+
+    group('Tablebase Sidecar Server Lifecycle & Multi-Instance Tests', () {
+      test('checkHealth returns true on 200 and false on error', () async {
+        final okClient = MockClient((request) async {
+          if (request.url.path == '/health') {
+            return http.Response(jsonEncode({'status': 'ok'}), 200);
+          }
+          return http.Response('Not Found', 404);
+        });
+        final okService = TablebaseService(client: okClient, localEnabled: true);
+        expect(await okService.checkHealth(), isTrue);
+
+        final errClient = MockClient((request) async => throw Exception('Connection refused'));
+        final errService = TablebaseService(client: errClient, localEnabled: true);
+        expect(await errService.checkHealth(), isFalse);
+      });
+
+      test('client registration and heartbeat send client_id and maintain active status', () async {
+        final registeredClients = <String>[];
+        final heartbeats = <String>[];
+        final unregisters = <String>[];
+
+        final mockClient = MockClient((request) async {
+          final cid = request.url.queryParameters['client_id'];
+          if (request.url.path == '/health') {
+            return http.Response(jsonEncode({'status': 'ok'}), 200);
+          } else if (request.url.path == '/client/register') {
+            if (cid != null) registeredClients.add(cid);
+            return http.Response(jsonEncode({'status': 'ok', 'client_id': cid, 'clients': 1}), 200);
+          } else if (request.url.path == '/client/heartbeat') {
+            if (cid != null) heartbeats.add(cid);
+            return http.Response(jsonEncode({'status': 'ok', 'client_id': cid, 'clients': 1}), 200);
+          } else if (request.url.path == '/client/unregister') {
+            if (cid != null) unregisters.add(cid);
+            return http.Response(jsonEncode({'status': 'ok', 'client_id': cid, 'clients': 0}), 200);
+          }
+          return http.Response('Not Found', 404);
+        });
+
+        final service = TablebaseService(
+          client: mockClient,
+          localEnabled: true,
+          clientId: 'test-client-123',
+        );
+
+        expect(service.isRegistered, isFalse);
+        final regOk = await service.registerClient();
+        expect(regOk, isTrue);
+        expect(service.isRegistered, isTrue);
+        expect(registeredClients, contains('test-client-123'));
+
+        final hbOk = await service.sendHeartbeat();
+        expect(hbOk, isTrue);
+        expect(heartbeats, contains('test-client-123'));
+
+        await service.unregisterClient();
+        expect(service.isRegistered, isFalse);
+        expect(unregisters, contains('test-client-123'));
+      });
+
+      test('ensureServerRunning connects to already running server without launching', () async {
+        var launchAttempted = false;
+        final mockLauncher = _MockServerLauncher(onLaunch: () {
+          launchAttempted = true;
+          return true;
+        });
+
+        final mockClient = MockClient((request) async {
+          if (request.url.path == '/health') {
+            return http.Response(jsonEncode({'status': 'ok'}), 200);
+          } else if (request.url.path == '/client/register') {
+            return http.Response(jsonEncode({'status': 'ok'}), 200);
+          }
+          return http.Response('Not Found', 404);
+        });
+
+        final service = TablebaseService(
+          client: mockClient,
+          localEnabled: true,
+          autoLaunch: true,
+          launcher: mockLauncher,
+        );
+
+        final result = await service.ensureServerRunning();
+        expect(result, isTrue);
+        expect(service.isRegistered, isTrue);
+        expect(launchAttempted, isFalse);
+        service.dispose();
+      });
+
+      test('ensureServerRunning auto-launches server if offline and polls until ready', () async {
+        var isServerUp = false;
+        var launchAttempted = false;
+        final mockLauncher = _MockServerLauncher(onLaunch: () {
+          launchAttempted = true;
+          // Simulate server spinning up shortly after launch
+          Future.delayed(const Duration(milliseconds: 100), () {
+            isServerUp = true;
+          });
+          return true;
+        });
+
+        final mockClient = MockClient((request) async {
+          if (!isServerUp) {
+            throw Exception('Connection refused');
+          }
+          if (request.url.path == '/health') {
+            return http.Response(jsonEncode({'status': 'ok'}), 200);
+          } else if (request.url.path == '/client/register') {
+            return http.Response(jsonEncode({'status': 'ok'}), 200);
+          }
+          return http.Response('Not Found', 404);
+        });
+
+        final service = TablebaseService(
+          client: mockClient,
+          localEnabled: true,
+          autoLaunch: true,
+          launcher: mockLauncher,
+        );
+
+        final result = await service.ensureServerRunning(timeout: const Duration(seconds: 3));
+        expect(result, isTrue);
+        expect(launchAttempted, isTrue);
+        expect(service.isRegistered, isTrue);
+        service.dispose();
+      });
+
+      test('multiple retrosolve instances maintain independent client registrations', () async {
+        final activeClients = <String>{};
+
+        final mockClient = MockClient((request) async {
+          final cid = request.url.queryParameters['client_id'];
+          if (request.url.path == '/health') {
+            return http.Response(jsonEncode({'status': 'ok', 'clients': activeClients.length}), 200);
+          } else if (request.url.path == '/client/register') {
+            if (cid != null) activeClients.add(cid);
+            return http.Response(jsonEncode({'status': 'ok', 'client_id': cid, 'clients': activeClients.length}), 200);
+          } else if (request.url.path == '/client/heartbeat') {
+            return http.Response(jsonEncode({'status': 'ok', 'client_id': cid, 'clients': activeClients.length}), 200);
+          } else if (request.url.path == '/client/unregister') {
+            if (cid != null) activeClients.remove(cid);
+            return http.Response(jsonEncode({'status': 'ok', 'client_id': cid, 'clients': activeClients.length}), 200);
+          }
+          return http.Response('Not Found', 404);
+        });
+
+        final instanceA = TablebaseService(
+          client: mockClient,
+          localEnabled: true,
+          clientId: 'instance-A',
+        );
+        final instanceB = TablebaseService(
+          client: mockClient,
+          localEnabled: true,
+          clientId: 'instance-B',
+        );
+
+        expect(instanceA.clientId, isNot(equals(instanceB.clientId)));
+
+        // Both register
+        await instanceA.ensureServerRunning();
+        await instanceB.ensureServerRunning();
+
+        expect(activeClients, contains('instance-A'));
+        expect(activeClients, contains('instance-B'));
+        expect(activeClients.length, equals(2));
+
+        // Instance A shuts down / unregisters
+        await instanceA.unregisterClient();
+        expect(activeClients, isNot(contains('instance-A')));
+        expect(activeClients, contains('instance-B'));
+        expect(activeClients.length, equals(1));
+
+        // Instance B shuts down / unregisters
+        await instanceB.unregisterClient();
+        expect(activeClients.isEmpty, isTrue);
+
+        instanceA.dispose();
+        instanceB.dispose();
+      });
+    });
   });
+}
+
+class _MockServerLauncher implements TablebaseServerLauncher {
+  _MockServerLauncher({required this.onLaunch});
+  final bool Function() onLaunch;
+
+  @override
+  Future<bool> launchServer({
+    required int port,
+    required String host,
+    String? scriptPath,
+    String? atomicPath,
+    String? antichessPath,
+  }) async {
+    return onLaunch();
+  }
 }

@@ -18,7 +18,10 @@ import json
 import logging
 import os
 import sys
+import threading
+import time
 import urllib.parse
+import uuid
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional, Dict, Any, List
 
@@ -427,25 +430,210 @@ class AntichessTablebaseEngine:
         }
 
 
+class ClientManager:
+    """Manages active RetroSolve client sessions and handles idle auto-shutdown."""
+
+    def __init__(
+        self,
+        heartbeat_timeout: float = 15.0,
+        idle_timeout: float = 0.0,
+        on_idle_shutdown=None,
+    ):
+        self.heartbeat_timeout = heartbeat_timeout
+        self.idle_timeout = idle_timeout
+        self.on_idle_shutdown = on_idle_shutdown
+        self._lock = threading.Lock()
+        self._clients: Dict[str, float] = {}  # client_id -> last_seen_epoch
+        self._last_active_time = time.time()
+        self._had_clients = False
+        self._stop_event = threading.Event()
+        self._worker_thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self.idle_timeout > 0:
+            self._worker_thread = threading.Thread(
+                target=self._monitor_loop,
+                name="client-manager-watchdog",
+                daemon=True,
+            )
+            self._worker_thread.start()
+            logger.info(
+                "Client manager active (heartbeat_timeout=%.1fs, idle_timeout=%.1fs)",
+                self.heartbeat_timeout,
+                self.idle_timeout,
+            )
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def register(self, client_id: Optional[str] = None) -> str:
+        with self._lock:
+            cid = client_id or str(uuid.uuid4())
+            self._clients[cid] = time.time()
+            self._had_clients = True
+            logger.info("Client registered: %s (active clients: %d)", cid, len(self._clients))
+            return cid
+
+    def heartbeat(self, client_id: str) -> bool:
+        with self._lock:
+            self._clients[client_id] = time.time()
+            self._had_clients = True
+            return True
+
+    def unregister(self, client_id: str) -> None:
+        with self._lock:
+            if client_id in self._clients:
+                del self._clients[client_id]
+                logger.info("Client unregistered: %s (remaining active: %d)", client_id, len(self._clients))
+                if not self._clients:
+                    self._last_active_time = time.time()
+
+    def active_count(self) -> int:
+        with self._lock:
+            return len(self._clients)
+
+    def is_managed(self) -> bool:
+        return self.idle_timeout > 0
+
+    def _monitor_loop(self) -> None:
+        while not self._stop_event.is_set():
+            time.sleep(1.0)
+            now = time.time()
+            with self._lock:
+                expired = [
+                    cid for cid, last_seen in self._clients.items()
+                    if now - last_seen > self.heartbeat_timeout
+                ]
+                for cid in expired:
+                    logger.info("Client heartbeat timed out: %s", cid)
+                    del self._clients[cid]
+                    if not self._clients:
+                        self._last_active_time = now
+
+                count = len(self._clients)
+                idle_duration = now - self._last_active_time
+                should_shutdown = (
+                    count == 0
+                    and (self._had_clients or idle_duration >= self.idle_timeout)
+                    and idle_duration >= self.idle_timeout
+                )
+
+            if should_shutdown:
+                logger.info(
+                    "No active RetroSolve clients for %.1fs (idle timeout %.1fs reached). Initiating server shutdown...",
+                    idle_duration,
+                    self.idle_timeout,
+                )
+                if self.on_idle_shutdown:
+                    self.on_idle_shutdown()
+                break
+
+
 class TablebaseRequestHandler(BaseHTTPRequestHandler):
     atomic_engine: Optional[AtomicTablebaseEngine] = None
     antichess_engine: Optional[AntichessTablebaseEngine] = None
+    client_manager: Optional[ClientManager] = None
+
+    def _extract_client_id(self, parsed_url) -> Optional[str]:
+        qs = urllib.parse.parse_qs(parsed_url.query)
+        cid = qs.get("client_id", [None])[0]
+        if not cid and self.command == "POST":
+            length = int(self.headers.get("Content-Length", 0))
+            if length > 0:
+                try:
+                    body = self.rfile.read(length).decode("utf-8")
+                    data = json.loads(body)
+                    cid = data.get("client_id")
+                except Exception:
+                    pass
+        return cid
+
+    def do_POST(self):
+        self.do_GET()
 
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path == "/health" or path == "/status":
+        if path in ("/health", "/status"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
+            active_clients = self.client_manager.active_count() if self.client_manager else 0
+            is_managed = self.client_manager.is_managed() if self.client_manager else False
             resp = {
                 "status": "ok",
+                "clients": active_clients,
+                "managed": is_managed,
                 "variants": {
                     "atomic": self.atomic_engine.tablebase_dir if self.atomic_engine else None,
                     "antichess": self.antichess_engine.tablebase_dir if self.antichess_engine and self.antichess_engine.is_available() else None,
                 },
+            }
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
+        if path == "/client/register":
+            cid = self._extract_client_id(parsed)
+            assigned_id = (
+                self.client_manager.register(cid)
+                if self.client_manager
+                else (cid or str(uuid.uuid4()))
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            active_clients = self.client_manager.active_count() if self.client_manager else 1
+            resp = {
+                "status": "ok",
+                "client_id": assigned_id,
+                "clients": active_clients,
+            }
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
+        if path == "/client/heartbeat":
+            cid = self._extract_client_id(parsed)
+            if not cid:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Missing client_id parameter"}).encode("utf-8"))
+                return
+
+            if self.client_manager:
+                self.client_manager.heartbeat(cid)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            active_clients = self.client_manager.active_count() if self.client_manager else 1
+            resp = {
+                "status": "ok",
+                "client_id": cid,
+                "clients": active_clients,
+            }
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            return
+
+        if path == "/client/unregister":
+            cid = self._extract_client_id(parsed)
+            if cid and self.client_manager:
+                self.client_manager.unregister(cid)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            active_clients = self.client_manager.active_count() if self.client_manager else 0
+            resp = {
+                "status": "ok",
+                "client_id": cid,
+                "clients": active_clients,
             }
             self.wfile.write(json.dumps(resp).encode("utf-8"))
             return
@@ -506,21 +694,41 @@ def run_server(
     port: int = 8080,
     atomic_dir: str = "data/tablebases/atomic",
     antichess_dir: str = "data/tablebases/antichess",
+    managed: bool = False,
+    idle_timeout: float = 30.0,
+    heartbeat_timeout: float = 15.0,
 ):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     TablebaseRequestHandler.atomic_engine = AtomicTablebaseEngine(atomic_dir)
     TablebaseRequestHandler.antichess_engine = AntichessTablebaseEngine(antichess_dir)
 
     server_address = (host, port)
-    httpd = ThreadingHTTPServer(server_address, TablebaseRequestHandler)
-    logger.info("Tablebase Server running on http://%s:%d", host, port)
-    logger.info("Endpoints: /health, /atomic?fen=<fen>, /antichess?fen=<fen>")
+    try:
+        httpd = ThreadingHTTPServer(server_address, TablebaseRequestHandler)
+    except OSError as e:
+        logger.info("Cannot bind to http://%s:%d (%s). Server may already be running.", host, port, e)
+        return
+
+    effective_idle_timeout = idle_timeout if managed else 0.0
+    client_manager = ClientManager(
+        heartbeat_timeout=heartbeat_timeout,
+        idle_timeout=effective_idle_timeout,
+        on_idle_shutdown=lambda: threading.Thread(target=httpd.shutdown, daemon=True).start(),
+    )
+    TablebaseRequestHandler.client_manager = client_manager
+    client_manager.start()
+
+    logger.info("Tablebase Server running on http://%s:%d (managed=%s, idle_timeout=%.1fs)", host, port, managed, effective_idle_timeout)
+    logger.info("Endpoints: /health, /client/register, /client/heartbeat, /client/unregister, /atomic?fen=<fen>, /antichess?fen=<fen>")
 
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down server...")
+    finally:
+        client_manager.stop()
         httpd.server_close()
+        logger.info("Server stopped.")
 
 
 if __name__ == "__main__":
@@ -529,6 +737,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to (default: 8080)")
     parser.add_argument("--atomic-tables", default="data/tablebases/atomic", help="Path to atomic tablebases")
     parser.add_argument("--antichess-tables", default="data/tablebases/antichess", help="Path to antichess tablebases")
+    parser.add_argument("--managed", action="store_true", help="Enable managed client heartbeat tracking and auto-shutdown on idle")
+    parser.add_argument("--idle-timeout", type=float, default=30.0, help="Seconds without active clients before auto-shutdown (default: 30.0)")
+    parser.add_argument("--heartbeat-timeout", type=float, default=15.0, help="Seconds before an inactive client is considered timed out (default: 15.0)")
     args = parser.parse_args()
 
     run_server(
@@ -536,4 +747,7 @@ if __name__ == "__main__":
         port=args.port,
         atomic_dir=args.atomic_tables,
         antichess_dir=args.antichess_tables,
+        managed=args.managed,
+        idle_timeout=args.idle_timeout,
+        heartbeat_timeout=args.heartbeat_timeout,
     )

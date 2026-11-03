@@ -5,8 +5,10 @@ import 'package:http/http.dart' as http;
 import '../config.dart';
 import '../dataset_variant.dart';
 import 'engine_service.dart';
+import 'tablebase_launcher.dart';
 
-/// Service that queries the Lichess Online Tablebase API (tablebase.lichess.ovh).
+/// Service that queries the Lichess Online Tablebase API (tablebase.lichess.ovh)
+/// or a local Syzygy/Antichess sidecar server.
 ///
 /// Supports:
 /// - Antichess: endgames with 6 or fewer pieces.
@@ -19,11 +21,17 @@ class TablebaseService {
     String? localUrl,
     bool? enabled,
     bool? localEnabled,
+    bool? autoLaunch,
+    String? clientId,
+    TablebaseServerLauncher? launcher,
   })  : _client = client ?? http.Client(),
         localUrl = localUrl ?? defaultLocalUrl,
         _enabled = enabled,
         _localEnabled = localEnabled,
-        _isCustomClient = client != null;
+        _autoLaunch = autoLaunch,
+        _isCustomClient = client != null,
+        clientId = clientId ?? _generateClientId(),
+        _launcher = launcher ?? TablebaseServerLauncher();
 
   final http.Client _client;
   final bool _isCustomClient;
@@ -33,6 +41,31 @@ class TablebaseService {
   final String localUrl;
   final bool? _enabled;
   final bool? _localEnabled;
+  final bool? _autoLaunch;
+  final String clientId;
+  final TablebaseServerLauncher _launcher;
+
+  Timer? _heartbeatTimer;
+  bool _isRegistered = false;
+  Future<bool>? _serverCheckFuture;
+  DateTime? _lastLaunchAttempt;
+  static const Duration defaultHeartbeatInterval = Duration(seconds: 5);
+
+  /// Whether this client instance is registered with the tablebase sidecar server.
+  bool get isRegistered => _isRegistered;
+
+  /// Whether auto-launching the local tablebase sidecar server is enabled.
+  bool get isAutoLaunchEnabled =>
+      _autoLaunch ??
+      (_isCustomClient ? false : Config.autoLaunchTablebaseServer);
+
+  static int _clientCounter = 0;
+  static String _generateClientId() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final counter = ++_clientCounter;
+    final rand = (now ^ (counter << 16)) & 0xFFFFFF;
+    return 'retrosolve_${now}_$rand';
+  }
 
   /// Whether remote tablebase probing is enabled.
   bool get isEnabled => _enabled ?? Config.enableRemoteTablebase;
@@ -43,6 +76,166 @@ class TablebaseService {
 
   /// Default singleton instance.
   static final TablebaseService instance = TablebaseService();
+
+  /// Ensures the local tablebase sidecar server is running, healthy, and registered.
+  ///
+  /// If the server is not reachable and auto-launch is enabled, launches the server
+  /// process in the background, waits until healthy, and registers this client.
+  Future<bool> ensureServerRunning({
+    Duration timeout = const Duration(seconds: 10),
+    bool forceCheck = false,
+  }) async {
+    if (!isLocalEnabled) return false;
+    if (!forceCheck && _isRegistered && _heartbeatTimer != null) {
+      return true;
+    }
+    if (_serverCheckFuture != null) {
+      return _serverCheckFuture!;
+    }
+
+    final completer = Completer<bool>();
+    _serverCheckFuture = completer.future;
+
+    try {
+      final success = await _ensureServerRunningInternal(timeout: timeout);
+      completer.complete(success);
+      return success;
+    } catch (_) {
+      completer.complete(false);
+      return false;
+    } finally {
+      _serverCheckFuture = null;
+    }
+  }
+
+  Future<bool> _ensureServerRunningInternal({
+    required Duration timeout,
+  }) async {
+    final uri = Uri.parse(localUrl);
+
+    // 1. Check if server is already responding
+    if (await checkHealth(timeout: const Duration(milliseconds: 600))) {
+      await registerClient();
+      startHeartbeat();
+      return true;
+    }
+
+    // 2. If not alive, check if auto-launch is enabled
+    if (!isAutoLaunchEnabled) {
+      return false;
+    }
+
+    // Cooldown check between process spawn attempts to avoid spamming
+    final now = DateTime.now();
+    if (_lastLaunchAttempt != null &&
+        now.difference(_lastLaunchAttempt!) < const Duration(seconds: 15)) {
+      return false;
+    }
+    _lastLaunchAttempt = now;
+
+    // Launch server process
+    final launched = await _launcher.launchServer(
+      port: uri.hasPort ? uri.port : 8080,
+      host: uri.host.isNotEmpty ? uri.host : '127.0.0.1',
+    );
+    if (!launched) {
+      return false;
+    }
+
+    // 3. Poll for readiness
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsed < timeout) {
+      await Future.delayed(const Duration(milliseconds: 200));
+      if (await checkHealth(timeout: const Duration(milliseconds: 400))) {
+        await registerClient();
+        startHeartbeat();
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /// Checks the /health endpoint of the local tablebase server.
+  Future<bool> checkHealth({
+    Duration timeout = const Duration(milliseconds: 600),
+  }) async {
+    try {
+      final healthUri = Uri.parse('$localUrl/health');
+      final response = await _client.get(healthUri).timeout(timeout);
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Registers this client session with the local tablebase server.
+  Future<bool> registerClient({
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    try {
+      final regUri = Uri.parse(
+          '$localUrl/client/register?client_id=${Uri.encodeComponent(clientId)}');
+      final response = await _client.post(regUri).timeout(timeout);
+      if (response.statusCode == 200) {
+        _isRegistered = true;
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Starts the periodic heartbeat timer.
+  void startHeartbeat({Duration interval = defaultHeartbeatInterval}) {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(interval, (_) async {
+      await sendHeartbeat();
+    });
+  }
+
+  /// Sends a heartbeat to the local tablebase server to renew the client lease.
+  Future<bool> sendHeartbeat({
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    try {
+      final hbUri = Uri.parse(
+          '$localUrl/client/heartbeat?client_id=${Uri.encodeComponent(clientId)}');
+      final response = await _client.post(hbUri).timeout(timeout);
+      if (response.statusCode == 200) {
+        _isRegistered = true;
+        return true;
+      } else {
+        _isRegistered = false;
+        return false;
+      }
+    } catch (_) {
+      _isRegistered = false;
+      return false;
+    }
+  }
+
+  /// Unregisters this client session from the tablebase server and stops heartbeats.
+  Future<void> unregisterClient({
+    Duration timeout = const Duration(milliseconds: 800),
+  }) async {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    if (!_isRegistered) return;
+    _isRegistered = false;
+    try {
+      final unregUri = Uri.parse(
+          '$localUrl/client/unregister?client_id=${Uri.encodeComponent(clientId)}');
+      await _client.post(unregUri).timeout(timeout);
+    } catch (_) {}
+  }
+
+  /// Disposes this service, cancelling heartbeats and unregistering the client session.
+  void dispose() {
+    unregisterClient();
+    if (!_isCustomClient) {
+      _client.close();
+    }
+  }
 
   /// Checks if tablebase lookup is supported for the given [variant] and [fen].
   static bool isSupported(DatasetVariant variant, String fen) {
@@ -91,6 +284,10 @@ class TablebaseService {
     Duration timeout = const Duration(milliseconds: 500),
   }) async {
     if (!isLocalEnabled || !isSupported(variant, fen)) return null;
+
+    if (!_isRegistered && isAutoLaunchEnabled) {
+      unawaited(ensureServerRunning());
+    }
 
     final endpoint = endpointForVariant(variant);
     if (endpoint == null) return null;

@@ -1,6 +1,7 @@
 // ignore_for_file: avoid_print
 
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -69,7 +70,7 @@ class HomePage extends StatefulWidget {
 
 enum _MoreAction { solve, mateSolver, export_, analyzeGame, exploreHistory, explore1Ply, copyFen, copyMoveHistory, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
 
-class HomePageState extends State<HomePage> {
+class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
   Timer? _evalTimer;
   List<EngineEvaluation>? _pendingEvals;
@@ -1127,6 +1128,7 @@ class HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _variant = widget.initialVariant;
     _controller.setGame(_createGameForVariant(_variant));
     _controller.game.reset();
@@ -1237,12 +1239,20 @@ class HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _knownMovesScrollController.dispose();
     _evalController.dispose();
     _evalTimer?.cancel();
     _evalSub?.cancel();
     widget.engineService.dispose();
+    TablebaseService.instance.unregisterClient();
     super.dispose();
+  }
+
+  @override
+  Future<AppExitResponse> didRequestAppExit() async {
+    await TablebaseService.instance.unregisterClient();
+    return AppExitResponse.exit;
   }
 
   Future<void> _initStartup() async {
@@ -1263,6 +1273,19 @@ class HomePageState extends State<HomePage> {
     }).catchError((e, st) {
       print('[RetroSolve] Error starting engine: $e\n$st');
     });
+
+    // Ensure tablebase sidecar server is running concurrently in background if enabled
+    if (TablebaseService.instance.isLocalEnabled &&
+        Config.autoLaunchTablebaseServer) {
+      TablebaseService.instance.ensureServerRunning().then((ready) {
+        if (ready && mounted) {
+          print(
+              '[tablebase] Sidecar server ready and registered (client: ${TablebaseService.instance.clientId})');
+        }
+      }).catchError((e, st) {
+        print('[tablebase] Error ensuring tablebase server: $e\n$st');
+      });
+    }
 
     try {
       graph.onNodeUpdated = (bfen, assigned, computed) {

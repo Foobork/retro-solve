@@ -613,6 +613,33 @@ void main() {
     expect(state.isSolving, isFalse);
     expect(find.text('Testing solve progress...'), findsNothing);
   });
+
+  testWidgets('Prioritises showing UI at startup with autoImportGraph', (WidgetTester tester) async {
+    final engineService = MockEngineService(variant: DatasetVariant.koth);
+    final dbCompleter = Completer<void>();
+    await tester.pumpWidget(
+      RetroSolve(
+        initialVariant: DatasetVariant.koth,
+        engineService: engineService,
+        autoImportGraph: true,
+        importGraphOverride: (_) => dbCompleter.future,
+      ),
+    );
+
+    // Initial frame renders immediately before async DB work finishes
+    expect(find.byType(RetroSolve), findsOneWidget);
+    expect(find.byType(ChessBoard), findsOneWidget);
+    expect(find.text('Loading database...'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+
+    // Complete the database loading
+    dbCompleter.complete();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 50));
+
+    // After loading completes, loading indicator overlay disappears
+    expect(find.text('Loading database...'), findsNothing);
+  });
 }
 
 class MockEngineService implements EngineService {

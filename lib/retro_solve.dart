@@ -23,11 +23,15 @@ class RetroSolve extends StatelessWidget {
   const RetroSolve({
     required this.initialVariant,
     required this.engineService,
+    this.autoImportGraph = false,
+    this.importGraphOverride,
     Key? key,
   }) : super(key: key);
 
   final DatasetVariant initialVariant;
   final EngineService engineService;
+  final bool autoImportGraph;
+  final Future<void> Function(String dataPath)? importGraphOverride;
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +42,8 @@ class RetroSolve extends StatelessWidget {
       home: HomePage(
         initialVariant: initialVariant,
         engineService: engineService,
+        autoImportGraph: autoImportGraph,
+        importGraphOverride: importGraphOverride,
       ),
     );
   }
@@ -47,11 +53,15 @@ class HomePage extends StatefulWidget {
   const HomePage({
     required this.initialVariant,
     required this.engineService,
+    this.autoImportGraph = false,
+    this.importGraphOverride,
     Key? key,
   }) : super(key: key);
 
   final DatasetVariant initialVariant;
   final EngineService engineService;
+  final bool autoImportGraph;
+  final Future<void> Function(String dataPath)? importGraphOverride;
 
   @override
   HomePageState createState() => HomePageState();
@@ -467,9 +477,27 @@ class HomePageState extends State<HomePage> {
         children: [
           body,
           if (_isLoadingVariant)
-            const ColoredBox(
-              color: Color(0x66000000),
-              child: Center(child: CircularProgressIndicator()),
+            ColoredBox(
+              color: const Color(0x66000000),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    if (_loadingMessage != null) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        _loadingMessage!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
         ],
       ),
@@ -489,6 +517,7 @@ class HomePageState extends State<HomePage> {
 
   late DatasetVariant _variant;
   bool _isLoadingVariant = false;
+  String? _loadingMessage;
   List<MoveInfo> _knownMoves = [];
   String _bfen = "";
   String _eval = "";
@@ -1102,6 +1131,11 @@ class HomePageState extends State<HomePage> {
     _controller.setGame(_createGameForVariant(_variant));
     _controller.game.reset();
     _engineAvailable = widget.engineService.isEngineAvailable;
+    if (widget.autoImportGraph) {
+      _isLoadingVariant = true;
+      _loadingMessage = 'Loading database...';
+      _initStartup();
+    }
     InteractiveBacksolvingStore.load().then((val) {
       if (mounted) setState(() => _interactiveBacksolving = val);
     });
@@ -1211,6 +1245,52 @@ class HomePageState extends State<HomePage> {
     super.dispose();
   }
 
+  Future<void> _initStartup() async {
+    // Let the loading overlay paint before starting background tasks
+    await Future<void>.delayed(const Duration(milliseconds: 16));
+    if (!mounted) return;
+
+    // Start engine concurrently in background
+    widget.engineService.start().then((_) {
+      if (mounted) {
+        setState(() {
+          _engineAvailable = widget.engineService.isEngineAvailable;
+        });
+        if (!_isLoadingVariant) {
+          _update();
+        }
+      }
+    }).catchError((e, st) {
+      print('[RetroSolve] Error starting engine: $e\n$st');
+    });
+
+    try {
+      graph.onNodeUpdated = (bfen, assigned, computed) {
+        DatabaseService.instance.upsertNode(bfen, assigned, computed);
+      };
+      graph.onEdgeAdded = (source, target) {
+        DatabaseService.instance.upsertEdge(source, target);
+      };
+      if (widget.importGraphOverride != null) {
+        await widget.importGraphOverride!(_variant.dataPath);
+      } else {
+        await importGraph(_variant.dataPath);
+      }
+    } catch (e, st) {
+      print('[RetroSolve] Error importing graph on startup: $e\n$st');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingVariant = false;
+          _loadingMessage = null;
+          _engineAvailable = widget.engineService.isEngineAvailable;
+          _update();
+        });
+        _chessBoardListener();
+      }
+    }
+  }
+
   Future<void> _setVariant(DatasetVariant? v) async {
     if (v == null) return;
     if (v == _variant) return;
@@ -1218,6 +1298,7 @@ class HomePageState extends State<HomePage> {
     setState(() {
       _variant = v;
       _isLoadingVariant = true;
+      _loadingMessage = 'Loading ${v.label}...';
     });
 
     _controller.removeListener(_chessBoardListener);
@@ -1240,7 +1321,11 @@ class HomePageState extends State<HomePage> {
         DatabaseService.instance.upsertEdge(source, target);
       };
 
-      await importGraph(_variant.dataPath);
+      if (widget.importGraphOverride != null) {
+        await widget.importGraphOverride!(_variant.dataPath);
+      } else {
+        await importGraph(_variant.dataPath);
+      }
       await DatasetVariantStore.save(_variant);
     } catch (e, st) {
       print('[RetroSolve] Error switching variant to $v: $e\n$st');
@@ -1249,6 +1334,7 @@ class HomePageState extends State<HomePage> {
       if (mounted) {
         setState(() {
           _isLoadingVariant = false;
+          _loadingMessage = null;
           _update();
         });
         _chessBoardListener();
@@ -1259,6 +1345,7 @@ class HomePageState extends State<HomePage> {
   int _chessBoardListenerSeq = 0;
 
   void _chessBoardListener() async {
+    if (_isLoadingVariant) return;
     final seq = ++_chessBoardListenerSeq;
     var game = _controller.game.copy();
     String a = game.bfen;

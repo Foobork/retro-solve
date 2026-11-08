@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       table:
-        description: 'Table to solve, or "ALL" for all 9 pawnless 4-piece tables in parallel'
+        description: 'Table to solve, or "ALL" for all 8 Layer-1 pawn 4-piece tables in parallel'
         required: true
         default: 'ALL'
 
@@ -21,15 +21,14 @@ jobs:
       fail-fast: false
       matrix:
         table:
-          - KQQvK
-          - KQRvK
-          - KQBvK
-          - KQNvK
-          - KRBvK
-          - KRNvK
-          - KQvKQ
-          - KQvKB
-          - KQvKN
+          - KQPvK
+          - KRPvK
+          - KBPvK
+          - KNPvK
+          - KQvKP
+          - KRvKP
+          - KBvKP
+          - KNvKP
 
     steps:
       - name: Checkout repository
@@ -58,10 +57,23 @@ jobs:
         run: |
           cargo build --release --manifest-path tool/atomic_tb_gen/Cargo.toml
 
-      - name: Create Tablebase Output Directory
+      - name: Create Tablebase Output Directory & Download Parents
         if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p data/tablebases/atomic
+          mkdir -p data/tablebases/atomic/temp
+          gh run download 42484601569 -D data/tablebases/atomic/temp || true
+          gh run download 42481717145 -D data/tablebases/atomic/temp || true
+          find data/tablebases/atomic/temp -name "*.atbd" -exec mv {} data/tablebases/atomic/ \; || true
+          rm -rf data/tablebases/atomic/temp
+          # Ensure KRRvK is generated if not present
+          if [ ! -f data/tablebases/atomic/KRRvK.atbd ]; then
+            echo "Generating KRRvK.atbd parent dependency..."
+            ./tool/atomic_tb_gen/target/release/atomic_tb_gen KRRvK
+          fi
+          echo "Current parent tablebases on runner:"
+          ls -lh data/tablebases/atomic/*.atbd
 
       - name: Run Retrograde Solver
         if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table

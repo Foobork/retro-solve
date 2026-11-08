@@ -31,16 +31,17 @@ jobs:
           - KQvKB
           - KQvKN
 
-    if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
-
     steps:
       - name: Checkout repository
+        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: actions/checkout@v4
 
       - name: Set up Rust
+        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo Dependencies
+        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: actions/cache@v4
         with:
           path: |
@@ -53,18 +54,22 @@ jobs:
             cargo-atomic-tb-${{ runner.os }}-
 
       - name: Build Release Binary
+        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         run: |
           cargo build --release --manifest-path tool/atomic_tb_gen/Cargo.toml
 
       - name: Create Tablebase Output Directory
+        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         run: |
           mkdir -p data/tablebases/atomic
 
       - name: Run Retrograde Solver
+        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         run: |
           ./tool/atomic_tb_gen/target/release/atomic_tb_gen ${{ matrix.table }}
 
       - name: Upload Tablebase Artifact (.atbd)
+        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: actions/upload-artifact@v4
         with:
           name: atomic-tb-${{ matrix.table }}

@@ -1,0 +1,57 @@
+name: Build Atomic DTW Tablebase
+
+on:
+  workflow_dispatch:
+    inputs:
+      table:
+        description: 'Material configuration to solve (e.g. "KQvKR", "KRRvK", "KQvK")'
+        required: true
+        default: 'KQvKR'
+
+concurrency:
+  group: "build-atomic-tb-${{ github.event.inputs.table }}"
+  cancel-in-progress: false
+
+jobs:
+  build-tablebase:
+    name: Generate ${{ github.event.inputs.table }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            tool/atomic_tb_gen/target/
+          key: cargo-atomic-tb-${{ runner.os }}-${{ hashFiles('tool/atomic_tb_gen/Cargo.lock') }}
+          restore-keys: |
+            cargo-atomic-tb-${{ runner.os }}-
+
+      - name: Build Release Binary
+        run: |
+          cargo build --release --manifest-path tool/atomic_tb_gen/Cargo.toml
+
+      - name: Create Tablebase Output Directory
+        run: |
+          mkdir -p data/tablebases/atomic
+
+      - name: Run Retrograde Solver
+        run: |
+          ./tool/atomic_tb_gen/target/release/atomic_tb_gen ${{ github.event.inputs.table }}
+
+      - name: Upload Tablebase Artifact (.atbd)
+        uses: actions/upload-artifact@v4
+        with:
+          name: atomic-tb-${{ github.event.inputs.table }}
+          path: data/tablebases/atomic/${{ github.event.inputs.table }}.atbd
+          retention-days: 90

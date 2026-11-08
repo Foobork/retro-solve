@@ -5,6 +5,7 @@
 *.db.gz
 *.atbw
 *.atbz
+*.atbd
 *.rtbw
 *.rtbz
 data/tablebases/
@@ -12,6 +13,9 @@ data/*.json
 *.proof
 *.proof.idx
 *.proof.dtw
+
+# Rust target
+**/target/
 
 # 3rd party
 *.exe

@@ -1,21 +1,22 @@
+use rayon::prelude::*;
 use shakmaty::variant::Atomic;
 use shakmaty::{
     Board, CastlingMode, Color, FromSetup, Piece, Position, Role, Setup, Square,
 };
 use std::env;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 pub const ILLEGAL: i8 = -128;
 pub const DRAW: i8 = 0;
 
-// 3-piece total: 524,288 entries (512 KB)
-pub const THREE_PIECE_TOTAL: usize = 1 << 19;
-
-// KQvKR total: 33,554,432 entries (32 MB)
-pub const KQ_KR_TOTAL: usize = 1 << 25;
+// All 4-piece tables use 32 MB direct indexing: 2 turns * 64^4 = 33,554,432 entries
+pub const TOTAL_STATES: usize = 1 << 25;
+pub const CHUNK_SIZE: usize = 1 << 18; // 262,144 states per (turn, wk)
+pub const NUM_CHUNKS: usize = 128;
 
 fn get_out_dir() -> PathBuf {
     let p1 = PathBuf::from("data/tablebases/atomic");
@@ -29,322 +30,141 @@ fn get_out_dir() -> PathBuf {
     PathBuf::from("data/tablebases/atomic")
 }
 
-#[inline(always)]
-pub fn encode_kq_k(turn: Color, wk: Square, bk: Square, wq: Square) -> usize {
-    ((turn.is_black() as usize) << 18)
-        | ((wk as usize) << 12)
-        | ((bk as usize) << 6)
-        | (wq as usize)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndgameConfig {
+    ThreeVsOne { role1: Role, role2: Role },
+    TwoVsTwo { w_role: Role, b_role: Role },
+}
+
+fn char_to_role(c: char) -> Option<Role> {
+    match c {
+        'Q' | 'q' => Some(Role::Queen),
+        'R' | 'r' => Some(Role::Rook),
+        'B' | 'b' => Some(Role::Bishop),
+        'N' | 'n' => Some(Role::Knight),
+        _ => None,
+    }
+}
+
+pub fn parse_config(name: &str) -> Option<EndgameConfig> {
+    let parts: Vec<&str> = name.split('v').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let left = parts[0];
+    let right = parts[1];
+
+    if !left.starts_with('K') || !right.starts_with('K') {
+        return None;
+    }
+
+    let left_pieces: Vec<char> = left[1..].chars().collect();
+    let right_pieces: Vec<char> = right[1..].chars().collect();
+
+    if left_pieces.len() == 2 && right_pieces.is_empty() {
+        let r1 = char_to_role(left_pieces[0])?;
+        let r2 = char_to_role(left_pieces[1])?;
+        return Some(EndgameConfig::ThreeVsOne { role1: r1, role2: r2 });
+    }
+
+    if left_pieces.len() == 1 && right_pieces.len() == 1 {
+        let w_role = char_to_role(left_pieces[0])?;
+        let b_role = char_to_role(right_pieces[0])?;
+        return Some(EndgameConfig::TwoVsTwo { w_role, b_role });
+    }
+
+    None
 }
 
 #[inline(always)]
-pub fn encode_kq_kr(turn: Color, wk: Square, bk: Square, wq: Square, br: Square) -> usize {
+pub fn encode_state(turn: Color, wk: Square, bk: Square, p1: Square, p2: Square) -> usize {
     ((turn.is_black() as usize) << 24)
         | ((wk as usize) << 18)
         | ((bk as usize) << 12)
-        | ((wq as usize) << 6)
-        | (br as usize)
+        | ((p1 as usize) << 6)
+        | (p2 as usize)
 }
 
-pub fn solve_kqvk() -> Vec<i8> {
-    println!("Generating Atomic DTW Tablebase for KQvK (3-piece)...");
-    let t0 = Instant::now();
-
-    let mut dtw = vec![ILLEGAL; THREE_PIECE_TOTAL];
-    let mut degrees = vec![0u16; THREE_PIECE_TOTAL];
-    let mut max_loss_dtw = vec![0u8; THREE_PIECE_TOTAL];
-    let mut is_legal = vec![false; THREE_PIECE_TOTAL];
-    let mut pred_counts = vec![0u32; THREE_PIECE_TOTAL];
-
-    let mut buckets: Vec<Vec<(u32, bool)>> = vec![Vec::new(); 128];
-    let mut valid_count = 0usize;
-    let mut immediate_wins = 0usize;
-
-    for wk_idx in 0..64 {
-        let wk = Square::new(wk_idx);
-        for bk_idx in 0..64 {
-            if wk_idx == bk_idx { continue; }
-            let bk = Square::new(bk_idx);
-            for wq_idx in 0..64 {
-                if wq_idx == wk_idx || wq_idx == bk_idx { continue; }
-                let wq = Square::new(wq_idx);
-
-                for &turn in &[Color::White, Color::Black] {
-                    let idx = encode_kq_k(turn, wk, bk, wq);
-
-                    let mut board = Board::empty();
-                    board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
-                    board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
-                    board.set_piece_at(wq, Piece { color: Color::White, role: Role::Queen });
-
-                    let mut setup = Setup::empty();
-                    setup.board = board;
-                    setup.turn = turn;
-
-                    let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-
-                    is_legal[idx] = true;
-                    valid_count += 1;
-
-                    if pos.is_game_over() {
-                        if let Some(outcome) = pos.outcome() {
-                            if let Some(winner) = outcome.winner() {
-                                if winner != turn {
-                                    dtw[idx] = -1; // terminal loss
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    let legal_moves = pos.legal_moves();
-                    let mut has_imm_win = false;
-
-                    for m in &legal_moves {
-                        let next = pos.clone().play(m).expect("legal move");
-                        if next.is_game_over() {
-                            if let Some(outcome) = next.outcome() {
-                                if outcome.winner() == Some(turn) {
-                                    has_imm_win = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if has_imm_win {
-                        dtw[idx] = 1;
-                        buckets[1].push((idx as u32, true));
-                        immediate_wins += 1;
-                        continue;
-                    }
-
-                    for m in &legal_moves {
-                        let next = pos.clone().play(m).expect("legal move");
-                        let c_wk = next.board().king_of(Color::White);
-                        let c_bk = next.board().king_of(Color::Black);
-                        let c_wq = next.board().by_color(Color::White) & next.board().by_role(Role::Queen);
-
-                        if let (Some(cwk), Some(cbk)) = (c_wk, c_bk) {
-                            if c_wq.count() == 1 {
-                                let cwq_sq = c_wq.first().unwrap();
-                                let child_idx = encode_kq_k(next.turn(), cwk, cbk, cwq_sq);
-                                pred_counts[child_idx] += 1;
-                                degrees[idx] += 1;
-                            }
-                        }
-                    }
-                }
-            }
+pub fn solve_table(name: &str) {
+    let config = match parse_config(name) {
+        Some(c) => c,
+        None => {
+            eprintln!("Invalid table name: {}", name);
+            return;
         }
-    }
-
-    let total_edges: usize = pred_counts.iter().map(|&c| c as usize).sum();
-    let mut row_ptrs = vec![0u32; THREE_PIECE_TOTAL + 1];
-    let mut running_sum = 0u32;
-    for i in 0..THREE_PIECE_TOTAL {
-        row_ptrs[i] = running_sum;
-        running_sum += pred_counts[i];
-    }
-    row_ptrs[THREE_PIECE_TOTAL] = running_sum;
-
-    let mut curr_offsets = row_ptrs.clone();
-    let mut col_indices = vec![0u32; total_edges];
-
-    for wk_idx in 0..64 {
-        let wk = Square::new(wk_idx);
-        for bk_idx in 0..64 {
-            if wk_idx == bk_idx { continue; }
-            let bk = Square::new(bk_idx);
-            for wq_idx in 0..64 {
-                if wq_idx == wk_idx || wq_idx == bk_idx { continue; }
-                let wq = Square::new(wq_idx);
-
-                for &turn in &[Color::White, Color::Black] {
-                    let idx = encode_kq_k(turn, wk, bk, wq);
-                    if !is_legal[idx] || dtw[idx] == 1 || dtw[idx] == -1 {
-                        continue;
-                    }
-
-                    let mut board = Board::empty();
-                    board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
-                    board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
-                    board.set_piece_at(wq, Piece { color: Color::White, role: Role::Queen });
-
-                    let mut setup = Setup::empty();
-                    setup.board = board;
-                    setup.turn = turn;
-
-                    let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-
-                    for m in pos.legal_moves() {
-                        let next = pos.clone().play(&m).expect("legal move");
-                        let c_wk = next.board().king_of(Color::White);
-                        let c_bk = next.board().king_of(Color::Black);
-                        let c_wq = next.board().by_color(Color::White) & next.board().by_role(Role::Queen);
-
-                        if let (Some(cwk), Some(cbk)) = (c_wk, c_bk) {
-                            if c_wq.count() == 1 {
-                                let cwq_sq = c_wq.first().unwrap();
-                                let child_idx = encode_kq_k(next.turn(), cwk, cbk, cwq_sq);
-                                let offset = curr_offsets[child_idx];
-                                col_indices[offset as usize] = idx as u32;
-                                curr_offsets[child_idx] += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut wins_count = immediate_wins;
-    let mut losses_count = 0usize;
-    let mut max_dtw = 1u8;
-
-    for dist in 1..127usize {
-        while let Some((curr_idx, is_win)) = buckets[dist].pop() {
-            if (dist as u8) > max_dtw {
-                max_dtw = dist as u8;
-            }
-
-            let start = row_ptrs[curr_idx as usize] as usize;
-            let end = row_ptrs[curr_idx as usize + 1] as usize;
-
-            for edge_idx in start..end {
-                let p_idx_u32 = col_indices[edge_idx];
-                let p_idx = p_idx_u32 as usize;
-
-                if dtw[p_idx] != ILLEGAL && dtw[p_idx] != DRAW {
-                    continue;
-                }
-
-                if !is_win {
-                    let win_dist = (dist + 1) as u8;
-                    if win_dist <= 127 {
-                        dtw[p_idx] = win_dist as i8;
-                        buckets[win_dist as usize].push((p_idx_u32, true));
-                        wins_count += 1;
-                    }
-                } else {
-                    if degrees[p_idx] > 0 {
-                        degrees[p_idx] -= 1;
-                        let loss_cand = (dist + 1) as u8;
-                        if loss_cand > max_loss_dtw[p_idx] {
-                            max_loss_dtw[p_idx] = loss_cand;
-                        }
-
-                        if degrees[p_idx] == 0 {
-                            let loss_dist = max_loss_dtw[p_idx];
-                            if loss_dist <= 127 {
-                                dtw[p_idx] = -(loss_dist as i8);
-                                buckets[loss_dist as usize].push((p_idx_u32, false));
-                                losses_count += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    for idx in 0..THREE_PIECE_TOTAL {
-        if is_legal[idx] && dtw[idx] == ILLEGAL {
-            dtw[idx] = DRAW;
-        }
-    }
-
-    println!("Finished KQvK in {:?}: {} legal states, {} wins, {} losses, max DTW {}",
-        t0.elapsed(), valid_count, wins_count, losses_count, max_dtw);
-
-    let out_dir = get_out_dir();
-    fs::create_dir_all(&out_dir).expect("create output directory");
-    let out_path = out_dir.join("KQvK.atbd");
-    let mut file = File::create(&out_path).expect("create KQvK.atbd");
-
-    let mut header = [0u8; 32];
-    header[0..4].copy_from_slice(b"ATBD");
-    header[4] = 1;
-    header[5] = 1; // KQvK marker
-    file.write_all(&header).expect("write header");
-    let byte_slice: &[u8] = unsafe {
-        std::slice::from_raw_parts(dtw.as_ptr() as *const u8, dtw.len())
     };
-    file.write_all(byte_slice).expect("write dtw bytes");
-    dtw
-}
 
-pub fn load_or_generate_kqvk() -> Vec<i8> {
-    let out_dir = get_out_dir();
-    let path = out_dir.join("KQvK.atbd");
-    if path.exists() {
-        if let Ok(mut f) = File::open(&path) {
-            let mut header = [0u8; 32];
-            if f.read_exact(&mut header).is_ok() && &header[0..4] == b"ATBD" {
-                let mut data = vec![0u8; THREE_PIECE_TOTAL];
-                if f.read_exact(&mut data).is_ok() {
-                    println!("Loaded existing KQvK.atbd ({} bytes)", data.len());
-                    return unsafe { std::mem::transmute::<Vec<u8>, Vec<i8>>(data) };
-                }
-            }
-        }
-    }
-    solve_kqvk()
-}
-
-pub fn solve_kqvkr() {
-    let name = "KQvKR";
     println!("==================================================");
-    println!("Generating Atomic DTW Tablebase for {} (4-piece 2v2) in Rust...", name);
+    println!("Generating Atomic DTW Tablebase for {} (4-piece)...", name);
     let t0 = Instant::now();
-
-    let kqvk_tb = load_or_generate_kqvk();
 
     println!("Allocating CSR graph and retrograde arrays (32 MB direct indexing)...");
-    let mut dtw = vec![ILLEGAL; KQ_KR_TOTAL];
-    let mut degrees = vec![0u16; KQ_KR_TOTAL];
-    let mut max_loss_dtw = vec![0u8; KQ_KR_TOTAL];
-    let mut is_legal = vec![false; KQ_KR_TOTAL];
-    let mut pred_counts = vec![0u32; KQ_KR_TOTAL];
-    let mut can_draw = vec![false; KQ_KR_TOTAL];
-    let mut external_wins = vec![255u8; KQ_KR_TOTAL];
+    let mut dtw = vec![ILLEGAL; TOTAL_STATES];
+    let mut degrees = vec![0u16; TOTAL_STATES];
+    let mut max_loss_dtw = vec![0u8; TOTAL_STATES];
+    let mut is_legal = vec![false; TOTAL_STATES];
+    let mut can_draw = vec![false; TOTAL_STATES];
 
-    let mut buckets: Vec<Vec<(u32, bool)>> = vec![Vec::new(); 128];
-    let mut valid_count = 0usize;
-    let mut immediate_wins = 0usize;
-    let mut terminal_losses = 0usize;
+    let pred_counts: Vec<AtomicU32> = (0..TOTAL_STATES).map(|_| AtomicU32::new(0)).collect();
 
-    println!("Step 1: Enumerating legal states and counting incoming edges...");
+    println!("Step 1: Enumerating legal states and counting incoming edges (parallel across {} chunks)...", NUM_CHUNKS);
     let t_step1 = Instant::now();
 
-    for wk_idx in 0..64 {
-        let wk = Square::new(wk_idx);
-        for bk_idx in 0..64 {
-            if wk_idx == bk_idx { continue; }
-            let bk = Square::new(bk_idx);
+    let dtw_chunks: Vec<&mut [i8]> = dtw.chunks_exact_mut(CHUNK_SIZE).collect();
+    let degrees_chunks: Vec<&mut [u16]> = degrees.chunks_exact_mut(CHUNK_SIZE).collect();
+    let is_legal_chunks: Vec<&mut [bool]> = is_legal.chunks_exact_mut(CHUNK_SIZE).collect();
+    let can_draw_chunks: Vec<&mut [bool]> = can_draw.chunks_exact_mut(CHUNK_SIZE).collect();
 
-            for wq_idx in 0..64 {
-                if wq_idx == wk_idx || wq_idx == bk_idx { continue; }
-                let wq = Square::new(wq_idx);
+    // Pack into a tuple per chunk for rayon zip
+    let chunk_data: Vec<_> = dtw_chunks
+        .into_iter()
+        .zip(degrees_chunks)
+        .zip(is_legal_chunks)
+        .zip(can_draw_chunks)
+        .enumerate()
+        .collect();
 
-                for br_idx in 0..64 {
-                    if br_idx == wk_idx || br_idx == bk_idx || br_idx == wq_idx { continue; }
-                    let br = Square::new(br_idx);
+    let local_results: Vec<(Vec<u32>, usize, usize, usize)> = chunk_data
+        .into_par_iter()
+        .map(|(chunk_id, (((c_dtw, c_degrees), c_is_legal), c_can_draw))| {
+            let turn = if chunk_id < 64 { Color::White } else { Color::Black };
+            let wk = Square::new((chunk_id % 64) as u32);
+            let wk_idx = wk as usize;
 
-                    for &turn in &[Color::White, Color::Black] {
-                        let idx = encode_kq_kr(turn, wk, bk, wq, br);
+            let mut imm_wins_vec = Vec::new();
+            let mut v_count = 0usize;
+            let mut imm_wins = 0usize;
+            let mut term_losses = 0usize;
+
+            for bk_idx in 0..64 {
+                if wk_idx == bk_idx { continue; }
+                let bk = Square::new(bk_idx as u32);
+
+                for p1_idx in 0..64 {
+                    if p1_idx == wk_idx || p1_idx == bk_idx { continue; }
+                    let p1 = Square::new(p1_idx as u32);
+
+                    for p2_idx in 0..64 {
+                        if p2_idx == wk_idx || p2_idx == bk_idx || p2_idx == p1_idx { continue; }
+                        let p2 = Square::new(p2_idx as u32);
+
+                        let local_idx = (bk_idx << 12) | (p1_idx << 6) | p2_idx;
+                        let global_idx = (chunk_id << 18) | local_idx;
 
                         let mut board = Board::empty();
                         board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
                         board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
-                        board.set_piece_at(wq, Piece { color: Color::White, role: Role::Queen });
-                        board.set_piece_at(br, Piece { color: Color::Black, role: Role::Rook });
+
+                        match config {
+                            EndgameConfig::ThreeVsOne { role1, role2 } => {
+                                board.set_piece_at(p1, Piece { color: Color::White, role: role1 });
+                                board.set_piece_at(p2, Piece { color: Color::White, role: role2 });
+                            }
+                            EndgameConfig::TwoVsTwo { w_role, b_role } => {
+                                board.set_piece_at(p1, Piece { color: Color::White, role: w_role });
+                                board.set_piece_at(p2, Piece { color: Color::Black, role: b_role });
+                            }
+                        }
 
                         let mut setup = Setup::empty();
                         setup.board = board;
@@ -355,18 +175,18 @@ pub fn solve_kqvkr() {
                             Err(_) => continue,
                         };
 
-                        is_legal[idx] = true;
-                        valid_count += 1;
+                        c_is_legal[local_idx] = true;
+                        v_count += 1;
 
                         if pos.is_game_over() {
                             if let Some(outcome) = pos.outcome() {
                                 if let Some(winner) = outcome.winner() {
                                     if winner != turn {
-                                        dtw[idx] = -1; // checkmated terminal loss
-                                        terminal_losses += 1;
+                                        c_dtw[local_idx] = -1; // checkmate
+                                        term_losses += 1;
                                     }
                                 } else {
-                                    dtw[idx] = DRAW;
+                                    c_dtw[local_idx] = DRAW;
                                 }
                             }
                             continue;
@@ -374,11 +194,10 @@ pub fn solve_kqvkr() {
 
                         let legal_moves = pos.legal_moves();
                         let mut has_imm_win = false;
-                        let mut best_ext_win = 255u8;
                         let mut has_draw = false;
 
                         for m in &legal_moves {
-                            let next = pos.clone().play(m).expect("legal move play");
+                            let next = pos.clone().play(m).expect("legal move");
                             if next.is_game_over() {
                                 if let Some(outcome) = next.outcome() {
                                     if outcome.winner() == Some(turn) {
@@ -393,65 +212,88 @@ pub fn solve_kqvkr() {
 
                             let c_wk = next.board().king_of(Color::White);
                             let c_bk = next.board().king_of(Color::Black);
-                            let c_wq = next.board().by_color(Color::White) & next.board().by_role(Role::Queen);
-                            let c_br = next.board().by_color(Color::Black) & next.board().by_role(Role::Rook);
 
-                            if let (Some(cwk), Some(cbk)) = (c_wk, c_bk) {
-                                if c_wq.count() == 1 && c_br.count() == 1 {
-                                    // Internal edge in KQvKR
-                                    let cwq_sq = c_wq.first().unwrap();
-                                    let cbr_sq = c_br.first().unwrap();
-                                    let child_idx = encode_kq_kr(next.turn(), cwk, cbk, cwq_sq, cbr_sq);
-                                    pred_counts[child_idx] += 1;
-                                    degrees[idx] += 1;
-                                } else if c_wq.count() == 1 && c_br.is_empty() {
-                                    // Black Rook captured, White Queen survived -> transitions into KQvK!
-                                    let cwq_sq = c_wq.first().unwrap();
-                                    let kq_idx = encode_kq_k(next.turn(), cwk, cbk, cwq_sq);
-                                    let val = kqvk_tb[kq_idx];
-                                    if val < 0 && val != ILLEGAL {
-                                        // Opponent in KQvK loses in |val| plies => Current player wins in |val| + 1!
-                                        let cand_w = ((-val) as u8) + 1;
-                                        if cand_w < best_ext_win {
-                                            best_ext_win = cand_w;
+                            match config {
+                                EndgameConfig::ThreeVsOne { role1, role2 } => {
+                                    let mut p1_found = None;
+                                    let mut p2_found = None;
+
+                                    if role1 == role2 {
+                                        let pieces = next.board().by_color(Color::White) & next.board().by_role(role1);
+                                        if pieces.count() == 2 {
+                                            let mut iter = pieces.into_iter();
+                                            p1_found = iter.next();
+                                            p2_found = iter.next();
                                         }
-                                    } else if val == DRAW {
-                                        has_draw = true;
+                                    } else {
+                                        let pieces1 = next.board().by_color(Color::White) & next.board().by_role(role1);
+                                        let pieces2 = next.board().by_color(Color::White) & next.board().by_role(role2);
+                                        if pieces1.count() == 1 && pieces2.count() == 1 {
+                                            p1_found = pieces1.first();
+                                            p2_found = pieces2.first();
+                                        }
                                     }
-                                } else if c_wq.is_empty() && c_br.count() == 1 {
-                                    // White Queen captured, Black Rook survived -> transitions into KRvK (100% draw)
-                                    has_draw = true;
-                                } else if c_wq.is_empty() && c_br.is_empty() {
-                                    // Both pieces destroyed -> KvK (100% draw)
-                                    has_draw = true;
+
+                                    if let (Some(cwk), Some(cbk), Some(cp1), Some(cp2)) = (c_wk, c_bk, p1_found, p2_found) {
+                                        let child_idx = encode_state(next.turn(), cwk, cbk, cp1, cp2);
+                                        pred_counts[child_idx].fetch_add(1, Ordering::Relaxed);
+                                        c_degrees[local_idx] += 1;
+                                    }
+                                }
+                                EndgameConfig::TwoVsTwo { w_role, b_role } => {
+                                    let c_w = next.board().by_color(Color::White) & next.board().by_role(w_role);
+                                    let c_b = next.board().by_color(Color::Black) & next.board().by_role(b_role);
+
+                                    if let (Some(cwk), Some(cbk)) = (c_wk, c_bk) {
+                                        if c_w.count() == 1 && c_b.count() == 1 {
+                                            let cp1 = c_w.first().unwrap();
+                                            let cp2 = c_b.first().unwrap();
+                                            let child_idx = encode_state(next.turn(), cwk, cbk, cp1, cp2);
+                                            pred_counts[child_idx].fetch_add(1, Ordering::Relaxed);
+                                            c_degrees[local_idx] += 1;
+                                        } else if c_w.is_empty() && c_b.is_empty() {
+                                            has_draw = true;
+                                        }
+                                    }
                                 }
                             }
                         }
 
                         if has_imm_win {
-                            dtw[idx] = 1;
-                            buckets[1].push((idx as u32, true));
-                            immediate_wins += 1;
+                            c_dtw[local_idx] = 1;
+                            imm_wins_vec.push(global_idx as u32);
+                            imm_wins += 1;
                             continue;
                         }
 
-                        if best_ext_win < 255 {
-                            external_wins[idx] = best_ext_win;
-                            buckets[best_ext_win as usize].push((idx as u32, true));
-                        }
-
                         if has_draw {
-                            can_draw[idx] = true;
+                            c_can_draw[local_idx] = true;
                         }
                     }
                 }
             }
+
+            (imm_wins_vec, v_count, imm_wins, term_losses)
+        })
+        .collect();
+
+    let mut buckets: Vec<Vec<(u32, bool)>> = vec![Vec::new(); 128];
+    let mut valid_count = 0usize;
+    let mut immediate_wins = 0usize;
+    let mut terminal_losses = 0usize;
+
+    for (imm_vec, vc, iw, tl) in local_results {
+        for idx in imm_vec {
+            buckets[1].push((idx, true));
         }
+        valid_count += vc;
+        immediate_wins += iw;
+        terminal_losses += tl;
     }
 
-    let total_edges: usize = pred_counts.iter().map(|&c| c as usize).sum();
+    let total_edges: usize = pred_counts.iter().map(|c| c.load(Ordering::Relaxed) as usize).sum();
     println!(
-        "Pass 1 completed in {:?}: {} legal states, {} total internal edges ({} imm wins, {} term losses)",
+        "Pass 1 completed in {:?}: {} legal states, {} internal edges ({} imm wins, {} term losses)",
         t_step1.elapsed(),
         valid_count,
         total_edges,
@@ -459,73 +301,116 @@ pub fn solve_kqvkr() {
         terminal_losses
     );
 
-    println!("Constructing CSR predecessor arrays ({} MB)...", (total_edges * 4 + KQ_KR_TOTAL * 4) / (1024 * 1024));
-    let mut row_ptrs = vec![0u32; KQ_KR_TOTAL + 1];
+    println!("Constructing CSR predecessor arrays ({} MB)...", (total_edges * 4 + TOTAL_STATES * 4) / (1024 * 1024));
+    let mut row_ptrs = vec![0u32; TOTAL_STATES + 1];
     let mut running_sum = 0u32;
-    for i in 0..KQ_KR_TOTAL {
+    for i in 0..TOTAL_STATES {
         row_ptrs[i] = running_sum;
-        running_sum += pred_counts[i];
+        running_sum += pred_counts[i].load(Ordering::Relaxed);
     }
-    row_ptrs[KQ_KR_TOTAL] = running_sum;
+    row_ptrs[TOTAL_STATES] = running_sum;
 
-    let mut curr_offsets = row_ptrs.clone();
-    let mut col_indices = vec![0u32; total_edges];
+    let curr_offsets: Vec<AtomicU32> = row_ptrs[0..TOTAL_STATES].iter().map(|&p| AtomicU32::new(p)).collect();
+    let col_indices_atomic: Vec<AtomicU32> = (0..total_edges).map(|_| AtomicU32::new(0)).collect();
 
-    println!("Pass 2: Populating CSR predecessor edges...");
+    println!("Pass 2: Populating CSR predecessor edges (parallel across {} chunks)...", NUM_CHUNKS);
     let t_pass2 = Instant::now();
 
-    for wk_idx in 0..64 {
-        let wk = Square::new(wk_idx);
+    let is_legal_ref = &is_legal;
+    let dtw_ref = &dtw;
+    let curr_offsets_ref = &curr_offsets;
+    let col_indices_ref = &col_indices_atomic;
+
+    (0..NUM_CHUNKS).into_par_iter().for_each(|chunk_id| {
+        let turn = if chunk_id < 64 { Color::White } else { Color::Black };
+        let wk = Square::new((chunk_id % 64) as u32);
+        let wk_idx = wk as usize;
+
         for bk_idx in 0..64 {
             if wk_idx == bk_idx { continue; }
-            let bk = Square::new(bk_idx);
+            let bk = Square::new(bk_idx as u32);
 
-            for wq_idx in 0..64 {
-                if wq_idx == wk_idx || wq_idx == bk_idx { continue; }
-                let wq = Square::new(wq_idx);
+            for p1_idx in 0..64 {
+                if p1_idx == wk_idx || p1_idx == bk_idx { continue; }
+                let p1 = Square::new(p1_idx as u32);
 
-                for br_idx in 0..64 {
-                    if br_idx == wk_idx || br_idx == bk_idx || br_idx == wq_idx { continue; }
-                    let br = Square::new(br_idx);
+                for p2_idx in 0..64 {
+                    if p2_idx == wk_idx || p2_idx == bk_idx || p2_idx == p1_idx { continue; }
+                    let p2 = Square::new(p2_idx as u32);
 
-                    for &turn in &[Color::White, Color::Black] {
-                        let idx = encode_kq_kr(turn, wk, bk, wq, br);
-                        if !is_legal[idx] || dtw[idx] == 1 || dtw[idx] == -1 {
-                            continue;
+                    let global_idx = (chunk_id << 18) | (bk_idx << 12) | (p1_idx << 6) | p2_idx;
+                    if !is_legal_ref[global_idx] || dtw_ref[global_idx] == 1 || dtw_ref[global_idx] == -1 {
+                        continue;
+                    }
+
+                    let mut board = Board::empty();
+                    board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
+                    board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
+
+                    match config {
+                        EndgameConfig::ThreeVsOne { role1, role2 } => {
+                            board.set_piece_at(p1, Piece { color: Color::White, role: role1 });
+                            board.set_piece_at(p2, Piece { color: Color::White, role: role2 });
                         }
+                        EndgameConfig::TwoVsTwo { w_role, b_role } => {
+                            board.set_piece_at(p1, Piece { color: Color::White, role: w_role });
+                            board.set_piece_at(p2, Piece { color: Color::Black, role: b_role });
+                        }
+                    }
 
-                        let mut board = Board::empty();
-                        board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
-                        board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
-                        board.set_piece_at(wq, Piece { color: Color::White, role: Role::Queen });
-                        board.set_piece_at(br, Piece { color: Color::Black, role: Role::Rook });
+                    let mut setup = Setup::empty();
+                    setup.board = board;
+                    setup.turn = turn;
 
-                        let mut setup = Setup::empty();
-                        setup.board = board;
-                        setup.turn = turn;
+                    let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
 
-                        let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
-                            Ok(p) => p,
-                            Err(_) => continue,
-                        };
+                    for m in pos.legal_moves() {
+                        let next = pos.clone().play(&m).expect("legal move");
+                        let c_wk = next.board().king_of(Color::White);
+                        let c_bk = next.board().king_of(Color::Black);
 
-                        let legal_moves = pos.legal_moves();
-                        for m in &legal_moves {
-                            let next = pos.clone().play(m).expect("legal move play");
-                            let c_wk = next.board().king_of(Color::White);
-                            let c_bk = next.board().king_of(Color::Black);
-                            let c_wq = next.board().by_color(Color::White) & next.board().by_role(Role::Queen);
-                            let c_br = next.board().by_color(Color::Black) & next.board().by_role(Role::Rook);
+                        match config {
+                            EndgameConfig::ThreeVsOne { role1, role2 } => {
+                                let mut p1_found = None;
+                                let mut p2_found = None;
 
-                            if let (Some(cwk), Some(cbk)) = (c_wk, c_bk) {
-                                if c_wq.count() == 1 && c_br.count() == 1 {
-                                    let cwq_sq = c_wq.first().unwrap();
-                                    let cbr_sq = c_br.first().unwrap();
-                                    let child_idx = encode_kq_kr(next.turn(), cwk, cbk, cwq_sq, cbr_sq);
+                                if role1 == role2 {
+                                    let pieces = next.board().by_color(Color::White) & next.board().by_role(role1);
+                                    if pieces.count() == 2 {
+                                        let mut iter = pieces.into_iter();
+                                        p1_found = iter.next();
+                                        p2_found = iter.next();
+                                    }
+                                } else {
+                                    let pieces1 = next.board().by_color(Color::White) & next.board().by_role(role1);
+                                    let pieces2 = next.board().by_color(Color::White) & next.board().by_role(role2);
+                                    if pieces1.count() == 1 && pieces2.count() == 1 {
+                                        p1_found = pieces1.first();
+                                        p2_found = pieces2.first();
+                                    }
+                                }
 
-                                    let offset = curr_offsets[child_idx];
-                                    col_indices[offset as usize] = idx as u32;
-                                    curr_offsets[child_idx] += 1;
+                                if let (Some(cwk), Some(cbk), Some(cp1), Some(cp2)) = (c_wk, c_bk, p1_found, p2_found) {
+                                    let child_idx = encode_state(next.turn(), cwk, cbk, cp1, cp2);
+                                    let offset = curr_offsets_ref[child_idx].fetch_add(1, Ordering::Relaxed);
+                                    col_indices_ref[offset as usize].store(global_idx as u32, Ordering::Relaxed);
+                                }
+                            }
+                            EndgameConfig::TwoVsTwo { w_role, b_role } => {
+                                let c_w = next.board().by_color(Color::White) & next.board().by_role(w_role);
+                                let c_b = next.board().by_color(Color::Black) & next.board().by_role(b_role);
+
+                                if let (Some(cwk), Some(cbk)) = (c_wk, c_bk) {
+                                    if c_w.count() == 1 && c_b.count() == 1 {
+                                        let cp1 = c_w.first().unwrap();
+                                        let cp2 = c_b.first().unwrap();
+                                        let child_idx = encode_state(next.turn(), cwk, cbk, cp1, cp2);
+                                        let offset = curr_offsets_ref[child_idx].fetch_add(1, Ordering::Relaxed);
+                                        col_indices_ref[offset as usize].store(global_idx as u32, Ordering::Relaxed);
+                                    }
                                 }
                             }
                         }
@@ -533,7 +418,10 @@ pub fn solve_kqvkr() {
                 }
             }
         }
-    }
+    });
+
+    // Unpack col_indices to raw u32
+    let col_indices: Vec<u32> = col_indices_atomic.into_iter().map(|a| a.load(Ordering::Relaxed)).collect();
 
     println!("CSR construction completed in {:?}", t_pass2.elapsed());
 
@@ -549,12 +437,11 @@ pub fn solve_kqvkr() {
             let curr_idx = curr_idx_u32 as usize;
 
             if is_win {
-                // If curr_idx has a faster win recorded, keep it; otherwise record dist
                 if dtw[curr_idx] == ILLEGAL || dtw[curr_idx] == DRAW {
                     dtw[curr_idx] = dist as i8;
                     wins_count += 1;
                 } else if dtw[curr_idx] > 0 && (dtw[curr_idx] as usize) < dist {
-                    continue; // Already solved with a strictly faster win
+                    continue;
                 }
             }
 
@@ -574,7 +461,6 @@ pub fn solve_kqvkr() {
                 }
 
                 if !is_win {
-                    // Predecessor moves into a losing state for the opponent => Predecessor WINS!
                     let win_dist = (dist + 1) as u8;
                     if win_dist <= 127 {
                         dtw[p_idx] = win_dist as i8;
@@ -582,7 +468,6 @@ pub fn solve_kqvkr() {
                         wins_count += 1;
                     }
                 } else {
-                    // Predecessor has a move leading to a win for the opponent
                     if degrees[p_idx] > 0 {
                         degrees[p_idx] -= 1;
                         let loss_cand = (dist + 1) as u8;
@@ -590,8 +475,7 @@ pub fn solve_kqvkr() {
                             max_loss_dtw[p_idx] = loss_cand;
                         }
 
-                        // Can only be forced to lose if NO draw moves and NO external winning moves exist!
-                        if degrees[p_idx] == 0 && !can_draw[p_idx] && external_wins[p_idx] == 255 {
+                        if degrees[p_idx] == 0 && !can_draw[p_idx] {
                             let loss_dist = max_loss_dtw[p_idx];
                             if loss_dist <= 127 {
                                 dtw[p_idx] = -(loss_dist as i8);
@@ -608,7 +492,7 @@ pub fn solve_kqvkr() {
     println!("Retrograde BFS completed in {:?}", t_bfs.elapsed());
 
     let mut draw_count = 0usize;
-    for idx in 0..KQ_KR_TOTAL {
+    for idx in 0..TOTAL_STATES {
         if is_legal[idx] {
             if dtw[idx] == ILLEGAL {
                 dtw[idx] = DRAW;
@@ -636,7 +520,7 @@ pub fn solve_kqvkr() {
     let mut header = [0u8; 32];
     header[0..4].copy_from_slice(b"ATBD");
     header[4] = 1; // version
-    header[5] = 22; // KQvKR marker
+    header[5] = 4; // 4-piece marker
 
     file.write_all(&header).expect("write header");
     let byte_slice: &[u8] = unsafe {
@@ -650,9 +534,15 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let target = args.get(1).map(|s| s.as_str()).unwrap_or("KQvKR");
 
-    match target {
-        "KQvK" => { solve_kqvk(); },
-        "KQvKR" => solve_kqvkr(),
-        other => eprintln!("Unknown target: {}", other),
+    if target == "ALL" {
+        let pawnless_tables = [
+            "KQQvK", "KQRvK", "KQBvK", "KQNvK", "KRBvK", "KRNvK",
+            "KQvKQ", "KQvKR", "KQvKB", "KQvKN",
+        ];
+        for t in pawnless_tables {
+            solve_table(t);
+        }
+    } else {
+        solve_table(target);
     }
 }

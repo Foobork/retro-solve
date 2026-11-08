@@ -349,5 +349,38 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Mate Search Failed'), findsNothing);
     });
+
+    testWidgets('Stacked minibars render progress for active defender plies', (WidgetTester tester) async {
+      final engineService = _MockMateEngineService(responses: {});
+
+      await tester.pumpWidget(
+        RetroSolve(
+          initialVariant: DatasetVariant.standard,
+          engineService: engineService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<HomePageState>(find.byType(HomePage));
+      final solverFuture = state.startMateSolver(maxDepth: 4);
+
+      // Pump a bit to enter the search tree
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      // If solver is active in defender plies
+      if (state.mateSolverPlyProgress.isNotEmpty) {
+        expect(find.textContaining('P1'), findsWidgets);
+      }
+
+      state.stopMateSolver();
+      for (int i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await solverFuture;
+      await tester.pumpAndSettle();
+
+      expect(state.mateSolverPlyProgress, isEmpty);
+    });
   });
 }

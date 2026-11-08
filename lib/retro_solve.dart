@@ -120,6 +120,10 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int get mateSolverNodesCount => _mateSolverNodesCount;
 
   @visibleForTesting
+  Map<int, MateSolverPlyProgress> get mateSolverPlyProgress =>
+      Map.unmodifiable(_mateSolverPlyProgress);
+
+  @visibleForTesting
   bool get isMateSolving => _isMateSolving;
 
   @visibleForTesting
@@ -540,6 +544,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String _mateSolverTitle = "";
   String _mateSolverStatus = "";
   int _mateSolverNodesCount = 0;
+  final Map<int, MateSolverPlyProgress> _mateSolverPlyProgress = {};
   MateSolverResult? _mateSolverResult;
   int _evalProgress = 0;
   int _evalTotal = 0;
@@ -922,7 +927,69 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
   }
 
+  Widget _matePlyProgressBar(MateSolverPlyProgress progress) {
+    final pct = progress.total > 0 ? (progress.current / progress.total).clamp(0.0, 1.0) : 0.0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 38,
+            child: Text(
+              'P${progress.ply}',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple.shade800,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: pct,
+                minHeight: 8,
+                backgroundColor: Colors.deepPurple.shade100,
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.deepPurple.shade600),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 52,
+            child: Text(
+              '${progress.current}/${progress.total}',
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w600,
+                color: Colors.deepPurple.shade900,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 44, maxWidth: 80),
+            child: Text(
+              progress.moveSan,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.deepPurple.shade900,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _mateSolverProgressWidget({double? width}) {
+    final sortedPlies = _mateSolverPlyProgress.keys.toList()..sort();
     return Container(
       width: width ?? double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -962,12 +1029,30 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
               ),
             ],
           ),
+          if (sortedPlies.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.shade100.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.deepPurple.shade200.withValues(alpha: 0.6)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final p in sortedPlies)
+                    _matePlyProgressBar(_mateSolverPlyProgress[p]!),
+                ],
+              ),
+            ),
+          ],
           if (_mateSolverStatus.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
               _mateSolverStatus,
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 13,
                 color: Colors.deepPurple.shade900,
                 fontWeight: FontWeight.w600,
               ),
@@ -2124,6 +2209,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() {
         _isMateSolving = false;
         _mateSolverStatus = 'Stopping mate solver...';
+        _mateSolverPlyProgress.clear();
       });
       print('[mate-solver] Stop requested.');
     }
@@ -2167,6 +2253,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _mateSolverTitle = startDesc;
       _mateSolverStatus = 'Starting search...';
       _mateSolverNodesCount = 0;
+      _mateSolverPlyProgress.clear();
     });
     WakelockPlus.enable();
     print('[mate-solver] Started mate-solver (maxDepth: $maxDepth, attackingColor: $attackingColor)');
@@ -2234,6 +2321,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           _isMateSolving = false;
           _mateSolverTitle = '';
           _mateSolverStatus = '';
+          _mateSolverPlyProgress.clear();
           _mateSolverResult = MateSolverResult(
             title: resultTitle,
             message: resultMessage,
@@ -2502,51 +2590,62 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         }
 
         // Test each defense. If ANY defense avoids mate, fail-fast!
-        for (int i = 0; i < indices.length; i++) {
-          if (!_isMateSolving || !mounted) {
-            onLeafFailure('Search stopped');
-            return false;
-          }
+        try {
+          for (int i = 0; i < indices.length; i++) {
+            if (!_isMateSolving || !mounted) {
+              onLeafFailure('Search stopped');
+              return false;
+            }
 
-          final idx = indices[i];
-          final san = moveSans[idx];
-          final move = moves[idx];
+            final idx = indices[i];
+            final san = moveSans[idx];
+            final move = moves[idx];
 
-          if (mounted) {
-            setState(() {
-              _mateSolverStatus = 'Ply $ply: defend $san (${i + 1}/${indices.length}, nodes: $_mateSolverNodesCount)';
-            });
-          }
+            _mateSolverPlyProgress[ply] = MateSolverPlyProgress(
+              ply: ply,
+              current: i + 1,
+              total: indices.length,
+              moveSan: san,
+            );
 
-          final moveSuccess = _controller.makeMoveWithNormalNotation(san);
-          if (!moveSuccess) {
-            if (move.promotion != null) {
-              _controller.makeMoveWithPromotion(
-                from: move.fromAlgebraic,
-                to: move.toAlgebraic,
-                pieceToPromoteTo: move.promotion!.name.toUpperCase(),
-              );
-            } else {
-              _controller.makeMove(
-                from: move.fromAlgebraic,
-                to: move.toAlgebraic,
-              );
+            if (mounted) {
+              setState(() {
+                _mateSolverStatus = 'Ply $ply: defend $san (${i + 1}/${indices.length}, nodes: $_mateSolverNodesCount)';
+              });
+            }
+
+            final moveSuccess = _controller.makeMoveWithNormalNotation(san);
+            if (!moveSuccess) {
+              if (move.promotion != null) {
+                _controller.makeMoveWithPromotion(
+                  from: move.fromAlgebraic,
+                  to: move.toAlgebraic,
+                  pieceToPromoteTo: move.promotion!.name.toUpperCase(),
+                );
+              } else {
+                _controller.makeMove(
+                  from: move.fromAlgebraic,
+                  to: move.toAlgebraic,
+                );
+              }
+            }
+
+            final childSuccess = await _proveMateRecursive(
+              ply: ply + 1,
+              maxDepth: maxDepth,
+              attackingColor: attackingColor,
+              pathBfens: pathBfens,
+              onLeafFailure: onLeafFailure,
+            );
+            _controller.undoMove();
+
+            if (!childSuccess) {
+              print('[mate-solver] Defender move $san refutes line (did not lead to mate)');
+              return false;
             }
           }
-
-          final childSuccess = await _proveMateRecursive(
-            ply: ply + 1,
-            maxDepth: maxDepth,
-            attackingColor: attackingColor,
-            pathBfens: pathBfens,
-            onLeafFailure: onLeafFailure,
-          );
-          _controller.undoMove();
-
-          if (!childSuccess) {
-            print('[mate-solver] Defender move $san refutes line (did not lead to mate)');
-            return false;
-          }
+        } finally {
+          _mateSolverPlyProgress.remove(ply);
         }
 
         // All defender moves led to mate!
@@ -3692,5 +3791,19 @@ class MateSolverResult {
     this.failureFen,
     this.failureMoves,
     this.failureReason,
+  });
+}
+
+class MateSolverPlyProgress {
+  final int ply;
+  final int current;
+  final int total;
+  final String moveSan;
+
+  const MateSolverPlyProgress({
+    required this.ply,
+    required this.current,
+    required this.total,
+    required this.moveSan,
   });
 }

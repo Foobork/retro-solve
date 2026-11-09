@@ -4,43 +4,53 @@ on:
   workflow_dispatch:
     inputs:
       table:
-        description: 'Table to solve, or "ALL" for all 8 Layer-1 pawn 4-piece tables in parallel'
+        description: 'Table to solve (e.g. KRRvKR, KQRvKR, KQPvK), or "ALL_4P", or "ALL_5P_L0"'
         required: true
-        default: 'ALL'
+        default: 'KRRvKR'
 
 concurrency:
   group: "build-atomic-tb-${{ github.event.inputs.table }}-${{ github.ref }}"
   cancel-in-progress: false
 
 jobs:
+  setup:
+    name: Setup Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          INPUT="${{ github.event.inputs.table }}"
+          if [ "$INPUT" = "ALL" ] || [ "$INPUT" = "ALL_4P" ]; then
+            echo 'matrix=["KQPvK","KRPvK","KBPvK","KNPvK","KQvKP","KRvKP","KBvKP","KNvKP"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "ALL_5P_L0" ]; then
+            echo 'matrix=["KRRvKR","KQRvKR","KRBvKR","KRNvKR","KRRvKQ","KQRvKQ","KRBvKQ","KRNvKQ","KRRvKB","KQRvKB","KRBvKB","KRNvKB","KRRvKN","KQRvKN","KRBvKN","KRNvKN"]' >> $GITHUB_OUTPUT
+          else
+            echo "matrix=[\"$INPUT\"]" >> $GITHUB_OUTPUT
+          fi
+
   build-tablebase:
+    needs: setup
     name: Generate ${{ matrix.table }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
-        table:
-          - KQPvK
-          - KRPvK
-          - KBPvK
-          - KNPvK
-          - KQvKP
-          - KRvKP
-          - KBvKP
-          - KNvKP
+        table: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
-        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: actions/checkout@v4
 
       - name: Set up Rust
-        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Cargo Dependencies
-        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: actions/cache@v4
         with:
           path: |
@@ -53,35 +63,27 @@ jobs:
             cargo-atomic-tb-${{ runner.os }}-
 
       - name: Build Release Binary
-        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         run: |
           cargo build --release --manifest-path tool/atomic_tb_gen/Cargo.toml
 
       - name: Create Tablebase Output Directory & Download Parents
-        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data/tablebases/atomic/temp
+          gh run download 42487246479 -D data/tablebases/atomic/temp || true
           gh run download 42484601569 -D data/tablebases/atomic/temp || true
           gh run download 42481717145 -D data/tablebases/atomic/temp || true
           find data/tablebases/atomic/temp -name "*.atbd" -exec mv {} data/tablebases/atomic/ \; || true
           rm -rf data/tablebases/atomic/temp
-          # Ensure KRRvK is generated if not present
-          if [ ! -f data/tablebases/atomic/KRRvK.atbd ]; then
-            echo "Generating KRRvK.atbd parent dependency..."
-            ./tool/atomic_tb_gen/target/release/atomic_tb_gen KRRvK
-          fi
-          echo "Current parent tablebases on runner:"
-          ls -lh data/tablebases/atomic/*.atbd
+          echo "Available tablebases on runner:"
+          ls -lh data/tablebases/atomic/*.atbd || true
 
       - name: Run Retrograde Solver
-        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         run: |
           ./tool/atomic_tb_gen/target/release/atomic_tb_gen ${{ matrix.table }}
 
       - name: Upload Tablebase Artifact (.atbd)
-        if: github.event.inputs.table == 'ALL' || github.event.inputs.table == matrix.table
         uses: actions/upload-artifact@v4
         with:
           name: atomic-tb-${{ matrix.table }}

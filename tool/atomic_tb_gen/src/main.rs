@@ -8,16 +8,21 @@ use std::env;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI8, AtomicU32, Ordering};
 use std::time::Instant;
 
 pub const ILLEGAL: i8 = -128;
 pub const DRAW: i8 = 0;
 
-// All 4-piece tables use 32 MB direct indexing: 2 turns * 64^4 = 33,554,432 entries
+// 4-piece tables use 32 MB direct indexing: 2 turns * 64^4 = 33,554,432 entries
 pub const TOTAL_STATES: usize = 1 << 25;
 pub const CHUNK_SIZE: usize = 1 << 18; // 262,144 states per (turn, wk)
 pub const NUM_CHUNKS: usize = 128;
+
+// 5-piece 3-vs-2 tables use 2.14 GB direct indexing: 2 turns * 64^5 = 2,147,483,648 entries
+pub const TOTAL_STATES_5P: usize = 1 << 31;
+pub const CHUNK_SIZE_5P: usize = 1 << 24; // 16,777,216 states per (turn, wk)
+pub const NUM_CHUNKS_5P: usize = 128;
 
 fn get_out_dir() -> PathBuf {
     let p1 = PathBuf::from("data/tablebases/atomic");
@@ -35,6 +40,7 @@ fn get_out_dir() -> PathBuf {
 pub enum EndgameConfig {
     ThreeVsOne { role1: Role, role2: Role },
     TwoVsTwo { w_role: Role, b_role: Role },
+    ThreeVsTwo { w_role1: Role, w_role2: Role, b_role: Role },
 }
 
 fn char_to_role(c: char) -> Option<Role> {
@@ -86,6 +92,13 @@ pub fn parse_config(name: &str) -> Option<EndgameConfig> {
         return Some(EndgameConfig::TwoVsTwo { w_role, b_role });
     }
 
+    if left_pieces.len() == 2 && right_pieces.len() == 1 {
+        let w_role1 = char_to_role(left_pieces[0])?;
+        let w_role2 = char_to_role(left_pieces[1])?;
+        let b_role = char_to_role(right_pieces[0])?;
+        return Some(EndgameConfig::ThreeVsTwo { w_role1, w_role2, b_role });
+    }
+
     None
 }
 
@@ -96,6 +109,33 @@ pub fn encode_state(turn: Color, wk: Square, bk: Square, p1: Square, p2: Square)
         | ((bk as usize) << 12)
         | ((p1 as usize) << 6)
         | (p2 as usize)
+}
+
+#[inline(always)]
+pub fn encode_three_vs_two(turn: Color, wk: Square, bk: Square, w1: Square, w2: Square, b1: Square) -> usize {
+    ((turn.is_black() as usize) << 30)
+        | ((wk as usize) << 24)
+        | ((bk as usize) << 18)
+        | ((w1 as usize) << 12)
+        | ((w2 as usize) << 6)
+        | (b1 as usize)
+}
+
+fn load_three_piece_table(name: &str) -> Option<Vec<i8>> {
+    let out_dir = get_out_dir();
+    let path = out_dir.join(format!("{}.atbd", name));
+    if !path.exists() {
+        return None;
+    }
+    let mut file = File::open(&path).ok()?;
+    let mut header = [0u8; 32];
+    file.read_exact(&mut header).ok()?;
+    if &header[0..4] != b"ATBD" {
+        return None;
+    }
+    let mut buffer = vec![0u8; 1 << 19];
+    file.read_exact(&mut buffer).ok()?;
+    Some(unsafe { std::mem::transmute::<Vec<u8>, Vec<i8>>(buffer) })
 }
 
 fn load_table_file(name: &str) -> Option<Vec<i8>> {
@@ -227,6 +267,13 @@ pub fn solve_table(name: &str) {
         }
     };
 
+    match config {
+        EndgameConfig::ThreeVsOne { .. } | EndgameConfig::TwoVsTwo { .. } => solve_four_piece(name, config),
+        EndgameConfig::ThreeVsTwo { w_role1, w_role2, b_role } => solve_three_vs_two(name, w_role1, w_role2, b_role),
+    }
+}
+
+pub fn solve_four_piece(name: &str, config: EndgameConfig) {
     println!("==================================================");
     println!("Generating Atomic DTW Tablebase for {} (4-piece)...", name);
     let t0 = Instant::now();
@@ -236,6 +283,7 @@ pub fn solve_table(name: &str) {
     let has_pawn = match config {
         EndgameConfig::ThreeVsOne { role1, role2 } => role1 == Role::Pawn || role2 == Role::Pawn,
         EndgameConfig::TwoVsTwo { w_role, b_role } => w_role == Role::Pawn || b_role == Role::Pawn,
+        _ => unreachable!(),
     };
 
     if has_pawn {
@@ -255,6 +303,7 @@ pub fn solve_table(name: &str) {
                     vec!["KQvKQ", "KQvKR", "KQvKB", "KQvKN"]
                 }
             }
+            _ => unreachable!(),
         };
 
         for t_name in needed_names {
@@ -332,6 +381,7 @@ pub fn solve_table(name: &str) {
                                 if w_role == Role::Pawn && (p1.rank() == Rank::First || p1.rank() == Rank::Eighth) { continue; }
                                 if b_role == Role::Pawn && (p2.rank() == Rank::First || p2.rank() == Rank::Eighth) { continue; }
                             }
+                            _ => unreachable!(),
                         }
 
                         let local_idx = (bk_idx << 12) | (p1_idx << 6) | p2_idx;
@@ -350,6 +400,7 @@ pub fn solve_table(name: &str) {
                                 board.set_piece_at(p1, Piece { color: Color::White, role: w_role });
                                 board.set_piece_at(p2, Piece { color: Color::Black, role: b_role });
                             }
+                            _ => unreachable!(),
                         }
 
                         let mut setup = Setup::empty();
@@ -480,6 +531,7 @@ pub fn solve_table(name: &str) {
                                         }
                                     }
                                 }
+                                _ => unreachable!(),
                             }
                         }
 
@@ -581,6 +633,7 @@ pub fn solve_table(name: &str) {
                             board.set_piece_at(p1, Piece { color: Color::White, role: w_role });
                             board.set_piece_at(p2, Piece { color: Color::Black, role: b_role });
                         }
+                        _ => unreachable!(),
                     }
 
                     let mut setup = Setup::empty();
@@ -647,6 +700,7 @@ pub fn solve_table(name: &str) {
                                     }
                                 }
                             }
+                            _ => unreachable!(),
                         }
                     }
                 }
@@ -770,6 +824,426 @@ pub fn solve_table(name: &str) {
     header[0..4].copy_from_slice(b"ATBD");
     header[4] = 1; // version
     header[5] = 4; // 4-piece marker
+
+    file.write_all(&header).expect("write header");
+    let byte_slice: &[u8] = unsafe {
+        std::slice::from_raw_parts(dtw.as_ptr() as *const u8, dtw.len())
+    };
+    file.write_all(byte_slice).expect("write dtw bytes");
+    println!("Saved {} ({} bytes)", out_path.display(), header.len() + dtw.len());
+}
+
+pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role) {
+    println!("==================================================");
+    println!("Generating Atomic DTW Tablebase for {} (5-piece 3v2)...", name);
+    let t0 = Instant::now();
+
+    let identical_w_roles = w1_role == w2_role;
+
+    // Preload 3-piece table if available (for captures)
+    let mut parent_tables: HashMap<String, Vec<i8>> = HashMap::new();
+    if let Some(tb) = load_three_piece_table("KQvK") {
+        println!("Loaded KQvK 3-piece sub-table for capture evaluations.");
+        parent_tables.insert("KQvK".to_string(), tb);
+    }
+
+    println!("Allocating 5-piece direct-indexed array (2.14 GB)...");
+    let dtw: Vec<i8> = vec![ILLEGAL; TOTAL_STATES_5P];
+    let dtw_atomic: &[AtomicI8] = unsafe {
+        std::slice::from_raw_parts(dtw.as_ptr() as *const AtomicI8, TOTAL_STATES_5P)
+    };
+
+    println!("Pass 1: Enumerating legal states and identifying immediate wins (128 chunks)...");
+    let t_pass1 = Instant::now();
+    let total_valid = AtomicU32::new(0);
+    let total_imm_wins = AtomicU32::new(0);
+    let total_term_losses = AtomicU32::new(0);
+
+    (0..NUM_CHUNKS_5P).into_par_iter().for_each(|chunk_id| {
+        let turn = if chunk_id < 64 { Color::White } else { Color::Black };
+        let wk_idx = chunk_id % 64;
+        let wk = Square::new(wk_idx as u32);
+
+        let mut chunk_valid = 0u32;
+        let mut chunk_wins = 0u32;
+        let mut chunk_losses = 0u32;
+
+        for bk_idx in 0..64 {
+            if wk_idx == bk_idx { continue; }
+            let bk = Square::new(bk_idx as u32);
+
+            for w1_idx in 0..64 {
+                if w1_idx == wk_idx || w1_idx == bk_idx { continue; }
+                let w1 = Square::new(w1_idx as u32);
+
+                for w2_idx in 0..64 {
+                    if w2_idx == wk_idx || w2_idx == bk_idx || w2_idx == w1_idx { continue; }
+                    if identical_w_roles && w1_idx > w2_idx { continue; }
+                    let w2 = Square::new(w2_idx as u32);
+
+                    for b1_idx in 0..64 {
+                        if b1_idx == wk_idx || b1_idx == bk_idx || b1_idx == w1_idx || b1_idx == w2_idx { continue; }
+                        let b1 = Square::new(b1_idx as u32);
+
+                        if w1_role == Role::Pawn && (w1.rank() == Rank::First || w1.rank() == Rank::Eighth) { continue; }
+                        if w2_role == Role::Pawn && (w2.rank() == Rank::First || w2.rank() == Rank::Eighth) { continue; }
+                        if b_role == Role::Pawn && (b1.rank() == Rank::First || b1.rank() == Rank::Eighth) { continue; }
+
+                        let mut board = Board::empty();
+                        board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
+                        board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
+                        board.set_piece_at(w1, Piece { color: Color::White, role: w1_role });
+                        board.set_piece_at(w2, Piece { color: Color::White, role: w2_role });
+                        board.set_piece_at(b1, Piece { color: Color::Black, role: b_role });
+
+                        let mut setup = Setup::empty();
+                        setup.board = board;
+                        setup.turn = turn;
+
+                        let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
+                            Ok(p) => p,
+                            Err(_) => continue,
+                        };
+
+                        let local_idx = (bk_idx << 18) | (w1_idx << 12) | (w2_idx << 6) | b1_idx;
+                        let global_idx = (chunk_id << 24) | local_idx;
+
+                        let mirror_global_idx = if identical_w_roles {
+                            let mir_local = (bk_idx << 18) | (w2_idx << 12) | (w1_idx << 6) | b1_idx;
+                            Some((chunk_id << 24) | mir_local)
+                        } else {
+                            None
+                        };
+
+                        let multiplier = if identical_w_roles && w1_idx != w2_idx { 2 } else { 1 };
+                        chunk_valid += multiplier;
+
+                        if pos.is_game_over() {
+                            if let Some(outcome) = pos.outcome() {
+                                match outcome.winner() {
+                                    Some(winner) => {
+                                        if winner == turn {
+                                            dtw_atomic[global_idx].store(1, Ordering::Relaxed);
+                                            if let Some(mir) = mirror_global_idx {
+                                                dtw_atomic[mir].store(1, Ordering::Relaxed);
+                                            }
+                                            chunk_wins += multiplier;
+                                        } else {
+                                            dtw_atomic[global_idx].store(-1, Ordering::Relaxed);
+                                            if let Some(mir) = mirror_global_idx {
+                                                dtw_atomic[mir].store(-1, Ordering::Relaxed);
+                                            }
+                                            chunk_losses += multiplier;
+                                        }
+                                    }
+                                    None => {
+                                        dtw_atomic[global_idx].store(DRAW, Ordering::Relaxed);
+                                        if let Some(mir) = mirror_global_idx {
+                                            dtw_atomic[mir].store(DRAW, Ordering::Relaxed);
+                                        }
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+
+                        let legal_moves = pos.legal_moves();
+                        let mut has_imm_win = false;
+                        for m in &legal_moves {
+                            if let Ok(next) = pos.clone().play(m) {
+                                if next.is_game_over() {
+                                    if let Some(outcome) = next.outcome() {
+                                        if outcome.winner() == Some(turn) {
+                                            has_imm_win = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if has_imm_win {
+                            dtw_atomic[global_idx].store(1, Ordering::Relaxed);
+                            if let Some(mir) = mirror_global_idx {
+                                dtw_atomic[mir].store(1, Ordering::Relaxed);
+                            }
+                            chunk_wins += multiplier;
+                        } else {
+                            dtw_atomic[global_idx].store(DRAW, Ordering::Relaxed);
+                            if let Some(mir) = mirror_global_idx {
+                                dtw_atomic[mir].store(DRAW, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        total_valid.fetch_add(chunk_valid, Ordering::Relaxed);
+        total_imm_wins.fetch_add(chunk_wins, Ordering::Relaxed);
+        total_term_losses.fetch_add(chunk_losses, Ordering::Relaxed);
+    });
+
+    println!(
+        "Pass 1 finished in {:?}: {} legal states ({} imm wins, {} term losses)",
+        t_pass1.elapsed(),
+        total_valid.load(Ordering::Relaxed),
+        total_imm_wins.load(Ordering::Relaxed),
+        total_term_losses.load(Ordering::Relaxed)
+    );
+
+    println!("Pass 2: Level-by-level retrograde propagation...");
+    let t_pass2 = Instant::now();
+    let mut total_wins = total_imm_wins.load(Ordering::Relaxed) as usize;
+    let mut total_losses = total_term_losses.load(Ordering::Relaxed) as usize;
+    let mut max_dtw = 1u8;
+
+    for iteration in 1..=120 {
+        let t_iter = Instant::now();
+        let iter_wins = AtomicU32::new(0);
+        let iter_losses = AtomicU32::new(0);
+
+        (0..NUM_CHUNKS_5P).into_par_iter().for_each(|chunk_id| {
+            let turn = if chunk_id < 64 { Color::White } else { Color::Black };
+            let wk_idx = chunk_id % 64;
+            let wk = Square::new(wk_idx as u32);
+
+            let mut c_wins = 0u32;
+            let mut c_losses = 0u32;
+
+            for bk_idx in 0..64 {
+                if wk_idx == bk_idx { continue; }
+                let bk = Square::new(bk_idx as u32);
+
+                for w1_idx in 0..64 {
+                    if w1_idx == wk_idx || w1_idx == bk_idx { continue; }
+                    let w1 = Square::new(w1_idx as u32);
+
+                    for w2_idx in 0..64 {
+                        if w2_idx == wk_idx || w2_idx == bk_idx || w2_idx == w1_idx { continue; }
+                        if identical_w_roles && w1_idx > w2_idx { continue; }
+                        let w2 = Square::new(w2_idx as u32);
+
+                        for b1_idx in 0..64 {
+                            if b1_idx == wk_idx || b1_idx == bk_idx || b1_idx == w1_idx || b1_idx == w2_idx { continue; }
+                            let b1 = Square::new(b1_idx as u32);
+
+                            let local_idx = (bk_idx << 18) | (w1_idx << 12) | (w2_idx << 6) | b1_idx;
+                            let global_idx = (chunk_id << 24) | local_idx;
+
+                            let current_val = dtw_atomic[global_idx].load(Ordering::Relaxed);
+                            if current_val != DRAW {
+                                continue;
+                            }
+
+                            let mut board = Board::empty();
+                            board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
+                            board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
+                            board.set_piece_at(w1, Piece { color: Color::White, role: w1_role });
+                            board.set_piece_at(w2, Piece { color: Color::White, role: w2_role });
+                            board.set_piece_at(b1, Piece { color: Color::Black, role: b_role });
+
+                            let mut setup = Setup::empty();
+                            setup.board = board;
+                            setup.turn = turn;
+
+                            let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
+                                Ok(p) => p,
+                                Err(_) => continue,
+                            };
+
+                            let legal_moves = pos.legal_moves();
+                            if legal_moves.is_empty() {
+                                continue;
+                            }
+
+                            let mut min_win: u8 = 255;
+                            let mut max_loss: u8 = 0;
+                            let mut all_moves_lose = true;
+                            let mut has_unresolved = false;
+
+                            for m in &legal_moves {
+                                if let Ok(next) = pos.clone().play(m) {
+                                    if next.is_game_over() {
+                                        if let Some(outcome) = next.outcome() {
+                                            match outcome.winner() {
+                                                Some(winner) => {
+                                                    if winner == turn {
+                                                        min_win = 1;
+                                                        break;
+                                                    } else {
+                                                        max_loss = max_loss.max(1);
+                                                    }
+                                                }
+                                                None => {
+                                                    all_moves_lose = false;
+                                                    has_unresolved = true;
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    // Extract pieces from child state
+                                    let mut next_w = Vec::new();
+                                    let mut next_b = Vec::new();
+                                    for sq in next.board().by_color(Color::White) {
+                                        if let Some(p) = next.board().piece_at(sq) {
+                                            if p.role != Role::King { next_w.push((sq, p.role)); }
+                                        }
+                                    }
+                                    for sq in next.board().by_color(Color::Black) {
+                                        if let Some(p) = next.board().piece_at(sq) {
+                                            if p.role != Role::King { next_b.push((sq, p.role)); }
+                                        }
+                                    }
+
+                                    if next_w.len() == 2 && next_b.len() == 1 {
+                                        // 5-piece internal move
+                                        let (nw1_sq, nw2_sq) = if identical_w_roles {
+                                            (next_w[0].0, next_w[1].0)
+                                        } else {
+                                            let s1 = if next_w[0].1 == w1_role { next_w[0].0 } else { next_w[1].0 };
+                                            let s2 = if next_w[0].1 == w2_role { next_w[0].0 } else { next_w[1].0 };
+                                            (s1, s2)
+                                        };
+                                        let nb_sq = next_b[0].0;
+                                        let c_wk = next.board().king_of(Color::White).unwrap();
+                                        let c_bk = next.board().king_of(Color::Black).unwrap();
+
+                                        let child_idx = encode_three_vs_two(next.turn(), c_wk, c_bk, nw1_sq, nw2_sq, nb_sq);
+                                        let child_val = dtw_atomic[child_idx].load(Ordering::Relaxed);
+
+                                        if child_val < 0 && child_val != ILLEGAL {
+                                            let win_dist = (child_val.abs() as u8) + 1;
+                                            if win_dist < min_win {
+                                                min_win = win_dist;
+                                            }
+                                        } else if child_val > 0 {
+                                            let loss_dist = (child_val as u8) + 1;
+                                            if loss_dist > max_loss {
+                                                max_loss = loss_dist;
+                                            }
+                                        } else {
+                                            all_moves_lose = false;
+                                            has_unresolved = true;
+                                        }
+                                    } else {
+                                        // Capture occurred: <= 3 pieces remain
+                                        let total_rem = next_w.len() + next_b.len();
+                                        if total_rem == 0 {
+                                            // Bare kings draw
+                                            all_moves_lose = false;
+                                            has_unresolved = true;
+                                        } else if total_rem == 1 {
+                                            if !next_w.is_empty() {
+                                                // White has 1 piece, Black has 0
+                                                let (r_sq, role) = next_w[0];
+                                                let c_wk = next.board().king_of(Color::White).unwrap();
+                                                let c_bk = next.board().king_of(Color::Black).unwrap();
+                                                if role == Role::Queen {
+                                                    if let Some(tb) = parent_tables.get("KQvK") {
+                                                        let idx = ((next.turn().is_black() as usize) << 18) | ((c_wk as usize) << 12) | ((c_bk as usize) << 6) | (r_sq as usize);
+                                                        let val = tb[idx];
+                                                        if val < 0 && val != ILLEGAL {
+                                                            let win_dist = (val.abs() as u8) + 1;
+                                                            min_win = min_win.min(win_dist);
+                                                        } else if val > 0 {
+                                                            let loss_dist = (val as u8) + 1;
+                                                            max_loss = max_loss.max(loss_dist);
+                                                        } else {
+                                                            all_moves_lose = false;
+                                                            has_unresolved = true;
+                                                        }
+                                                    }
+                                                } else {
+                                                    // Lone Rook, Bishop, Knight vs bare king is drawn by insufficient material
+                                                    all_moves_lose = false;
+                                                    has_unresolved = true;
+                                                }
+                                            } else {
+                                                // Black has 1 piece, White has 0
+                                                // Lone minor or rook is drawn by insufficient material
+                                                all_moves_lose = false;
+                                                has_unresolved = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            let mirror_global_idx = if identical_w_roles {
+                                let mir_local = (bk_idx << 18) | (w2_idx << 12) | (w1_idx << 6) | b1_idx;
+                                Some((chunk_id << 24) | mir_local)
+                            } else {
+                                None
+                            };
+
+                            let multiplier = if identical_w_roles && w1_idx != w2_idx { 2 } else { 1 };
+
+                            if min_win <= 127 {
+                                dtw_atomic[global_idx].store(min_win as i8, Ordering::Relaxed);
+                                if let Some(mir) = mirror_global_idx {
+                                    dtw_atomic[mir].store(min_win as i8, Ordering::Relaxed);
+                                }
+                                c_wins += multiplier;
+                            } else if all_moves_lose && !has_unresolved && max_loss > 0 && max_loss <= 127 {
+                                dtw_atomic[global_idx].store(-(max_loss as i8), Ordering::Relaxed);
+                                if let Some(mir) = mirror_global_idx {
+                                    dtw_atomic[mir].store(-(max_loss as i8), Ordering::Relaxed);
+                                }
+                                c_losses += multiplier;
+                            }
+                        }
+                    }
+                }
+            }
+
+            iter_wins.fetch_add(c_wins, Ordering::Relaxed);
+            iter_losses.fetch_add(c_losses, Ordering::Relaxed);
+        });
+
+        let new_w = iter_wins.load(Ordering::Relaxed) as usize;
+        let new_l = iter_losses.load(Ordering::Relaxed) as usize;
+        total_wins += new_w;
+        total_losses += new_l;
+        println!("  Iteration {}: +{} wins, +{} losses in {:?}", iteration, new_w, new_l, t_iter.elapsed());
+
+        if new_w == 0 && new_l == 0 {
+            println!("Retrograde propagation converged in {} iterations!", iteration);
+            break;
+        }
+    }
+
+    println!("Retrograde propagation completed in {:?}", t_pass2.elapsed());
+
+    let mut draw_count = 0usize;
+    for idx in 0..TOTAL_STATES_5P {
+        let v = dtw_atomic[idx].load(Ordering::Relaxed);
+        if v == DRAW {
+            draw_count += 1;
+        } else if v > 0 && (v as u8) > max_dtw {
+            max_dtw = v as u8;
+        }
+    }
+
+    let elapsed = t0.elapsed();
+    println!("--------------------------------------------------");
+    println!("Finished {} in {:?}", name, elapsed);
+    println!("  Wins:   {} ({:.1}%)", total_wins, (total_wins as f64 / total_valid.load(Ordering::Relaxed) as f64) * 100.0);
+    println!("  Losses: {} ({:.1}%)", total_losses, (total_losses as f64 / total_valid.load(Ordering::Relaxed) as f64) * 100.0);
+    println!("  Draws:  {} ({:.1}%)", draw_count, (draw_count as f64 / total_valid.load(Ordering::Relaxed) as f64) * 100.0);
+    println!("  Max DTW: {} plies ({} full moves)", max_dtw, (max_dtw + 1) / 2);
+
+    let out_dir = get_out_dir();
+    fs::create_dir_all(&out_dir).expect("create output directory");
+    let out_path = out_dir.join(format!("{}.atbd", name));
+    let mut file = File::create(&out_path).expect("create .atbd file");
+
+    let mut header = [0u8; 32];
+    header[0..4].copy_from_slice(b"ATBD");
+    header[4] = 1; // version
+    header[5] = 5; // 5-piece marker
 
     file.write_all(&header).expect("write header");
     let byte_slice: &[u8] = unsafe {

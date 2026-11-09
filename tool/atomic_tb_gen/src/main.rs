@@ -970,7 +970,17 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
                                 for m in &legal_moves {
                                     if !m.is_capture() {
                                         let to = m.to();
-                                        if to.rank() == opp_king.rank() || to.file() == opp_king.file() {
+                                        let df = (to.file() as i8 - opp_king.file() as i8).abs();
+                                        let dr = (to.rank() as i8 - opp_king.rank() as i8).abs();
+                                        let can_give_check = match m.role() {
+                                            Role::Rook => to.rank() == opp_king.rank() || to.file() == opp_king.file(),
+                                            Role::Bishop => df == dr,
+                                            Role::Queen => to.rank() == opp_king.rank() || to.file() == opp_king.file() || df == dr,
+                                            Role::Knight => (df == 1 && dr == 2) || (df == 2 && dr == 1),
+                                            Role::King => true, // Discovered check candidate
+                                            _ => false,
+                                        };
+                                        if can_give_check {
                                             let mut next = pos.clone();
                                             next.play_unchecked(m);
                                             if next.is_game_over() && next.outcome().unwrap().winner() == Some(turn) {

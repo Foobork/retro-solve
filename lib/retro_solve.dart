@@ -68,7 +68,7 @@ class HomePage extends StatefulWidget {
   HomePageState createState() => HomePageState();
 }
 
-enum _MoreAction { solve, mateSolver, export_, analyzeGame, exploreHistory, explore1Ply, copyFen, copyMoveHistory, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
+enum _MoreAction { solve, mateSolver, export_, analyzeGame, exploreHistory, explore1Ply, copyFen, pasteFen, copyMoveHistory, toggleBacksolve, toggleTablebase, toggleAutosolveAfterExplore }
 
 class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   StreamSubscription<List<EngineEvaluation>>? _evalSub;
@@ -291,6 +291,11 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           enabled: !isBoardDisabled,
           child: const Text('Explore legal moves (1-ply)'),
         ),
+        PopupMenuItem(
+          value: _MoreAction.pasteFen,
+          enabled: !isBoardDisabled,
+          child: const Text('Paste FEN from clipboard'),
+        ),
         const PopupMenuItem(
           value: _MoreAction.copyFen,
           child: Text('Copy FEN to clipboard'),
@@ -476,35 +481,44 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       },
     );
 
-    return Scaffold(
-      appBar: appBar,
-      body: Stack(
-        children: [
-          body,
-          if (_isLoadingVariant)
-            ColoredBox(
-              color: const Color(0x66000000),
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(),
-                    if (_loadingMessage != null) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        _loadingMessage!,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ],
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyV, control: true): _pasteFenFromClipboard,
+        const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _pasteFenFromClipboard,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          appBar: appBar,
+          body: Stack(
+            children: [
+              body,
+              if (_isLoadingVariant)
+                ColoredBox(
+                  color: const Color(0x66000000),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        if (_loadingMessage != null) ...[
+                          const SizedBox(height: 16),
+                          Text(
+                            _loadingMessage!,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ),
-        ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1793,6 +1807,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       case _MoreAction.copyFen:
         _copyFenToClipboard();
         break;
+      case _MoreAction.pasteFen:
+        _pasteFenFromClipboard();
+        break;
       case _MoreAction.copyMoveHistory:
         _copyMoveHistoryToClipboard();
         break;
@@ -1837,6 +1854,89 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           duration: Duration(seconds: 2),
         ),
       );
+    }
+  }
+
+  bool _loadPositionFromFen(String rawFen) {
+    if (_isExploring || _isMateSolving || _isSolving) return false;
+    final fen = rawFen.trim();
+    if (fen.isEmpty) return false;
+
+    final normalized = Chess.normalizeFen(fen);
+    final validation = Chess.validateFen(normalized);
+    if (validation['valid'] != true) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Invalid FEN: ${validation['error'] ?? "Unknown error"}'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+      return false;
+    }
+
+    final success = _controller.loadFen(normalized);
+    if (!success) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to load FEN position'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+      return false;
+    }
+
+    setState(() {
+      _mateSolverResult = null;
+      _engineEvals = [];
+      _update();
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('New starting position loaded from FEN'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+    return true;
+  }
+
+  Future<void> _pasteFenFromClipboard() async {
+    if (_isExploring || _isMateSolving || _isSolving) return;
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text?.trim();
+      if (text == null || text.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Clipboard is empty'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+      _loadPositionFromFen(text);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error reading clipboard: $e'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 

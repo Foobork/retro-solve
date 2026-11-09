@@ -828,6 +828,64 @@ void main() {
         instanceA.dispose();
         instanceB.dispose();
       });
+
+      test('parses 5-piece KRRvKR Atomic DTW tablebase response', () {
+        final jsonResponse = jsonEncode({
+          'category': 'win',
+          'dtw': 3,
+          'dtz': 3,
+          'precise_dtz': 3,
+          'dtm': 2,
+          'checkmate': false,
+          'stalemate': false,
+          'variant_win': false,
+          'variant_loss': false,
+          'insufficient_material': false,
+          'moves': [
+            {
+              'uci': 'a1a2',
+              'san': 'Ka2',
+              'category': 'loss',
+              'dtw': 1,
+              'dtz': 1,
+              'dtm': 1,
+              'checkmate': false,
+              'stalemate': false,
+              'variant_win': false,
+              'variant_loss': false,
+              'zeroing': false,
+            },
+            {
+              'uci': 'b2b3',
+              'san': 'Rb3',
+              'category': 'draw',
+              'dtw': 0,
+              'dtz': 0,
+              'dtm': null,
+              'checkmate': false,
+              'stalemate': false,
+              'variant_win': false,
+              'variant_loss': false,
+              'zeroing': false,
+            }
+          ]
+        });
+
+        final evals = TablebaseService.parseTablebaseResponse(
+          DatasetVariant.atomic,
+          '8/8/8/8/8/R1r5/1R6/K1k5 w - - 0 1',
+          jsonResponse,
+        );
+
+        expect(evals, isNotNull);
+        expect(evals!.length, equals(2));
+        expect(evals[0].candidateMove, equals('a1a2'));
+        expect(evals[0].dtw, equals(2));
+        expect(evals[0].mate, equals(1));
+        expect(evals[1].candidateMove, equals('b2b3'));
+        expect(evals[1].dtw, isNull);
+        expect(evals[1].centipawns, equals(0));
+      });
     });
   });
 }

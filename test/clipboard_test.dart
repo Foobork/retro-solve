@@ -131,5 +131,25 @@ void main() {
     expect(clipboardHistory.length, equals(3));
     expect(clipboardHistory.last, equals('1. e3 c5'));
     expect(find.text('Move history copied to clipboard'), findsOneWidget);
+
+    // Dismiss snackbar
+    ScaffoldMessenger.of(state.context).hideCurrentSnackBar();
+    await tester.pumpAndSettle();
+
+    // 4. Test Paste FEN via More Actions menu (loads position as new start, clears move history)
+    const testFen = '8/8/8/8/8/R1r5/1R6/K1k5 w - - 0 1';
+    clipboardHistory.add(testFen);
+
+    await tester.tap(moreMenuFinder);
+    await tester.pumpAndSettle();
+
+    final pasteFenItem = find.text('Paste FEN from clipboard');
+    expect(pasteFenItem, findsOneWidget);
+    await tester.tap(pasteFenItem, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(state.controller.game.fen, equals(testFen));
+    expect(state.controller.game.history.isEmpty, isTrue);
+    expect(find.text('New starting position loaded from FEN'), findsOneWidget);
   });
 }

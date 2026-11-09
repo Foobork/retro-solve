@@ -71,14 +71,15 @@ class ChessBoardController extends ValueNotifier<Chess> {
   }
 
   /// Loads a FEN
-  void load(String fen) {
-    loadFen(fen);
+  bool load(String fen) {
+    return loadFen(fen);
   }
 
   /// Loads a FEN
-  void loadFen(String fen) {
-    game.load(fen);
+  bool loadFen(String fen) {
+    final success = game.load(fen);
     notifyListeners();
+    return success;
   }
 
   bool isInCheck() {

@@ -80,6 +80,8 @@ void main() {
       // Find and tap 'Interactive Backsolving' checked menu item to toggle off
       final backsolveMenuItem = find.text('Interactive Backsolving');
       expect(backsolveMenuItem, findsOneWidget);
+      await tester.ensureVisible(backsolveMenuItem);
+      await tester.pumpAndSettle();
       await tester.tap(backsolveMenuItem, warnIfMissed: false);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
@@ -93,6 +95,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       // Tap to toggle back on
+      await tester.ensureVisible(find.text('Interactive Backsolving'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Interactive Backsolving'), warnIfMissed: false);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));

@@ -197,6 +197,49 @@ class AtomicAtbdProber:
                     val = struct.unpack("b", f2.read(1))[0]
                     return None if val == -128 else val
 
+        # 5-piece: 3 vs 2 (e.g. KRRvKR)
+        if total_non_king == 3:
+            if len(w_pieces) == 2 and len(b_pieces) == 1:
+                s1, r1 = w_pieces[0]
+                s2, r2 = w_pieces[1]
+                if ROLE_ORDER.get(r1, 0) < ROLE_ORDER.get(r2, 0):
+                    s1, s2 = s2, s1
+                    r1, r2 = r2, r1
+                bs, br = b_pieces[0]
+                fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK{ROLE_CHARS.get(br)}.atbd"
+                f = self._files.get(fname)
+                if not f:
+                    return None
+                chunk = wk if board.turn == chess.WHITE else (64 + wk)
+                local = (bk << 18) | (s1 << 12) | (s2 << 6) | bs
+                idx = (chunk << 24) | local
+                f.seek(32 + idx)
+                val = struct.unpack("b", f.read(1))[0]
+                return None if val == -128 else val
+            elif len(b_pieces) == 2 and len(w_pieces) == 1:
+                s1, r1 = b_pieces[0]
+                s2, r2 = b_pieces[1]
+                if ROLE_ORDER.get(r1, 0) < ROLE_ORDER.get(r2, 0):
+                    s1, s2 = s2, s1
+                    r1, r2 = r2, r1
+                ws, wr = w_pieces[0]
+                fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK{ROLE_CHARS.get(wr)}.atbd"
+                f = self._files.get(fname)
+                if not f:
+                    return None
+                mir_turn = 1 if board.turn == chess.WHITE else 0
+                mir_wk = bk ^ 56
+                mir_bk = wk ^ 56
+                mir_s1 = s1 ^ 56
+                mir_s2 = s2 ^ 56
+                mir_bs = ws ^ 56
+                chunk = mir_wk if mir_turn == 0 else (64 + mir_wk)
+                local = (mir_bk << 18) | (mir_s1 << 12) | (mir_s2 << 6) | mir_bs
+                idx = (chunk << 24) | local
+                f.seek(32 + idx)
+                val = struct.unpack("b", f.read(1))[0]
+                return None if val == -128 else val
+
         return None
 
 

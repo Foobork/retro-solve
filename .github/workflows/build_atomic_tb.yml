@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       table:
-        description: 'Table to solve (e.g. KRRvKR, KQRvKR, KQPvK), or "ALL_4P", or "ALL_5P_L0"'
+        description: 'Table to solve (e.g. KRRvKB), or "ALL_5P_0P" (all 17 remaining 0-pawn minor/rook tables), or "ALL_4P"'
         required: true
-        default: 'KRRvKR'
+        default: 'ALL_5P_0P'
 
 concurrency:
   group: "build-atomic-tb-${{ github.event.inputs.table }}-${{ github.ref }}"
@@ -24,6 +24,8 @@ jobs:
           INPUT="${{ github.event.inputs.table }}"
           if [ "$INPUT" = "ALL" ] || [ "$INPUT" = "ALL_4P" ]; then
             echo 'matrix=["KQPvK","KRPvK","KBPvK","KNPvK","KQvKP","KRvKP","KBvKP","KNvKP"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "ALL_5P_0P" ] || [ "$INPUT" = "ALL_5P_MINORS" ]; then
+            echo 'matrix=["KRRvKB","KRRvKN","KRBvKR","KRBvKB","KRBvKN","KRNvKR","KRNvKB","KRNvKN","KBBvKR","KBBvKB","KBBvKN","KBNvKR","KBNvKB","KBNvKN","KNNvKR","KNNvKB","KNNvKN"]' >> $GITHUB_OUTPUT
           elif [ "$INPUT" = "ALL_5P_L0" ]; then
             echo 'matrix=["KRRvKR","KQRvKR","KRBvKR","KRNvKR","KRRvKQ","KQRvKQ","KRBvKQ","KRNvKQ","KRRvKB","KQRvKB","KRBvKB","KRNvKB","KRRvKN","KQRvKN","KRBvKN","KRNvKN"]' >> $GITHUB_OUTPUT
           else

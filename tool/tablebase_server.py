@@ -17,6 +17,7 @@ import ctypes
 import json
 import logging
 import os
+import struct
 import sys
 import threading
 import time
@@ -49,15 +50,173 @@ PIECE_TYPE_MAP = {
 }
 
 
+ROLE_CHARS = {
+    chess.QUEEN: "Q",
+    chess.ROOK: "R",
+    chess.BISHOP: "B",
+    chess.KNIGHT: "N",
+    chess.PAWN: "P",
+}
+
+ROLE_ORDER = {
+    chess.QUEEN: 5,
+    chess.ROOK: 4,
+    chess.BISHOP: 3,
+    chess.KNIGHT: 2,
+    chess.PAWN: 1,
+}
+
+
+class AtomicAtbdProber:
+    """Direct lookup prober for 3- and 4-piece Atomic Chess DTW tablebases (.atbd)."""
+
+    def __init__(self, tablebase_dir: str):
+        self.tablebase_dir = tablebase_dir
+        self._files: Dict[str, Any] = {}
+        if os.path.exists(tablebase_dir):
+            for fname in os.listdir(tablebase_dir):
+                if fname.endswith(".atbd"):
+                    fpath = os.path.join(tablebase_dir, fname)
+                    try:
+                        self._files[fname] = open(fpath, "rb")
+                    except Exception as e:
+                        logger.warning("Could not open tablebase file %s: %s", fpath, e)
+        logger.info("AtomicAtbdProber loaded %d .atbd files from %s", len(self._files), tablebase_dir)
+
+    def is_available(self) -> bool:
+        return len(self._files) > 0
+
+    def close(self):
+        for f in self._files.values():
+            try:
+                f.close()
+            except Exception:
+                pass
+        self._files.clear()
+
+    def probe(self, board: chess.variant.AtomicBoard) -> Optional[int]:
+        w_pieces = []
+        b_pieces = []
+        for sq, p in board.piece_map().items():
+            if p.piece_type == chess.KING:
+                continue
+            if p.color == chess.WHITE:
+                w_pieces.append((sq, p.piece_type))
+            else:
+                b_pieces.append((sq, p.piece_type))
+
+        wk = board.king(chess.WHITE)
+        bk = board.king(chess.BLACK)
+        if wk is None or bk is None:
+            return None
+
+        total_non_king = len(w_pieces) + len(b_pieces)
+
+        # 3-piece: 2 vs 1
+        if total_non_king == 1:
+            if len(w_pieces) == 1:
+                sq, r = w_pieces[0]
+                fname = f"K{ROLE_CHARS.get(r)}vK.atbd"
+                f = self._files.get(fname)
+                if not f:
+                    return None
+                idx = ((1 if board.turn == chess.BLACK else 0) << 18) | (wk << 12) | (bk << 6) | sq
+                f.seek(32 + idx)
+                val = struct.unpack("b", f.read(1))[0]
+                return None if val == -128 else val
+            else:
+                sq, r = b_pieces[0]
+                fname = f"K{ROLE_CHARS.get(r)}vK.atbd"
+                f = self._files.get(fname)
+                if not f:
+                    return None
+                mir_turn = 1 if board.turn == chess.WHITE else 0
+                mir_wk = bk ^ 56
+                mir_bk = wk ^ 56
+                mir_sq = sq ^ 56
+                idx = (mir_turn << 18) | (mir_wk << 12) | (mir_bk << 6) | mir_sq
+                f.seek(32 + idx)
+                val = struct.unpack("b", f.read(1))[0]
+                return None if val == -128 else val
+
+        # 4-piece: 3 vs 1 or 2 vs 2
+        if total_non_king == 2:
+            if len(w_pieces) == 2:
+                s1, r1 = w_pieces[0]
+                s2, r2 = w_pieces[1]
+                if ROLE_ORDER.get(r1, 0) < ROLE_ORDER.get(r2, 0):
+                    s1, s2 = s2, s1
+                    r1, r2 = r2, r1
+                fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK.atbd"
+                f = self._files.get(fname)
+                if not f:
+                    return None
+                idx = ((1 if board.turn == chess.BLACK else 0) << 24) | (wk << 18) | (bk << 12) | (s1 << 6) | s2
+                f.seek(32 + idx)
+                val = struct.unpack("b", f.read(1))[0]
+                return None if val == -128 else val
+            elif len(b_pieces) == 2:
+                s1, r1 = b_pieces[0]
+                s2, r2 = b_pieces[1]
+                if ROLE_ORDER.get(r1, 0) < ROLE_ORDER.get(r2, 0):
+                    s1, s2 = s2, s1
+                    r1, r2 = r2, r1
+                fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK.atbd"
+                f = self._files.get(fname)
+                if not f:
+                    return None
+                mir_turn = 1 if board.turn == chess.WHITE else 0
+                mir_wk = bk ^ 56
+                mir_bk = wk ^ 56
+                mir_s1 = s1 ^ 56
+                mir_s2 = s2 ^ 56
+                idx = (mir_turn << 24) | (mir_wk << 18) | (mir_bk << 12) | (mir_s1 << 6) | mir_s2
+                f.seek(32 + idx)
+                val = struct.unpack("b", f.read(1))[0]
+                return None if val == -128 else val
+            else:
+                ws, wr = w_pieces[0]
+                bs, br = b_pieces[0]
+                fname1 = f"K{ROLE_CHARS.get(wr)}vK{ROLE_CHARS.get(br)}.atbd"
+                f1 = self._files.get(fname1)
+                if f1:
+                    idx = ((1 if board.turn == chess.BLACK else 0) << 24) | (wk << 18) | (bk << 12) | (ws << 6) | bs
+                    f1.seek(32 + idx)
+                    val = struct.unpack("b", f1.read(1))[0]
+                    return None if val == -128 else val
+                fname2 = f"K{ROLE_CHARS.get(br)}vK{ROLE_CHARS.get(wr)}.atbd"
+                f2 = self._files.get(fname2)
+                if f2:
+                    mir_turn = 1 if board.turn == chess.WHITE else 0
+                    mir_wk = bk ^ 56
+                    mir_bk = wk ^ 56
+                    mir_ws = bs ^ 56
+                    mir_bs = ws ^ 56
+                    idx = (mir_turn << 24) | (mir_wk << 18) | (mir_bk << 12) | (mir_ws << 6) | mir_bs
+                    f2.seek(32 + idx)
+                    val = struct.unpack("b", f2.read(1))[0]
+                    return None if val == -128 else val
+
+        return None
+
+
 class AtomicTablebaseEngine:
     def __init__(self, tablebase_dir: str):
         self.tablebase_dir = tablebase_dir
+        self.atbd = AtomicAtbdProber(tablebase_dir)
         self.tb = chess.syzygy.Tablebase(VariantBoard=chess.variant.AtomicBoard)
         if os.path.exists(tablebase_dir):
             count = self.tb.add_directory(tablebase_dir)
-            logger.info("Loaded %d Atomic tablebase files from %s", count, tablebase_dir)
+            logger.info("Loaded %d Atomic Syzygy tablebase files from %s", count, tablebase_dir)
         else:
             logger.warning("Atomic tablebase directory not found: %s", tablebase_dir)
+
+    def close(self):
+        self.atbd.close()
+        try:
+            self.tb.close()
+        except Exception:
+            pass
 
     def is_supported(self, board: chess.variant.AtomicBoard) -> bool:
         piece_count = len(board.piece_map())
@@ -105,17 +264,30 @@ class AtomicTablebaseEngine:
                 "moves": [],
             }
 
-        try:
-            wdl = self.tb.probe_wdl(board)
-            dtz = self.tb.probe_dtz(board)
-        except Exception as e:
-            return {
-                "error": f"Syzygy probe failed: {e}",
-                "category": "unknown",
-                "moves": [],
-            }
+        # Try .atbd DTW first (exact DTW for <= 4 pieces)
+        root_dtw = self.atbd.probe(board)
+        root_dtz = None
+        root_dtm = None
+        pos_cat = "unknown"
 
-        pos_cat = CATEGORY_MAP.get(wdl, "unknown")
+        if root_dtw is not None:
+            pos_cat = "draw" if root_dtw == 0 else ("win" if root_dtw > 0 else "loss")
+            root_dtz = root_dtw
+            root_dtm = None if root_dtw == 0 else ((abs(root_dtw) + 1) // 2 if root_dtw > 0 else -((abs(root_dtw) + 1) // 2))
+        else:
+            # Fallback to Syzygy (for 5 pieces or ungenerated tables)
+            try:
+                wdl = self.tb.probe_wdl(board)
+                dtz = self.tb.probe_dtz(board)
+                pos_cat = CATEGORY_MAP.get(wdl, "unknown")
+                root_dtz = dtz
+            except Exception as e:
+                return {
+                    "error": f"Tablebase probe failed: {e}",
+                    "category": "unknown",
+                    "moves": [],
+                }
+
         moves_data = []
 
         for move in board.legal_moves:
@@ -148,51 +320,74 @@ class AtomicTablebaseEngine:
                     "zeroing": True,
                 })
             else:
-                try:
-                    m_wdl = self.tb.probe_wdl(board)
-                    m_dtz = self.tb.probe_dtz(board)
-                    m_cat = CATEGORY_MAP.get(m_wdl, "unknown")
+                # Try .atbd probe for child position
+                child_dtw = self.atbd.probe(board)
+                if child_dtw is not None:
+                    opp_cat = "draw" if child_dtw == 0 else ("win" if child_dtw > 0 else "loss")
+                    opp_dtm = None if child_dtw == 0 else ((abs(child_dtw) + 1) // 2 if opp_cat == "win" else -((abs(child_dtw) + 1) // 2))
+                    moves_data.append({
+                        "uci": uci,
+                        "san": san,
+                        "category": opp_cat,
+                        "dtz": child_dtw,
+                        "precise_dtz": child_dtw,
+                        "dtm": opp_dtm,
+                        "dtw": child_dtw,
+                        "checkmate": False,
+                        "stalemate": False,
+                        "variant_win": False,
+                        "variant_loss": False,
+                        "zeroing": zeroing,
+                    })
+                else:
+                    # Fallback to Syzygy for child move
+                    try:
+                        m_wdl = self.tb.probe_wdl(board)
+                        m_dtz = self.tb.probe_dtz(board)
+                        m_cat = CATEGORY_MAP.get(m_wdl, "unknown")
 
-                    moves_data.append({
-                        "uci": uci,
-                        "san": san,
-                        "category": m_cat,
-                        "dtz": m_dtz,
-                        "precise_dtz": m_dtz,
-                        "dtm": None,
-                        "dtw": None,
-                        "checkmate": False,
-                        "stalemate": False,
-                        "variant_win": False,
-                        "variant_loss": False,
-                        "zeroing": zeroing,
-                    })
-                except Exception:
-                    moves_data.append({
-                        "uci": uci,
-                        "san": san,
-                        "category": "unknown",
-                        "dtz": None,
-                        "precise_dtz": None,
-                        "dtm": None,
-                        "dtw": None,
-                        "checkmate": False,
-                        "stalemate": False,
-                        "variant_win": False,
-                        "variant_loss": False,
-                        "zeroing": zeroing,
-                    })
+                        moves_data.append({
+                            "uci": uci,
+                            "san": san,
+                            "category": m_cat,
+                            "dtz": m_dtz,
+                            "precise_dtz": m_dtz,
+                            "dtm": None,
+                            "dtw": None,
+                            "checkmate": False,
+                            "stalemate": False,
+                            "variant_win": False,
+                            "variant_loss": False,
+                            "zeroing": zeroing,
+                        })
+                    except Exception:
+                        moves_data.append({
+                            "uci": uci,
+                            "san": san,
+                            "category": "unknown",
+                            "dtz": None,
+                            "precise_dtz": None,
+                            "dtm": None,
+                            "dtw": None,
+                            "checkmate": False,
+                            "stalemate": False,
+                            "variant_win": False,
+                            "variant_loss": False,
+                            "zeroing": zeroing,
+                        })
             board.pop()
 
         def sort_key(item):
             cat = item.get("category")
-            dtz = item.get("dtz") or 0
+            dt = item.get("dtw")
+            if dt is None:
+                dt = item.get("dtz") or 0
             if cat == "loss":
-                return (0, abs(dtz))
+                return (0, abs(dt))
             elif cat == "draw":
                 return (1, 0)
             elif cat == "win":
-                return (2, -abs(dtz))
+                return (2, -abs(dt))
             return (3, 0)
 
         moves_data.sort(key=sort_key)
@@ -203,10 +398,10 @@ class AtomicTablebaseEngine:
             "variant_win": False,
             "variant_loss": False,
             "insufficient_material": False,
-            "dtz": dtz,
-            "precise_dtz": dtz,
-            "dtm": None,
-            "dtw": None,
+            "dtz": root_dtz,
+            "precise_dtz": root_dtz,
+            "dtm": root_dtm,
+            "dtw": root_dtw,
             "category": pos_cat,
             "moves": moves_data,
         }

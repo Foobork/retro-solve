@@ -440,6 +440,72 @@ void main() {
       expect(m2.centipawns, equals(0));
     });
 
+    test('parseTablebaseResponse handles 4-piece Atomic DTW evaluation (e.g. KRvKN Re1+)', () {
+      const fen = '8/8/8/8/7K/4R3/8/5kn1 w - - 0 1';
+      final jsonStr = jsonEncode({
+        'category': 'win',
+        'dtw': 3,
+        'dtm': 2,
+        'dtz': 3,
+        'moves': [
+          {
+            'uci': 'e3e1',
+            'san': 'Re1+',
+            'category': 'loss',
+            'dtw': -2,
+            'dtm': -1,
+            'dtz': -2,
+          },
+          {
+            'uci': 'h4h5',
+            'san': 'Kh5',
+            'category': 'draw',
+            'dtw': 0,
+            'dtm': null,
+            'dtz': 0,
+          },
+          {
+            'uci': 'e3h3',
+            'san': 'Rh3',
+            'category': 'win',
+            'dtw': 1,
+            'dtm': 1,
+            'dtz': 1,
+          },
+        ],
+      });
+
+      final evals = TablebaseService.parseTablebaseResponse(
+        DatasetVariant.atomic,
+        fen,
+        jsonStr,
+      );
+
+      expect(evals, isNotNull);
+      expect(evals!.length, equals(3));
+
+      // 1st move: Re1+ wins in 3 plies (+M2)
+      final m1 = evals[0];
+      expect(m1.candidateMove, equals('e3e1'));
+      expect(m1.dtw, equals(3));
+      expect(m1.mate, equals(2));
+      expect(m1.centipawns, isNull);
+
+      // 2nd move: Kh5 is a draw
+      final m2 = evals[1];
+      expect(m2.candidateMove, equals('h4h5'));
+      expect(m2.dtw, isNull);
+      expect(m2.mate, isNull);
+      expect(m2.centipawns, equals(0));
+
+      // 3rd move: Rh3 loses in 2 plies (-M1)
+      final m3 = evals[2];
+      expect(m3.candidateMove, equals('e3h3'));
+      expect(m3.dtw, equals(2));
+      expect(m3.mate, equals(-1));
+      expect(m3.centipawns, isNull);
+    });
+
     test('probe prioritizes local sidecar when localEnabled is true', () async {
       const fen = '4k3/4P3/8/8/8/8/8/4K3 w - - 0 1';
       final requests = <Uri>[];

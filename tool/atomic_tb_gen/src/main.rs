@@ -198,6 +198,20 @@ fn probe_promoted_state(parent_tables: &HashMap<String, Vec<i8>>, pos: &Atomic) 
                 return table[idx];
             }
         }
+
+        // Underpromotions (R, B, N vs non-Queen):
+        // Check if opponent has an immediate win on the next move
+        for opp_m in pos.legal_moves() {
+            if let Ok(after_opp) = pos.clone().play(&opp_m) {
+                if after_opp.is_game_over() {
+                    if let Some(outcome) = after_opp.outcome() {
+                        if outcome.winner() == Some(pos.turn()) {
+                            return 1; // Opponent has an immediate win!
+                        }
+                    }
+                }
+            }
+        }
         return DRAW;
     }
 
@@ -227,8 +241,20 @@ pub fn solve_table(name: &str) {
     if has_pawn {
         println!("Preloading parent tablebases for pawn promotions...");
         let needed_names = match config {
-            EndgameConfig::ThreeVsOne { .. } => vec!["KQQvK", "KQRvK", "KQBvK", "KQNvK", "KRRvK", "KRBvK", "KRNvK"],
-            EndgameConfig::TwoVsTwo { .. } => vec!["KQvKQ", "KQvKR", "KQvKB", "KQvKN"],
+            EndgameConfig::ThreeVsOne { role1, role2 } => {
+                if role1 == Role::Pawn && role2 == Role::Pawn {
+                    vec!["KQPvK"]
+                } else {
+                    vec!["KQQvK", "KQRvK", "KQBvK", "KQNvK", "KRRvK", "KRBvK", "KRNvK"]
+                }
+            }
+            EndgameConfig::TwoVsTwo { w_role, b_role } => {
+                if w_role == Role::Pawn && b_role == Role::Pawn {
+                    vec!["KQvKP"]
+                } else {
+                    vec!["KQvKQ", "KQvKR", "KQvKB", "KQvKN"]
+                }
+            }
         };
 
         for t_name in needed_names {
@@ -353,7 +379,30 @@ pub fn solve_table(name: &str) {
                         }
 
                         let legal_moves = pos.legal_moves();
+
+                        // 1. Check for immediate win FIRST before counting any edges
                         let mut has_imm_win = false;
+                        for m in &legal_moves {
+                            if let Ok(next) = pos.clone().play(m) {
+                                if next.is_game_over() {
+                                    if let Some(outcome) = next.outcome() {
+                                        if outcome.winner() == Some(turn) {
+                                            has_imm_win = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if has_imm_win {
+                            c_dtw[local_idx] = 1;
+                            imm_wins_vec.push(global_idx as u32);
+                            imm_wins += 1;
+                            continue;
+                        }
+
+                        // 2. Count internal edges and external win/draw moves
                         let mut has_draw = false;
                         let mut best_ext_win = 255u8;
 
@@ -361,10 +410,7 @@ pub fn solve_table(name: &str) {
                             let next = pos.clone().play(m).expect("legal move");
                             if next.is_game_over() {
                                 if let Some(outcome) = next.outcome() {
-                                    if outcome.winner() == Some(turn) {
-                                        has_imm_win = true;
-                                        break;
-                                    } else if outcome.winner().is_none() {
+                                    if outcome.winner().is_none() {
                                         has_draw = true;
                                     }
                                 }
@@ -373,6 +419,9 @@ pub fn solve_table(name: &str) {
 
                             // If this was a pawn promotion, lookup in parent tables
                             if m.promotion().is_some() {
+                                if m.promotion() != Some(Role::Queen) {
+                                    continue;
+                                }
                                 let val = probe_promoted_state(parent_tables_ref, &next);
                                 if val < 0 && val != ILLEGAL {
                                     let cand_w = ((-val) as u8) + 1;
@@ -432,13 +481,6 @@ pub fn solve_table(name: &str) {
                                     }
                                 }
                             }
-                        }
-
-                        if has_imm_win {
-                            c_dtw[local_idx] = 1;
-                            imm_wins_vec.push(global_idx as u32);
-                            imm_wins += 1;
-                            continue;
                         }
 
                         if best_ext_win < 255 {
@@ -551,10 +593,16 @@ pub fn solve_table(name: &str) {
                     };
 
                     for m in pos.legal_moves() {
+                        let next = match pos.clone().play(&m) {
+                            Ok(n) => n,
+                            Err(_) => continue,
+                        };
+                        if next.is_game_over() {
+                            continue;
+                        }
                         if m.promotion().is_some() {
                             continue;
                         }
-                        let next = pos.clone().play(&m).expect("legal move");
                         let c_wk = next.board().king_of(Color::White);
                         let c_bk = next.board().king_of(Color::Black);
 
@@ -606,9 +654,21 @@ pub fn solve_table(name: &str) {
         }
     });
 
-    let col_indices: Vec<u32> = col_indices_atomic.into_iter().map(|a| a.load(Ordering::Relaxed)).collect();
-
     println!("CSR construction completed in {:?}", t_pass2.elapsed());
+
+    // Verify CSR integrity: exact offset match across all states
+    for i in 0..TOTAL_STATES {
+        let expected = row_ptrs[i + 1];
+        let actual = curr_offsets[i].load(Ordering::Relaxed);
+        assert_eq!(
+            expected, actual,
+            "CSR offset mismatch at state {}: expected {}, got {}",
+            i, expected, actual
+        );
+    }
+    println!("CSR integrity verified: all {} edges perfectly mapped.", total_edges);
+
+    let col_indices: Vec<u32> = col_indices_atomic.into_iter().map(|a| a.load(Ordering::Relaxed)).collect();
 
     println!("Step 2: Retrograde BFS propagation on CSR graph...");
     let t_bfs = Instant::now();
@@ -616,17 +676,21 @@ pub fn solve_table(name: &str) {
     let mut wins_count = immediate_wins;
     let mut losses_count = terminal_losses;
     let mut max_dtw = 1u8;
+    let mut visited = vec![false; TOTAL_STATES];
 
     for dist in 1..127usize {
         while let Some((curr_idx_u32, is_win)) = buckets[dist].pop() {
             let curr_idx = curr_idx_u32 as usize;
 
+            if visited[curr_idx] {
+                continue;
+            }
+            visited[curr_idx] = true;
+
             if is_win {
                 if dtw[curr_idx] == ILLEGAL || dtw[curr_idx] == DRAW {
                     dtw[curr_idx] = dist as i8;
                     wins_count += 1;
-                } else if dtw[curr_idx] > 0 && (dtw[curr_idx] as usize) < dist {
-                    continue;
                 }
             }
 

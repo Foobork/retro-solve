@@ -6,6 +6,7 @@
 *.atbw
 *.atbz
 *.atbd
+!tool/atomic_tb_gen/src/KQvK.atbd
 *.rtbw
 *.rtbz
 data/tablebases/

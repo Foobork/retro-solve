@@ -131,7 +131,7 @@ pub fn encode_three_piece(turn: Color, wk: Square, bk: Square, p: Square) -> usi
 
 fn load_three_piece_table(name: &str) -> Option<Vec<i8>> {
     if name == "KQvK" {
-        const KQVK_BYTES: &[u8] = include_bytes!("../../../data/tablebases/atomic/KQvK.atbd");
+        const KQVK_BYTES: &[u8] = include_bytes!("KQvK.atbd");
         if &KQVK_BYTES[0..4] == b"ATBD" && KQVK_BYTES.len() >= 32 + (1 << 19) {
             let payload = &KQVK_BYTES[32..32 + (1 << 19)];
             return Some(unsafe {

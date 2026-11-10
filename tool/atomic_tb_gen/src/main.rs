@@ -121,7 +121,25 @@ pub fn encode_three_vs_two(turn: Color, wk: Square, bk: Square, w1: Square, w2: 
         | (b1 as usize)
 }
 
+#[inline(always)]
+pub fn encode_three_piece(turn: Color, wk: Square, bk: Square, p: Square) -> usize {
+    ((turn.is_black() as usize) << 18)
+        | ((wk as usize) << 12)
+        | ((bk as usize) << 6)
+        | (p as usize)
+}
+
 fn load_three_piece_table(name: &str) -> Option<Vec<i8>> {
+    if name == "KQvK" {
+        const KQVK_BYTES: &[u8] = include_bytes!("../../../data/tablebases/atomic/KQvK.atbd");
+        if &KQVK_BYTES[0..4] == b"ATBD" && KQVK_BYTES.len() >= 32 + (1 << 19) {
+            let payload = &KQVK_BYTES[32..32 + (1 << 19)];
+            return Some(unsafe {
+                std::slice::from_raw_parts(payload.as_ptr() as *const i8, payload.len()).to_vec()
+            });
+        }
+    }
+
     let out_dir = get_out_dir();
     let path = out_dir.join(format!("{}.atbd", name));
     if !path.exists() {
@@ -1043,6 +1061,7 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
     let mut total_wins = total_imm_wins.load(Ordering::Relaxed) as usize;
     let mut total_losses = total_term_losses.load(Ordering::Relaxed) as usize;
     let mut max_dtw = 1u8;
+    let parent_tables_ref = &parent_tables;
 
     for iteration in 1..=120 {
         let t_iter = Instant::now();
@@ -1110,10 +1129,53 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
                     if opp_king_explodes && !own_king_explodes {
                         min_win = 1;
                         break;
+                    } else if own_king_explodes {
+                        continue;
                     } else {
-                        // Any non-king capture leaves <= 1 piece vs bare king in KRRvKR, which is DRAW
-                        all_moves_lose = false;
-                        has_unresolved = true;
+                        // Neither king exploded.
+                        // In Atomic chess, both the capturing piece and target piece explode,
+                        // along with all non-pawns within distance <= 1 of `to`.
+                        let w1_survives = from != w1 && to != w1 && w1.distance(to) > 1;
+                        let w2_survives = from != w2 && to != w2 && w2.distance(to) > 1;
+
+                        // Black had only b1, which always explodes (it was either capturer or target).
+                        // Black is always left with a bare King.
+                        let child_val: i8 = if w1_survives && !w2_survives {
+                            if w1_role == Role::Queen {
+                                if let Some(kqv) = parent_tables_ref.get("KQvK") {
+                                    let idx = encode_three_piece(opp_turn, wk, bk, w1);
+                                    kqv[idx]
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0 // <= 1 minor/rook vs bare king is theoretical draw in Atomic chess
+                            }
+                        } else if w2_survives && !w1_survives {
+                            if w2_role == Role::Queen {
+                                if let Some(kqv) = parent_tables_ref.get("KQvK") {
+                                    let idx = encode_three_piece(opp_turn, wk, bk, w2);
+                                    kqv[idx]
+                                } else {
+                                    0
+                                }
+                            } else {
+                                0
+                            }
+                        } else {
+                            0 // Bare king vs bare king is a draw
+                        };
+
+                        if child_val < 0 && child_val != ILLEGAL {
+                            let win_dist = (child_val.abs() as u8) + 1;
+                            min_win = min_win.min(win_dist);
+                        } else if child_val > 0 {
+                            let loss_dist = (child_val as u8) + 1;
+                            max_loss = max_loss.max(loss_dist);
+                        } else {
+                            all_moves_lose = false;
+                            has_unresolved = true;
+                        }
                     }
                 } else {
                     let c_wk = if from == wk { to } else { wk };

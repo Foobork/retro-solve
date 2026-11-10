@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       table:
-        description: 'Table to solve (e.g. KRBvKB), or "REMAINING_3" / "ROOK_ENDINGS", or "ALL_5P_0P", or "ALL_4P"'
+        description: 'Table to solve (e.g. KQQvKQ), or "ALL_5P_QUEEN" (all 22), "QUEEN_BATCH1", "QUEEN_BATCH2", "QUEEN_BATCH3", "ALL_5P_0P", "ALL_4P"'
         required: true
-        default: 'REMAINING_3'
+        default: 'ALL_5P_QUEEN'
 
 concurrency:
   group: "build-atomic-tb-${{ github.event.inputs.table }}-${{ github.ref }}"
@@ -24,6 +24,14 @@ jobs:
           INPUT="${{ github.event.inputs.table }}"
           if [ "$INPUT" = "ALL" ] || [ "$INPUT" = "ALL_4P" ]; then
             echo 'matrix=["KQPvK","KRPvK","KBPvK","KNPvK","KQvKP","KRvKP","KBvKP","KNvKP"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "ALL_5P_QUEEN" ] || [ "$INPUT" = "ALL_5P_QUEENS" ]; then
+            echo 'matrix=["KQQvKQ","KQQvKR","KQQvKB","KQQvKN","KQRvKQ","KQRvKR","KQRvKB","KQRvKN","KQBvKQ","KQBvKR","KQBvKB","KQBvKN","KQNvKQ","KQNvKR","KQNvKB","KQNvKN","KRRvKQ","KRBvKQ","KRNvKQ","KBBvKQ","KBNvKQ","KNNvKQ"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "QUEEN_BATCH1" ]; then
+            echo 'matrix=["KQQvKQ","KQQvKR","KQQvKB","KQQvKN","KQRvKQ","KQRvKR","KQRvKB","KQRvKN"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "QUEEN_BATCH2" ]; then
+            echo 'matrix=["KQBvKQ","KQBvKR","KQBvKB","KQBvKN","KQNvKQ","KQNvKR","KQNvKB","KQNvKN"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "QUEEN_BATCH3" ]; then
+            echo 'matrix=["KRRvKQ","KRBvKQ","KRNvKQ","KBBvKQ","KBNvKQ","KNNvKQ"]' >> $GITHUB_OUTPUT
           elif [ "$INPUT" = "ALL_5P_0P" ] || [ "$INPUT" = "ALL_5P_MINORS" ]; then
             echo 'matrix=["KRRvKB","KRRvKN","KRBvKR","KRBvKB","KRBvKN","KRNvKR","KRNvKB","KRNvKN","KBBvKR","KBBvKB","KBBvKN","KBNvKR","KBNvKB","KBNvKN","KNNvKR","KNNvKB","KNNvKN"]' >> $GITHUB_OUTPUT
           elif [ "$INPUT" = "REMAINING_3" ] || [ "$INPUT" = "ROOK_ENDINGS" ]; then

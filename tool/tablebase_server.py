@@ -68,20 +68,35 @@ ROLE_ORDER = {
 
 
 class AtomicAtbdProber:
-    """Direct lookup prober for 3- and 4-piece Atomic Chess DTW tablebases (.atbd)."""
+    """Direct lookup prober for 3-, 4-, and 5-piece Atomic Chess DTW tablebases (.atbd)."""
 
-    def __init__(self, tablebase_dir: str):
-        self.tablebase_dir = tablebase_dir
+    def __init__(self, tablebase_dir: Union[str, List[str]] = "data/tablebases/atomic"):
+        if isinstance(tablebase_dir, str):
+            dirs = [tablebase_dir]
+        else:
+            dirs = list(tablebase_dir)
+
+        # Also automatically search G: drive tablebases if available
+        g_drive_dirs = [
+            r"G:\My Drive\Chess\tablebases\atomic",
+            r"G:\My Drive\Chess\tablebases",
+        ]
+        for g_dir in g_drive_dirs:
+            if os.path.exists(g_dir) and g_dir not in dirs:
+                dirs.append(g_dir)
+
+        self.tablebase_dirs = dirs
         self._files: Dict[str, Any] = {}
-        if os.path.exists(tablebase_dir):
-            for fname in os.listdir(tablebase_dir):
-                if fname.endswith(".atbd"):
-                    fpath = os.path.join(tablebase_dir, fname)
-                    try:
-                        self._files[fname] = open(fpath, "rb")
-                    except Exception as e:
-                        logger.warning("Could not open tablebase file %s: %s", fpath, e)
-        logger.info("AtomicAtbdProber loaded %d .atbd files from %s", len(self._files), tablebase_dir)
+        for d in dirs:
+            if os.path.exists(d):
+                for fname in os.listdir(d):
+                    if fname.endswith(".atbd") and fname not in self._files:
+                        fpath = os.path.join(d, fname)
+                        try:
+                            self._files[fname] = open(fpath, "rb")
+                        except Exception as e:
+                            logger.warning("Could not open tablebase file %s: %s", fpath, e)
+        logger.info("AtomicAtbdProber loaded %d .atbd files from %s", len(self._files), dirs)
 
     def is_available(self) -> bool:
         return len(self._files) > 0

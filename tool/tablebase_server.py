@@ -98,6 +98,23 @@ class AtomicAtbdProber:
                             logger.warning("Could not open tablebase file %s: %s", fpath, e)
         logger.info("AtomicAtbdProber loaded %d .atbd files from %s", len(self._files), dirs)
 
+    def _get_file(self, fname: str):
+        f = self._files.get(fname)
+        if f is not None:
+            return f
+        for d in self.tablebase_dirs:
+            if os.path.exists(d):
+                fpath = os.path.join(d, fname)
+                if os.path.exists(fpath):
+                    try:
+                        f_opened = open(fpath, "rb")
+                        self._files[fname] = f_opened
+                        logger.info("Dynamically loaded new tablebase %s from %s", fname, fpath)
+                        return f_opened
+                    except Exception as e:
+                        logger.warning("Could not open tablebase file %s: %s", fpath, e)
+        return None
+
     def is_available(self) -> bool:
         return len(self._files) > 0
 
@@ -132,7 +149,7 @@ class AtomicAtbdProber:
             if len(w_pieces) == 1:
                 sq, r = w_pieces[0]
                 fname = f"K{ROLE_CHARS.get(r)}vK.atbd"
-                f = self._files.get(fname)
+                f = self._get_file(fname)
                 if not f:
                     return None
                 idx = ((1 if board.turn == chess.BLACK else 0) << 18) | (wk << 12) | (bk << 6) | sq
@@ -142,7 +159,7 @@ class AtomicAtbdProber:
             else:
                 sq, r = b_pieces[0]
                 fname = f"K{ROLE_CHARS.get(r)}vK.atbd"
-                f = self._files.get(fname)
+                f = self._get_file(fname)
                 if not f:
                     return None
                 mir_turn = 1 if board.turn == chess.WHITE else 0
@@ -163,7 +180,7 @@ class AtomicAtbdProber:
                     s1, s2 = s2, s1
                     r1, r2 = r2, r1
                 fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK.atbd"
-                f = self._files.get(fname)
+                f = self._get_file(fname)
                 if not f:
                     return None
                 idx = ((1 if board.turn == chess.BLACK else 0) << 24) | (wk << 18) | (bk << 12) | (s1 << 6) | s2
@@ -177,7 +194,7 @@ class AtomicAtbdProber:
                     s1, s2 = s2, s1
                     r1, r2 = r2, r1
                 fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK.atbd"
-                f = self._files.get(fname)
+                f = self._get_file(fname)
                 if not f:
                     return None
                 mir_turn = 1 if board.turn == chess.WHITE else 0
@@ -193,14 +210,14 @@ class AtomicAtbdProber:
                 ws, wr = w_pieces[0]
                 bs, br = b_pieces[0]
                 fname1 = f"K{ROLE_CHARS.get(wr)}vK{ROLE_CHARS.get(br)}.atbd"
-                f1 = self._files.get(fname1)
+                f1 = self._get_file(fname1)
                 if f1:
                     idx = ((1 if board.turn == chess.BLACK else 0) << 24) | (wk << 18) | (bk << 12) | (ws << 6) | bs
                     f1.seek(32 + idx)
                     val = struct.unpack("b", f1.read(1))[0]
                     return None if val == -128 else val
                 fname2 = f"K{ROLE_CHARS.get(br)}vK{ROLE_CHARS.get(wr)}.atbd"
-                f2 = self._files.get(fname2)
+                f2 = self._get_file(fname2)
                 if f2:
                     mir_turn = 1 if board.turn == chess.WHITE else 0
                     mir_wk = bk ^ 56
@@ -222,7 +239,7 @@ class AtomicAtbdProber:
                     r1, r2 = r2, r1
                 bs, br = b_pieces[0]
                 fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK{ROLE_CHARS.get(br)}.atbd"
-                f = self._files.get(fname)
+                f = self._get_file(fname)
                 if not f:
                     return None
                 chunk = wk if board.turn == chess.WHITE else (64 + wk)
@@ -239,7 +256,7 @@ class AtomicAtbdProber:
                     r1, r2 = r2, r1
                 ws, wr = w_pieces[0]
                 fname = f"K{ROLE_CHARS.get(r1)}{ROLE_CHARS.get(r2)}vK{ROLE_CHARS.get(wr)}.atbd"
-                f = self._files.get(fname)
+                f = self._get_file(fname)
                 if not f:
                     return None
                 mir_turn = 1 if board.turn == chess.WHITE else 0

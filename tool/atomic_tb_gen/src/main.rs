@@ -1168,13 +1168,15 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
 
                         if child_val < 0 && child_val != ILLEGAL {
                             let win_dist = (child_val.abs() as u8) + 1;
-                            min_win = min_win.min(win_dist);
+                            if win_dist <= (iteration + 1) as u8 {
+                                min_win = min_win.min(win_dist);
+                            }
+                            all_moves_lose = false;
                         } else if child_val > 0 {
                             let loss_dist = (child_val as u8) + 1;
                             max_loss = max_loss.max(loss_dist);
                         } else {
                             all_moves_lose = false;
-                            has_unresolved = true;
                         }
                     }
                 } else {
@@ -1189,7 +1191,10 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
 
                     if child_val < 0 && child_val != ILLEGAL {
                         let win_dist = (child_val.abs() as u8) + 1;
-                        min_win = min_win.min(win_dist);
+                        if win_dist <= (iteration + 1) as u8 {
+                            min_win = min_win.min(win_dist);
+                        }
+                        all_moves_lose = false;
                     } else if child_val > 0 {
                         let loss_dist = (child_val as u8) + 1;
                         max_loss = max_loss.max(loss_dist);
@@ -1209,7 +1214,7 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
 
             let multiplier = if identical_w_roles && w1_idx != w2_idx { 2 } else { 1 };
 
-            if min_win <= 127 {
+            if min_win <= (iteration + 1) as u8 {
                 dtw_atomic[global_idx].store(min_win as i8, Ordering::Relaxed);
                 if let Some(mir) = mirror_global_idx {
                     dtw_atomic[mir].store(min_win as i8, Ordering::Relaxed);

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       table:
-        description: 'Table to solve (e.g. KQQvKQ), or "ALL_5P_QUEEN" (all 22), "QUEEN_BATCH1", "QUEEN_BATCH2", "QUEEN_BATCH3", "ALL_5P_0P", "ALL_4P"'
+        description: 'Table to solve (e.g. KRPvKQ), or "ALL_5P_1P" (all 26), "5P_1P_BATCH1", "5P_1P_BATCH2", "5P_1P_BLACK", "ALL_5P_QUEEN", "ALL_5P_0P", "ALL_4P"'
         required: true
-        default: 'ALL_5P_QUEEN'
+        default: 'ALL_5P_1P'
 
 concurrency:
   group: "build-atomic-tb-${{ github.event.inputs.table }}-${{ github.ref }}"
@@ -22,7 +22,15 @@ jobs:
       - id: set-matrix
         run: |
           INPUT="${{ github.event.inputs.table }}"
-          if [ "$INPUT" = "ALL" ] || [ "$INPUT" = "ALL_4P" ]; then
+          if [ "$INPUT" = "ALL_5P_1P" ]; then
+            echo 'matrix=["KQPvKQ","KQPvKR","KQPvKB","KQPvKN","KRPvKQ","KRPvKR","KRPvKB","KRPvKN","KBPvKQ","KBPvKR","KBPvKB","KBPvKN","KNPvKQ","KNPvKR","KNPvKB","KNPvKN","KQQvKP","KQRvKP","KQBvKP","KQNvKP","KRRvKP","KRBvKP","KRNvKP","KBBvKP","KBNvKP","KNNvKP"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "5P_1P_BATCH1" ]; then
+            echo 'matrix=["KQPvKQ","KQPvKR","KQPvKB","KQPvKN","KRPvKQ","KRPvKR","KRPvKB","KRPvKN"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "5P_1P_BATCH2" ]; then
+            echo 'matrix=["KBPvKQ","KBPvKR","KBPvKB","KBPvKN","KNPvKQ","KNPvKR","KNPvKB","KNPvKN"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "5P_1P_BLACK" ] || [ "$INPUT" = "5P_1P_BATCH3" ]; then
+            echo 'matrix=["KQQvKP","KQRvKP","KQBvKP","KQNvKP","KRRvKP","KRBvKP","KRNvKP","KBBvKP","KBNvKP","KNNvKP"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "ALL" ] || [ "$INPUT" = "ALL_4P" ]; then
             echo 'matrix=["KQPvK","KRPvK","KBPvK","KNPvK","KQvKP","KRvKP","KBvKP","KNvKP"]' >> $GITHUB_OUTPUT
           elif [ "$INPUT" = "ALL_5P_QUEEN" ] || [ "$INPUT" = "ALL_5P_QUEENS" ]; then
             echo 'matrix=["KQQvKQ","KQQvKR","KQQvKB","KQQvKN","KQRvKQ","KQRvKR","KQRvKB","KQRvKN","KQBvKQ","KQBvKR","KQBvKB","KQBvKN","KQNvKQ","KQNvKR","KQNvKB","KQNvKN","KRRvKQ","KRBvKQ","KRNvKQ","KBBvKQ","KBNvKQ","KNNvKQ"]' >> $GITHUB_OUTPUT
@@ -83,7 +91,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data/tablebases/atomic/temp
-          gh run download 42487246479 -D data/tablebases/atomic/temp || true
+          # Query required 5-piece parent table for promotions
+          PARENT=$(./tool/atomic_tb_gen/target/release/atomic_tb_gen --parent-table "${{ matrix.table }}" || true)
+          if [ -n "$PARENT" ]; then
+            echo "Table ${{ matrix.table }} requires 5-piece parent table: $PARENT"
+            echo "Downloading atomic-tb-$PARENT from 5-piece Queen run 42814860481..."
+            gh run download 42814860481 -n "atomic-tb-$PARENT" -D data/tablebases/atomic/temp || true
+          fi
+          # Download 3-piece and 4-piece base tables if needed
           gh run download 42484601569 -D data/tablebases/atomic/temp || true
           gh run download 42481717145 -D data/tablebases/atomic/temp || true
           find data/tablebases/atomic/temp -name "*.atbd" -exec mv {} data/tablebases/atomic/ \; || true

@@ -129,6 +129,44 @@ pub fn encode_three_piece(turn: Color, wk: Square, bk: Square, p: Square) -> usi
         | (p as usize)
 }
 
+pub struct MmapTable {
+    _file: File,
+    mmap: memmap2::Mmap,
+}
+
+impl MmapTable {
+    pub fn open(path: &std::path::Path) -> Option<Self> {
+        let file = File::open(path).ok()?;
+        let mmap = unsafe { memmap2::MmapOptions::new().map(&file).ok()? };
+        if mmap.len() < 32 + TOTAL_STATES_5P || &mmap[0..4] != b"ATBD" {
+            return None;
+        }
+        Some(Self { _file: file, mmap })
+    }
+
+    #[inline(always)]
+    pub fn get(&self, idx: usize) -> i8 {
+        self.mmap[32 + idx] as i8
+    }
+}
+
+pub fn find_table_path(name: &str) -> Option<PathBuf> {
+    let filename = format!("{}.atbd", name);
+    let candidates = [
+        get_out_dir().join(&filename),
+        PathBuf::from("data/tablebases/atomic").join(&filename),
+        PathBuf::from("../../data/tablebases/atomic").join(&filename),
+        PathBuf::from(r"G:\My Drive\Chess\tablebases\atomic").join(&filename),
+        PathBuf::from(r"G:\My Drive\Chess\tablebases").join(&filename),
+    ];
+    for p in candidates {
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
 fn load_three_piece_table(name: &str) -> Option<Vec<i8>> {
     if name == "KQvK" {
         const KQVK_BYTES: &[u8] = include_bytes!("KQvK.atbd");
@@ -139,21 +177,53 @@ fn load_three_piece_table(name: &str) -> Option<Vec<i8>> {
             });
         }
     }
+    if name == "KPvK" {
+        const KPVK_BYTES: &[u8] = include_bytes!("KPvK.atbd");
+        if &KPVK_BYTES[0..4] == b"ATBD" && KPVK_BYTES.len() >= 32 + (1 << 19) {
+            let payload = &KPVK_BYTES[32..32 + (1 << 19)];
+            return Some(unsafe {
+                std::slice::from_raw_parts(payload.as_ptr() as *const i8, payload.len()).to_vec()
+            });
+        }
+    }
 
-    let out_dir = get_out_dir();
-    let path = out_dir.join(format!("{}.atbd", name));
-    if !path.exists() {
-        return None;
+    if let Some(path) = find_table_path(name) {
+        if let Ok(mut file) = File::open(&path) {
+            let mut header = [0u8; 32];
+            if file.read_exact(&mut header).is_ok() && &header[0..4] == b"ATBD" {
+                let mut buffer = vec![0u8; 1 << 19];
+                if file.read_exact(&mut buffer).is_ok() {
+                    return Some(unsafe { std::mem::transmute::<Vec<u8>, Vec<i8>>(buffer) });
+                }
+            }
+        }
     }
-    let mut file = File::open(&path).ok()?;
-    let mut header = [0u8; 32];
-    file.read_exact(&mut header).ok()?;
-    if &header[0..4] != b"ATBD" {
-        return None;
+    None
+}
+
+pub fn get_5p_parent_name(w_role1: Role, w_role2: Role, b_role: Role) -> Option<String> {
+    if b_role == Role::Pawn {
+        // Black has the pawn: promoting to Queen yields K{w1}{w2}vKQ
+        Some(format!("K{}{}vKQ", role_to_char(w_role1), role_to_char(w_role2)))
+    } else if w_role2 == Role::Pawn {
+        // White has the pawn as role2: promoting to Queen yields KQ{w1}vK{b}
+        let char1 = role_to_char(w_role1);
+        if w_role1 == Role::Queen {
+            Some(format!("KQQvK{}", role_to_char(b_role)))
+        } else {
+            Some(format!("KQ{}vK{}", char1, role_to_char(b_role)))
+        }
+    } else if w_role1 == Role::Pawn {
+        // White has the pawn as role1: promoting to Queen yields KQ{w2}vK{b}
+        let char2 = role_to_char(w_role2);
+        if w_role2 == Role::Queen {
+            Some(format!("KQQvK{}", role_to_char(b_role)))
+        } else {
+            Some(format!("KQ{}vK{}", char2, role_to_char(b_role)))
+        }
+    } else {
+        None
     }
-    let mut buffer = vec![0u8; 1 << 19];
-    file.read_exact(&mut buffer).ok()?;
-    Some(unsafe { std::mem::transmute::<Vec<u8>, Vec<i8>>(buffer) })
 }
 
 fn load_table_file(name: &str) -> Option<Vec<i8>> {
@@ -858,12 +928,30 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
 
     let identical_w_roles = w1_role == w2_role;
 
-    // Preload 3-piece table if available (for captures)
-    let mut parent_tables: HashMap<String, Vec<i8>> = HashMap::new();
+    // Preload 3-piece tables if available (for captures)
+    let mut parent_3p_tables: HashMap<String, Vec<i8>> = HashMap::new();
     if let Some(tb) = load_three_piece_table("KQvK") {
         println!("Loaded KQvK 3-piece sub-table for capture evaluations.");
-        parent_tables.insert("KQvK".to_string(), tb);
+        parent_3p_tables.insert("KQvK".to_string(), tb);
     }
+    if let Some(tb) = load_three_piece_table("KPvK") {
+        println!("Loaded KPvK 3-piece sub-table for capture evaluations.");
+        parent_3p_tables.insert("KPvK".to_string(), tb);
+    }
+
+    // Preload 5-piece parent table for pawn promotions if this table has a pawn
+    let parent_5p: Option<MmapTable> = if let Some(p_name) = get_5p_parent_name(w1_role, w2_role, b_role) {
+        println!("Checking for 5-piece parent table: {}.atbd...", p_name);
+        if let Some(p_path) = find_table_path(&p_name) {
+            println!("  Memory-mapping parent table: {:?}", p_path);
+            MmapTable::open(&p_path)
+        } else {
+            eprintln!("  WARNING: parent {}.atbd not found on disk!", p_name);
+            None
+        }
+    } else {
+        None
+    };
 
     println!("Allocating 5-piece direct-indexed array (2.14 GB)...");
     let dtw: Vec<i8> = vec![ILLEGAL; TOTAL_STATES_5P];
@@ -1061,7 +1149,8 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
     let mut total_wins = total_imm_wins.load(Ordering::Relaxed) as usize;
     let mut total_losses = total_term_losses.load(Ordering::Relaxed) as usize;
     let mut max_dtw = 1u8;
-    let parent_tables_ref = &parent_tables;
+    let parent_3p_ref = &parent_3p_tables;
+    let parent_5p_ref = &parent_5p;
 
     for iteration in 1..=120 {
         let t_iter = Instant::now();
@@ -1142,23 +1231,17 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
                         // Black is always left with a bare King.
                         let child_val: i8 = if w1_survives && !w2_survives {
                             if w1_role == Role::Queen {
-                                if let Some(kqv) = parent_tables_ref.get("KQvK") {
-                                    let idx = encode_three_piece(opp_turn, wk, bk, w1);
-                                    kqv[idx]
-                                } else {
-                                    0
-                                }
+                                parent_3p_ref.get("KQvK").map(|t| t[encode_three_piece(opp_turn, wk, bk, w1)]).unwrap_or(0)
+                            } else if w1_role == Role::Pawn {
+                                parent_3p_ref.get("KPvK").map(|t| t[encode_three_piece(opp_turn, wk, bk, w1)]).unwrap_or(0)
                             } else {
                                 0 // <= 1 minor/rook vs bare king is theoretical draw in Atomic chess
                             }
                         } else if w2_survives && !w1_survives {
                             if w2_role == Role::Queen {
-                                if let Some(kqv) = parent_tables_ref.get("KQvK") {
-                                    let idx = encode_three_piece(opp_turn, wk, bk, w2);
-                                    kqv[idx]
-                                } else {
-                                    0
-                                }
+                                parent_3p_ref.get("KQvK").map(|t| t[encode_three_piece(opp_turn, wk, bk, w2)]).unwrap_or(0)
+                            } else if w2_role == Role::Pawn {
+                                parent_3p_ref.get("KPvK").map(|t| t[encode_three_piece(opp_turn, wk, bk, w2)]).unwrap_or(0)
                             } else {
                                 0
                             }
@@ -1178,6 +1261,47 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
                         } else {
                             all_moves_lose = false;
                         }
+                    }
+                } else if m.promotion().is_some() {
+                    // Non-capturing promotion to Queen
+                    if m.promotion() != Some(Role::Queen) {
+                        continue;
+                    }
+                    let child_val: i8 = if let Some(parent) = parent_5p_ref.as_ref() {
+                        let (p_turn, p_wk, p_bk, p_w1, p_w2, p_b1) = if turn == Color::White {
+                            // White promoted pawn to Queen at `to`
+                            let (non_pawn_sq, non_pawn_role) = if w1_role == Role::Pawn {
+                                (w2, w2_role)
+                            } else {
+                                (w1, w1_role)
+                            };
+                            if non_pawn_role == Role::Queen {
+                                let (q1, q2) = if to <= non_pawn_sq { (to, non_pawn_sq) } else { (non_pawn_sq, to) };
+                                (Color::Black, wk, bk, q1, q2, b1)
+                            } else {
+                                (Color::Black, wk, bk, to, non_pawn_sq, b1)
+                            }
+                        } else {
+                            // Black promoted pawn to Queen at `to`
+                            (Color::White, wk, bk, w1, w2, to)
+                        };
+                        let idx = encode_three_vs_two(p_turn, p_wk, p_bk, p_w1, p_w2, p_b1);
+                        parent.get(idx)
+                    } else {
+                        0
+                    };
+
+                    if child_val < 0 && child_val != ILLEGAL {
+                        let win_dist = (child_val.abs() as u8) + 1;
+                        if win_dist <= (iteration + 1) as u8 {
+                            min_win = min_win.min(win_dist);
+                        }
+                        all_moves_lose = false;
+                    } else if child_val > 0 {
+                        let loss_dist = (child_val as u8) + 1;
+                        max_loss = max_loss.max(loss_dist);
+                    } else {
+                        all_moves_lose = false;
                     }
                 } else {
                     let c_wk = if from == wk { to } else { wk };
@@ -1289,6 +1413,22 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    if args.len() >= 3 && args[1] == "--parent-table" {
+        let target = &args[2];
+        if let Some(config) = parse_config(target) {
+            match config {
+                EndgameConfig::ThreeVsTwo { w_role1, w_role2, b_role } => {
+                    if let Some(p) = get_5p_parent_name(w_role1, w_role2, b_role) {
+                        println!("{}", p);
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+        return;
+    }
+
     let target = args.get(1).map(|s| s.as_str()).unwrap_or("KRRvKR");
 
     solve_table(target);

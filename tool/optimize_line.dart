@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:retro_solve/chess/chess.dart';
 import 'package:retro_solve/graph/cached_graph.dart';
 import 'package:retro_solve/graph/position_eval.dart';
-import 'package:retro_solve/graph/watkins_proof_index.dart';
 import 'package:retro_solve/persistence/database_service.dart';
 import 'package:retro_solve/persistence/db_init.dart';
 import 'antichess_tb_ffi.dart';
@@ -33,9 +32,6 @@ Future<void> main(List<String> args) async {
   print('Database:      $dbPath');
   print('Max rounds:    $maxRounds');
   print('========================================================');
-
-  WatkinsProofIndexManager.instance.ensureLoaded();
-  print('Proof indices active: ${WatkinsProofIndexManager.instance.hasIndices}');
 
   AntichessTbProber? prober;
   final tbDll = File('data/tablebases/antichess/antichess_tb_api.dll');
@@ -92,12 +88,6 @@ Future<void> main(List<String> args) async {
                 : GameResult.draw);
         return PositionEval(result: gRes, dtw: tbRes.dtw);
       }
-    }
-
-    final entry = WatkinsProofIndexManager.instance.lookupBfen(childBfen);
-    if (entry != null) {
-      totalIndexHits++;
-      return PositionEval(result: GameResult.whiteWins, dtw: entry.dtw);
     }
 
     return null;

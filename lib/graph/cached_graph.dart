@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math';
 import '../persistence/database_service.dart';
 import 'graph.dart';
-import 'watkins_proof_index.dart';
 
 /// A bounded, on-demand cached graph backed by SQLite storage.
 ///
@@ -18,9 +17,6 @@ class CachedGraph extends Graph {
     this.cacheCapacity = 50000,
   })  : dbService = dbService ?? DatabaseService.instance,
         super(vertexMap: LruMap<String, Vertex>(capacity: cacheCapacity));
-
-  bool get _isAntichess =>
-      (dbService.dbPath ?? '').toLowerCase().contains('antichess');
 
   /// Loads a single vertex by BFEN from SQLite if not present in memory.
   ///
@@ -39,50 +35,11 @@ class CachedGraph extends Graph {
 
     final row = await dbService.getNode(bfen);
     if (row == null) {
-      if (_isAntichess) {
-        final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
-        if (idxEntry != null) {
-          final proofEval = PositionEval(
-            result: GameResult.whiteWins,
-            dtw: idxEntry.dtw,
-          );
-          final vertex = addFullVertex(bfen, proofEval, proofEval);
-          vertex.queriedFromDb = true;
-          dbService.upsertNode(bfen, proofEval, proofEval);
-          return vertex;
-        }
-      }
       return null;
     }
 
-    var assigned = DatabaseService.evalFromRow(row, 'assigned');
-    var computed = DatabaseService.evalFromRow(row, 'computed');
-
-    if (_isAntichess) {
-      final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
-      if (idxEntry != null) {
-        final proofEval = PositionEval(
-          result: GameResult.whiteWins,
-          dtw: idxEntry.dtw,
-        );
-        bool shouldUpdate = false;
-        if (assigned == null ||
-            (assigned.result == GameResult.whiteWins &&
-                (assigned.dtw == null || proofEval.dtw! < assigned.dtw!))) {
-          assigned = proofEval;
-          shouldUpdate = true;
-        }
-        if (computed == null ||
-            (computed.result == GameResult.whiteWins &&
-                (computed.dtw == null || proofEval.dtw! < computed.dtw!))) {
-          computed = proofEval;
-          shouldUpdate = true;
-        }
-        if (shouldUpdate) {
-          dbService.upsertNode(bfen, assigned, computed);
-        }
-      }
-    }
+    final assigned = DatabaseService.evalFromRow(row, 'assigned');
+    final computed = DatabaseService.evalFromRow(row, 'computed');
 
     final vertex = addFullVertex(bfen, assigned, computed);
 
@@ -109,52 +66,13 @@ class CachedGraph extends Graph {
     if (missing.isEmpty) return;
 
     final rows = await dbService.getNodes(missing);
-    final checkProofIdx = _isAntichess && WatkinsProofIndexManager.instance.hasIndices;
     for (final bfen in missing) {
       final row = rows[bfen];
       if (row != null) {
-        var assigned = DatabaseService.evalFromRow(row, 'assigned');
-        var computed = DatabaseService.evalFromRow(row, 'computed');
-        if (checkProofIdx) {
-          final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
-          if (idxEntry != null) {
-            final proofEval = PositionEval(
-              result: GameResult.whiteWins,
-              dtw: idxEntry.dtw,
-            );
-            bool shouldUpdate = false;
-            if (assigned == null ||
-                (assigned.result == GameResult.whiteWins &&
-                    (assigned.dtw == null || proofEval.dtw! < assigned.dtw!))) {
-              assigned = proofEval;
-              shouldUpdate = true;
-            }
-            if (computed == null ||
-                (computed.result == GameResult.whiteWins &&
-                    (computed.dtw == null || proofEval.dtw! < computed.dtw!))) {
-              computed = proofEval;
-              shouldUpdate = true;
-            }
-            if (shouldUpdate) {
-              dbService.upsertNode(bfen, assigned, computed);
-            }
-          }
-        }
+        final assigned = DatabaseService.evalFromRow(row, 'assigned');
+        final computed = DatabaseService.evalFromRow(row, 'computed');
         addFullVertex(bfen, assigned, computed);
       } else {
-        if (checkProofIdx) {
-          final idxEntry = WatkinsProofIndexManager.instance.lookupBfen(bfen);
-          if (idxEntry != null) {
-            final proofEval = PositionEval(
-              result: GameResult.whiteWins,
-              dtw: idxEntry.dtw,
-            );
-            final vertex = addFullVertex(bfen, proofEval, proofEval);
-            vertex.queriedFromDb = true;
-            dbService.upsertNode(bfen, proofEval, proofEval);
-            continue;
-          }
-        }
         final vertex = addVertex(bfen);
         vertex.queriedFromDb = true;
       }

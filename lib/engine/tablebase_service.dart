@@ -74,6 +74,9 @@ class TablebaseService {
   bool get isLocalEnabled =>
       _localEnabled ?? (_isCustomClient ? false : Config.enableLocalTablebase);
 
+  /// Whether either local or remote tablebase probing is enabled.
+  bool get isAnyEnabled => isLocalEnabled || isEnabled;
+
   /// Default singleton instance.
   static final TablebaseService instance = TablebaseService();
 
@@ -281,7 +284,7 @@ class TablebaseService {
   Future<List<EngineEvaluation>?> probeLocal(
     DatasetVariant variant,
     String fen, {
-    Duration timeout = const Duration(milliseconds: 500),
+    Duration timeout = const Duration(milliseconds: 2000),
   }) async {
     if (!isLocalEnabled || !isSupported(variant, fen)) return null;
 
@@ -347,7 +350,7 @@ class TablebaseService {
     DatasetVariant variant,
     String fen, {
     Duration timeout = const Duration(seconds: 3),
-    Duration localTimeout = const Duration(milliseconds: 500),
+    Duration localTimeout = const Duration(milliseconds: 2000),
   }) async {
     if (!isSupported(variant, fen)) return null;
     if (_enabled == false && _localEnabled != true) return null;

@@ -111,6 +111,8 @@ class TablebaseServerLauncherIo implements TablebaseServerLauncher {
     final cwd = Directory.current.path;
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     final candidates = <String>[
+      r'G:\My Drive\Chess\tablebases\atomic',
+      r'G:\My Drive\Chess\tablebases',
       '$cwd\\data\\tablebases\\atomic',
       '$cwd/data/tablebases/atomic',
     ];
@@ -137,6 +139,8 @@ class TablebaseServerLauncherIo implements TablebaseServerLauncher {
     final cwd = Directory.current.path;
     final exeDir = File(Platform.resolvedExecutable).parent.path;
     final candidates = <String>[
+      r'G:\My Drive\Chess\tablebases\antichess',
+      r'G:\My Drive\Chess\tablebases',
       '$cwd\\data\\tablebases\\antichess',
       '$cwd/data/tablebases/antichess',
     ];

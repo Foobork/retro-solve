@@ -1245,6 +1245,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         setState(() {
           _enableTablebase = val;
           Config.enableRemoteTablebase = val;
+          Config.enableLocalTablebase = val;
         });
       }
     });
@@ -1795,6 +1796,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
         setState(() {
           _enableTablebase = !_enableTablebase;
           Config.enableRemoteTablebase = _enableTablebase;
+          Config.enableLocalTablebase = _enableTablebase;
           TablebaseStore.save(_enableTablebase);
         });
         break;

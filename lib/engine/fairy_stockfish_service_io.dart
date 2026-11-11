@@ -330,7 +330,7 @@ class FairyStockfishService implements EngineService {
     }
 
     List<EngineEvaluation>? tbFallbackEvals;
-    if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
+    if (TablebaseService.instance.isAnyEnabled && TablebaseService.isSupported(_variant, fen)) {
       final tbEvals = await TablebaseService.instance.probe(_variant, fen);
       if (tbEvals != null && tbEvals.isNotEmpty) {
         if (tbEvals.first.dtw != null || !tbEvals.first.isPseudoMate) {
@@ -626,7 +626,7 @@ class FairyStockfishService implements EngineService {
     }
 
     List<EngineEvaluation>? activeTbFallback;
-    if (TablebaseService.instance.isEnabled && TablebaseService.isSupported(_variant, fen)) {
+    if (TablebaseService.instance.isAnyEnabled && TablebaseService.isSupported(_variant, fen)) {
       final tbEvals = await TablebaseService.instance.probe(_variant, fen);
       if (tbEvals != null && tbEvals.isNotEmpty) {
         if (tbEvals.first.dtw != null || !tbEvals.first.isPseudoMate) {

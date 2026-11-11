@@ -1,6 +1,7 @@
 param(
-    [string]$RunId = "42747052884",
-    [string]$DestDir = "G:\My Drive\Chess\tablebases\atomic"
+    [string]$RunId = "42814860481",
+    [string]$DestDir = "G:\My Drive\Chess\tablebases\atomic",
+    [switch]$Force = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,7 +11,7 @@ if (-not (Test-Path $DestDir)) {
 }
 
 $tables = @(
-    "KQQvKQ", "KQQvKR", "KQQvKB",
+    "KQQvKQ", "KQQvKR", "KQQvKB", "KQQvKN",
     "KQRvKQ", "KQRvKR", "KQRvKB", "KQRvKN",
     "KQBvKQ", "KQBvKR", "KQBvKB", "KQBvKN",
     "KQNvKQ", "KQNvKR", "KQNvKB", "KQNvKN",
@@ -31,7 +32,7 @@ foreach ($t in $tables) {
     $idx++
     $destFile = Join-Path $DestDir "$t.atbd"
     
-    if (Test-Path $destFile) {
+    if (-not $Force -and (Test-Path $destFile)) {
         $size = (Get-Item $destFile).Length
         if ($size -eq 2147483680) {
             Write-Host "[$idx/$total] $t already exists and is valid (2,147,483,680 bytes). Skipping."

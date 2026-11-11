@@ -9,6 +9,5 @@
 - For pure Dart changes tested interactively, Hot Reload (`r`) and Hot Restart (`R`) along with passing `flutter analyze` and `flutter test` are sufficient for local commits.
 
 ## Git & Deployment
-- **Do not create any code commits (`git commit`) unless the user explicitly asks to or gives permission.**
+- **Git commits and pushes (`git commit`, `git push`) are permitted when changes are verified with passing tests and ready.**
 - **Git commit messages must be concise (single-line summary, avoid verbose multi-line descriptions).**
-- **Do not push commits to remote (`git push`) until the user has tested the changes and explicitly requested or approved pushing.**

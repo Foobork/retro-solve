@@ -1,7 +1,7 @@
 # Global Rules & Guidelines
 
 ## Verification & Build
-- **Always run `flutter analyze` and `flutter test` before creating any local git commit.**
+- **Run `flutter analyze` and `flutter test` before creating any local git commit only when Dart code (`lib/`, `test/`) or Flutter configuration has been modified.**
 - **Run `flutter build windows --debug` (or target platform build) only when:**
   - `pubspec.yaml` or `pubspec.lock` has been modified.
   - Native platform files (e.g. `windows/`) have been modified.

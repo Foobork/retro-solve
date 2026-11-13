@@ -13,37 +13,46 @@ jobs:
     name: Sync Artifacts to Google Drive
     runs-on: ubuntu-latest
     steps:
-      - name: Install rclone and GitHub CLI
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install rclone
         run: |
           sudo apt-get update
           sudo apt-get install -y rclone
 
       - name: Configure rclone
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           mkdir -p ~/.config/rclone
-          cat <<'EOF' > ~/.config/rclone/rclone.conf
+          # Write service account JSON to a file
+          echo "$GDRIVE_SA_KEY" > ~/.config/rclone/sa.json
+          cat <<EOF > ~/.config/rclone/rclone.conf
           [gdrive]
           type = drive
           scope = drive
-          service_account_credentials = ${{ secrets.GDRIVE_SA_KEY }}
-          root_folder_id = ${{ secrets.GDRIVE_FOLDER_ID }}
+          service_account_file = /home/runner/.config/rclone/sa.json
+          root_folder_id = $GDRIVE_FOLDER_ID
           EOF
 
       - name: Verify Google Drive Connection
         run: |
-          echo "Verifying connection and listing current files in target folder:"
-          rclone lsd gdrive: || true
-          rclone ls gdrive: || true
+          echo "Listing Google Drive contents in target folder:"
+          rclone lsd gdrive:
+          rclone ls gdrive:
 
       - name: Fetch Artifact List and Stream to Google Drive
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.inputs.run_id }}
         run: |
           mkdir -p ./tmp_download
           
           # Get list of artifact names starting with atomic-tb-
-          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts --paginate --jq '.artifacts[] | select(.name | startswith("atomic-tb-")) | .name')
+          ARTIFACTS=$(gh api repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts --paginate --jq '.artifacts[] | select(.name | startswith("atomic-tb-")) | .name')
           
           echo "Found $(echo "$ARTIFACTS" | wc -l) artifacts to transfer."
           
@@ -52,7 +61,7 @@ jobs:
             echo "Processing artifact: $art"
             
             # Download single artifact
-            gh run download ${RUN_ID} -n "$art" -D ./tmp_download
+            gh run download ${RUN_ID} --repo "${GH_REPO}" -n "$art" -D ./tmp_download
             
             # Find the downloaded .atbd file
             TB_FILE=$(find ./tmp_download -name "*.atbd" | head -n 1)
@@ -60,7 +69,7 @@ jobs:
             if [ -n "$TB_FILE" ]; then
               FILE_NAME=$(basename "$TB_FILE")
               echo "Uploading $FILE_NAME to Google Drive..."
-              # Copy with progress, checksum, and skip if already exists
+              # Copy with progress and skip existing
               rclone copy "$TB_FILE" gdrive: --update --verbose
               echo "Uploaded $FILE_NAME successfully!"
             else

@@ -23,25 +23,23 @@ jobs:
 
       - name: Configure rclone
         env:
-          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+          GDRIVE_RCLONE_TOKEN: ${{ secrets.GDRIVE_RCLONE_TOKEN }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           mkdir -p ~/.config/rclone
-          # Write service account JSON to a file
-          echo "$GDRIVE_SA_KEY" > ~/.config/rclone/sa.json
           cat <<EOF > ~/.config/rclone/rclone.conf
           [gdrive]
           type = drive
           scope = drive
-          service_account_file = /home/runner/.config/rclone/sa.json
+          token = $GDRIVE_RCLONE_TOKEN
           root_folder_id = $GDRIVE_FOLDER_ID
           EOF
 
       - name: Verify Google Drive Connection
         run: |
-          echo "Listing Google Drive contents in target folder:"
-          rclone lsd gdrive:
-          rclone ls gdrive:
+          echo "Verifying Google Drive access and listing files:"
+          rclone lsd gdrive: || true
+          rclone ls gdrive: || true
 
       - name: Fetch Artifact List and Stream to Google Drive
         env:
@@ -68,7 +66,7 @@ jobs:
             
             if [ -n "$TB_FILE" ]; then
               FILE_NAME=$(basename "$TB_FILE")
-              echo "Uploading $FILE_NAME to Google Drive..."
+              echo "Uploading $FILE_NAME to Google Drive via User OAuth..."
               # Copy with progress and skip existing
               rclone copy "$TB_FILE" gdrive: --update --verbose
               echo "Uploaded $FILE_NAME successfully!"

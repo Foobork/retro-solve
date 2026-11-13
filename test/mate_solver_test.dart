@@ -336,7 +336,8 @@ void main() {
       final solverFuture = state.startMateSolver(maxDepth: 1);
       expect(state.isMateSolving, isTrue);
       // The starting position was after White played 2. Nf3!
-      expect(state.mateSolverTitle, equals('Finding mate for black after 2. Nf3'));
+      // Since the evaluation favors White (+1.00), search searches for mate for White even though it is Black to move.
+      expect(state.mateSolverTitle, equals('Finding mate for white after 2. Nf3'));
 
       for (int i = 0; i < 20; i++) {
         await tester.pump(const Duration(milliseconds: 100));
@@ -381,6 +382,51 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(state.mateSolverPlyProgress, isEmpty);
+    });
+
+    testWidgets('Mate solver determines attacking color from evaluation: favors White or Black regardless of turn', (WidgetTester tester) async {
+      final engineService = _MockMateEngineService(responses: {});
+
+      await tester.pumpWidget(
+        RetroSolve(
+          initialVariant: DatasetVariant.standard,
+          engineService: engineService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<HomePageState>(find.byType(HomePage));
+
+      // 1. Text field eval favoring White with Black to move
+      state.controller.load('rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2');
+      await tester.pumpAndSettle();
+      state.evalController.text = '+2.50';
+      expect(state.determineAttackingColor(), equals(PlayerColor.white));
+
+      // 2. Text field eval favoring Black with White to move
+      state.controller.load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+      await tester.pumpAndSettle();
+      state.evalController.text = '-3.00';
+      expect(state.determineAttackingColor(), equals(PlayerColor.black));
+
+      // 3. Mate score favoring Black with White to move
+      state.evalController.text = '-M2';
+      expect(state.determineAttackingColor(), equals(PlayerColor.black));
+
+      // 4. Mate score favoring White with Black to move
+      state.controller.load('rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2');
+      await tester.pumpAndSettle();
+      state.evalController.text = '+M3';
+      expect(state.determineAttackingColor(), equals(PlayerColor.white));
+
+      // 5. Zero / neutral eval falls back to turn
+      state.evalController.text = '0.00';
+      expect(state.determineAttackingColor(), equals(PlayerColor.black));
+
+      state.controller.load('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+      await tester.pumpAndSettle();
+      state.evalController.text = '0.00';
+      expect(state.determineAttackingColor(), equals(PlayerColor.white));
     });
   });
 }

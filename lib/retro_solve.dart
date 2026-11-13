@@ -134,6 +134,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   void stopMateSolver() => _stopMateSolver();
 
   @visibleForTesting
+  PlayerColor determineAttackingColor() => _determineAttackingColor();
+
+  @visibleForTesting
   Future<void> solveForTesting() => _solve();
 
   @visibleForTesting
@@ -2334,6 +2337,80 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return 'Finding mate for $targetColor after $moveStr';
   }
 
+  PositionEval? _getCurrentEval() {
+    // 1. Check text field evaluation if entered or populated
+    if (_evalController.text.trim().isNotEmpty) {
+      final parsed = _parsePositionEval(_evalController.text);
+      if (parsed != null) return parsed;
+    }
+
+    // 2. Check graph vertex evaluation for the current position
+    final bfen = _controller.game.bfen;
+    final graphEval = graph.v[bfen]?.effectiveEval ??
+        graph.v[bfen]?.assigned ??
+        graph.v[bfen]?.computed;
+    if (graphEval != null) return graphEval;
+
+    // 3. Check current engine evaluations for the current position
+    final currentFen = _controller.game.fen;
+    final currentKey = EngineCache.canonicalKey(_variant, currentFen);
+    final currentEvals = _engineEvals
+        .where((e) =>
+            e.fen != null &&
+            EngineCache.canonicalKey(_variant, e.fen!) == currentKey &&
+            (e.candidateMove == null ||
+                EngineCache.isMoveColorConsistentWithFen(currentFen, e.candidateMove!)))
+        .toList();
+    if (currentEvals.isNotEmpty) {
+      final bestEval = currentEvals.first;
+      final whiteToMove = _controller.game.turn == white;
+      final posEval = _engineEvalToPositionEval(bestEval, whiteToMove, variant: _variant);
+      if (posEval != null) return posEval;
+    }
+
+    // 4. Check cached engine evaluations
+    final isWhiteToMove = _controller.game.turn == white;
+    final cached = widget.engineService.getCachedEvaluation(currentFen, minDepth: 0);
+    if (cached != null && cached.isNotEmpty) {
+      final validCached = cached
+          .where((e) =>
+              (e.centipawns != null || e.mate != null) &&
+              (e.candidateMove == null ||
+                  EngineCache.isMoveColorConsistentWithFen(currentFen, e.candidateMove!)))
+          .map((e) => e.copyWithFen(currentFen).asWhitePerspective(whiteToMove: isWhiteToMove))
+          .toList();
+      if (validCached.isNotEmpty) {
+        final posEval =
+            _engineEvalToPositionEval(validCached.first, isWhiteToMove, variant: _variant);
+        if (posEval != null) return posEval;
+      }
+    }
+
+    // 5. Check terminal game over evaluation
+    if (_controller.game.gameOver) {
+      final term = _controller.game.terminalEvaluation;
+      if (term != null) {
+        return PositionEval.fromLegacyScore(term);
+      }
+    }
+
+    return null;
+  }
+
+  PlayerColor _determineAttackingColor() {
+    final eval = _getCurrentEval();
+    if (eval != null) {
+      if (eval.result == GameResult.whiteWins) return white;
+      if (eval.result == GameResult.blackWins) return black;
+      if (eval.cp != null) {
+        if (eval.cp! > 0) return white;
+        if (eval.cp! < 0) return black;
+      }
+    }
+    // Default to current turn if evaluation is equal (0) or unavailable
+    return _controller.game.turn;
+  }
+
   Future<bool> _startMateSolver({int maxDepth = 20, PlayerColor? attackingColor}) async {
     if (!_engineAvailable ||
         _isMateSolving ||
@@ -2344,7 +2421,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       return false;
     }
 
-    attackingColor ??= _controller.game.turn;
+    attackingColor ??= _determineAttackingColor();
     final targetColor = attackingColor == white ? 'white' : 'black';
 
     final startDesc = _formatStartPositionDescription(attackingColor);

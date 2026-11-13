@@ -1,0 +1,74 @@
+name: Sync Tablebase Artifacts to Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'GitHub Actions Run ID whose artifacts to sync'
+        required: true
+        default: '42963430545'
+
+jobs:
+  sync:
+    name: Sync Artifacts to Google Drive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install rclone and GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rclone
+
+      - name: Configure rclone
+        run: |
+          mkdir -p ~/.config/rclone
+          cat <<'EOF' > ~/.config/rclone/rclone.conf
+          [gdrive]
+          type = drive
+          scope = drive
+          service_account_credentials = ${{ secrets.GDRIVE_SA_KEY }}
+          root_folder_id = ${{ secrets.GDRIVE_FOLDER_ID }}
+          EOF
+
+      - name: Verify Google Drive Connection
+        run: |
+          echo "Verifying connection and listing current files in target folder:"
+          rclone lsd gdrive: || true
+          rclone ls gdrive: || true
+
+      - name: Fetch Artifact List and Stream to Google Drive
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.inputs.run_id }}
+        run: |
+          mkdir -p ./tmp_download
+          
+          # Get list of artifact names starting with atomic-tb-
+          ARTIFACTS=$(gh api repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts --paginate --jq '.artifacts[] | select(.name | startswith("atomic-tb-")) | .name')
+          
+          echo "Found $(echo "$ARTIFACTS" | wc -l) artifacts to transfer."
+          
+          for art in $ARTIFACTS; do
+            echo "=========================================="
+            echo "Processing artifact: $art"
+            
+            # Download single artifact
+            gh run download ${RUN_ID} -n "$art" -D ./tmp_download
+            
+            # Find the downloaded .atbd file
+            TB_FILE=$(find ./tmp_download -name "*.atbd" | head -n 1)
+            
+            if [ -n "$TB_FILE" ]; then
+              FILE_NAME=$(basename "$TB_FILE")
+              echo "Uploading $FILE_NAME to Google Drive..."
+              # Copy with progress, checksum, and skip if already exists
+              rclone copy "$TB_FILE" gdrive: --update --verbose
+              echo "Uploaded $FILE_NAME successfully!"
+            else
+              echo "Warning: No .atbd file found in $art"
+            fi
+            
+            # Free up runner disk immediately
+            rm -rf ./tmp_download/*
+          done
+          
+          echo "All artifacts synced successfully!"

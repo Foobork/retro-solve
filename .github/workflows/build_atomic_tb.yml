@@ -112,14 +112,14 @@ jobs:
                 --arg rt "$REFRESH_TOKEN" \
                 '{access_token: $at, token_type: "Bearer", refresh_token: $rt, expiry: "2030-01-01T00:00:00Z"}')
               cat <<EOF > ~/.config/rclone/rclone.conf
-[gdrive]
-type = drive
-scope = drive
-client_id = ${CLIENT_ID}
-client_secret = ${CLIENT_SECRET}
-token = ${TOKEN_JSON}
-root_folder_id = ${FOLDER_ID}
-EOF
+              [gdrive]
+              type = drive
+              scope = drive
+              client_id = ${CLIENT_ID}
+              client_secret = ${CLIENT_SECRET}
+              token = ${TOKEN_JSON}
+              root_folder_id = ${FOLDER_ID}
+              EOF
               echo "rclone configured successfully for Google Drive."
             else
               echo "WARNING: Could not refresh Google Drive token."

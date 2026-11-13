@@ -23,12 +23,12 @@ jobs:
 
       - name: Configure rclone
         env:
-          GDRIVE_RCLONE_TOKEN: ${{ secrets.GDRIVE_RCLONE_TOKEN }}
+          GDRIVE_RCLONE_TOKEN_B64: ${{ secrets.GDRIVE_RCLONE_TOKEN_B64 }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           mkdir -p ~/.config/rclone
-          # Write rclone config safely with single-line token
-          CLEAN_TOKEN=$(echo "$GDRIVE_RCLONE_TOKEN" | tr -d '\r\n')
+          # Decode token cleanly from base64
+          CLEAN_TOKEN=$(echo "$GDRIVE_RCLONE_TOKEN_B64" | base64 -d)
           cat <<EOF > ~/.config/rclone/rclone.conf
           [gdrive]
           type = drive

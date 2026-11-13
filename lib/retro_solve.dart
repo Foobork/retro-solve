@@ -3504,7 +3504,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     } else {
       final depth = validEngineEvals.first.depth;
       final evaluatedMoveSans = _getEvaluatedMoveSans();
-      final rows = validEngineEvals.map((e) {
+      final rows = validEngineEvals.take(5).map((e) {
         String san = _uciToSan(e.candidateMove);
         String evalStr = 'unknown';
         if (e.mate != null) {

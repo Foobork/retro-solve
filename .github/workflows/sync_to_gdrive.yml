@@ -45,7 +45,8 @@ jobs:
             exit 1
           fi
           
-          TOKEN_JSON=$(jq -n \
+          # token must be a single compact line without newlines
+          TOKEN_JSON=$(jq -c -n \
             --arg at "$ACCESS_TOKEN" \
             --arg rt "$REFRESH_TOKEN" \
             '{access_token: $at, token_type: "Bearer", refresh_token: $rt, expiry: "2030-01-01T00:00:00Z"}')

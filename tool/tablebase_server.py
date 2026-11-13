@@ -71,19 +71,26 @@ class AtomicAtbdProber:
     """Direct lookup prober for 3-, 4-, and 5-piece Atomic Chess DTW tablebases (.atbd)."""
 
     def __init__(self, tablebase_dir: Union[str, List[str]] = "data/tablebases/atomic"):
-        if isinstance(tablebase_dir, str):
-            dirs = [tablebase_dir]
-        else:
-            dirs = list(tablebase_dir)
+        dirs = []
+        if isinstance(tablebase_dir, list):
+            dirs.extend(tablebase_dir)
+        elif isinstance(tablebase_dir, str):
+            dirs.append(tablebase_dir)
 
-        # Also automatically search G: drive tablebases if available
-        g_drive_dirs = [
+        # Standard search paths for tablebases
+        standard_dirs = [
+            "data/tablebases/atomic",
+            "data/tablebases",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "tablebases", "atomic"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "tablebases"),
             r"G:\My Drive\Chess\tablebases\atomic",
             r"G:\My Drive\Chess\tablebases",
         ]
-        for g_dir in g_drive_dirs:
-            if os.path.exists(g_dir) and g_dir not in dirs:
-                dirs.append(g_dir)
+        for s_dir in standard_dirs:
+            if s_dir and os.path.exists(s_dir):
+                norm = os.path.normpath(os.path.abspath(s_dir))
+                if norm not in dirs:
+                    dirs.append(norm)
 
         self.tablebase_dirs = dirs
         self._files: Dict[str, Any] = {}
@@ -280,11 +287,15 @@ class AtomicTablebaseEngine:
         self.tablebase_dir = tablebase_dir
         self.atbd = AtomicAtbdProber(tablebase_dir)
         self.tb = chess.syzygy.Tablebase(VariantBoard=chess.variant.AtomicBoard)
-        if os.path.exists(tablebase_dir):
-            count = self.tb.add_directory(tablebase_dir)
-            logger.info("Loaded %d Atomic Syzygy tablebase files from %s", count, tablebase_dir)
-        else:
-            logger.warning("Atomic tablebase directory not found: %s", tablebase_dir)
+        total_syzygy = 0
+        for d in self.atbd.tablebase_dirs:
+            if os.path.exists(d):
+                try:
+                    count = self.tb.add_directory(d)
+                    total_syzygy += count
+                except Exception as e:
+                    logger.warning("Failed to add syzygy dir %s: %s", d, e)
+        logger.info("Loaded %d Atomic Syzygy tablebase files across %d dirs (%s)", total_syzygy, len(self.atbd.tablebase_dirs), self.atbd.tablebase_dirs)
 
     def close(self):
         self.atbd.close()
@@ -518,9 +529,23 @@ class AntichessTablebaseEngine:
                 self.dll = None
                 return
 
-            abs_tb_dir = os.path.abspath(tablebase_dir).encode("utf-8")
-            add_res = self.dll.antichess_tb_add_path(abs_tb_dir, len(abs_tb_dir))
-            logger.info("Loaded Antichess tablebases from %s (res: %d)", tablebase_dir, add_res)
+            standard_antichess_dirs = [
+                tablebase_dir,
+                "data/tablebases/antichess",
+                "data/tablebases",
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "tablebases", "antichess"),
+                r"G:\My Drive\Chess\tablebases\antichess",
+                r"G:\My Drive\Chess\tablebases",
+            ]
+            added_dirs = set()
+            for adir in standard_antichess_dirs:
+                if adir and os.path.exists(adir):
+                    norm = os.path.normpath(os.path.abspath(adir))
+                    if norm not in added_dirs:
+                        added_dirs.add(norm)
+                        abs_tb_dir = norm.encode("utf-8")
+                        add_res = self.dll.antichess_tb_add_path(abs_tb_dir, len(abs_tb_dir))
+                        logger.info("Loaded Antichess tablebases from %s (res: %d)", norm, add_res)
         except Exception as e:
             logger.exception("Failed to load Antichess tablebase library: %s", e)
             self.dll = None

@@ -16,34 +16,53 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install rclone
+      - name: Install rclone and jq
         run: |
           sudo apt-get update
-          sudo apt-get install -y rclone
+          sudo apt-get install -y rclone jq curl
 
-      - name: Configure rclone
+      - name: Configure rclone via Fresh OAuth Token
         env:
-          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
-          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
-          GDRIVE_RCLONE_TOKEN_B64: ${{ secrets.GDRIVE_RCLONE_TOKEN_B64 }}
-          GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+          CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           mkdir -p ~/.config/rclone
-          # Decode token cleanly from base64
-          CLEAN_TOKEN=$(echo "$GDRIVE_RCLONE_TOKEN_B64" | base64 -d)
+          
+          # Mint a fresh access token directly from Google OAuth endpoint
+          RESPONSE=$(curl -s -X POST https://oauth2.googleapis.com/token \
+            -d "client_id=${CLIENT_ID}" \
+            -d "client_secret=${CLIENT_SECRET}" \
+            -d "refresh_token=${REFRESH_TOKEN}" \
+            -d "grant_type=refresh_token")
+            
+          ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+          
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "Failed to obtain access token:"
+            echo "$RESPONSE"
+            exit 1
+          fi
+          
+          TOKEN_JSON=$(jq -n \
+            --arg at "$ACCESS_TOKEN" \
+            --arg rt "$REFRESH_TOKEN" \
+            '{access_token: $at, token_type: "Bearer", refresh_token: $rt, expiry: "2030-01-01T00:00:00Z"}')
+          
           cat <<EOF > ~/.config/rclone/rclone.conf
           [gdrive]
           type = drive
           scope = drive
-          client_id = $GDRIVE_CLIENT_ID
-          client_secret = $GDRIVE_CLIENT_SECRET
-          token = $CLEAN_TOKEN
-          root_folder_id = $GDRIVE_FOLDER_ID
+          client_id = ${CLIENT_ID}
+          client_secret = ${CLIENT_SECRET}
+          token = ${TOKEN_JSON}
+          root_folder_id = ${FOLDER_ID}
           EOF
 
       - name: Verify Google Drive Connection
         run: |
-          echo "Verifying Google Drive access and listing files:"
+          echo "Verifying Google Drive access and listing files in target folder:"
           rclone lsd gdrive:
           rclone ls gdrive:
 

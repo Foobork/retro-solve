@@ -346,7 +346,7 @@ fn probe_promoted_state(parent_tables: &HashMap<String, Vec<i8>>, pos: &Atomic) 
     DRAW
 }
 
-pub fn solve_table(name: &str) {
+pub fn solve_table(name: &str, max_hours: f64, checkpoint_dir: PathBuf, resume: bool) {
     let config = match parse_config(name) {
         Some(c) => c,
         None => {
@@ -357,7 +357,7 @@ pub fn solve_table(name: &str) {
 
     match config {
         EndgameConfig::ThreeVsOne { .. } | EndgameConfig::TwoVsTwo { .. } => solve_four_piece(name, config),
-        EndgameConfig::ThreeVsTwo { w_role1, w_role2, b_role } => solve_three_vs_two(name, w_role1, w_role2, b_role),
+        EndgameConfig::ThreeVsTwo { w_role1, w_role2, b_role } => solve_three_vs_two(name, w_role1, w_role2, b_role, max_hours, checkpoint_dir, resume),
     }
 }
 
@@ -921,7 +921,160 @@ pub fn solve_four_piece(name: &str, config: EndgameConfig) {
     println!("Saved {} ({} bytes)", out_path.display(), header.len() + dtw.len());
 }
 
-pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role) {
+const CHECKPOINT_MAGIC: &[u8; 4] = b"ATBC";
+const CHECKPOINT_VERSION: u32 = 1;
+
+fn save_checkpoint(
+    name: &str,
+    iteration: u32,
+    total_wins: usize,
+    total_losses: usize,
+    total_valid: u32,
+    unresolved: &[u32],
+    dtw: &[AtomicI8],
+    checkpoint_dir: &PathBuf,
+) {
+    let t0 = Instant::now();
+    let cp_path = checkpoint_dir.join(format!("{}.checkpoint.bin", name));
+    let tmp_path = checkpoint_dir.join(format!("{}.checkpoint.tmp", name));
+
+    println!("Saving checkpoint to {:?}...", cp_path);
+    let mut file = match File::create(&tmp_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to create checkpoint file {:?}: {}", tmp_path, e);
+            return;
+        }
+    };
+
+    let mut header = [0u8; 64];
+    header[0..4].copy_from_slice(CHECKPOINT_MAGIC);
+    header[4..8].copy_from_slice(&CHECKPOINT_VERSION.to_le_bytes());
+    header[8..12].copy_from_slice(&iteration.to_le_bytes());
+    header[12..20].copy_from_slice(&(total_wins as u64).to_le_bytes());
+    header[20..28].copy_from_slice(&(total_losses as u64).to_le_bytes());
+    header[28..36].copy_from_slice(&(total_valid as u64).to_le_bytes());
+    header[36..44].copy_from_slice(&(unresolved.len() as u64).to_le_bytes());
+
+    if let Err(e) = file.write_all(&header) {
+        eprintln!("Failed to write checkpoint header: {}", e);
+        return;
+    }
+
+    let unresolved_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(unresolved.as_ptr() as *const u8, unresolved.len() * 4)
+    };
+    if let Err(e) = file.write_all(unresolved_bytes) {
+        eprintln!("Failed to write unresolved states: {}", e);
+        return;
+    }
+
+    let dtw_bytes: &[u8] = unsafe {
+        std::slice::from_raw_parts(dtw.as_ptr() as *const u8, dtw.len())
+    };
+    if let Err(e) = file.write_all(dtw_bytes) {
+        eprintln!("Failed to write dtw buffer: {}", e);
+        return;
+    }
+
+    if let Err(e) = file.flush() {
+        eprintln!("Failed to flush checkpoint: {}", e);
+        return;
+    }
+    drop(file);
+
+    if let Err(e) = fs::rename(&tmp_path, &cp_path) {
+        eprintln!("Failed to rename checkpoint: {}", e);
+        return;
+    }
+
+    println!("Checkpoint saved in {:?} (iteration {}, {} unresolved)", t0.elapsed(), iteration, unresolved.len());
+}
+
+fn load_checkpoint(
+    name: &str,
+    checkpoint_dir: &PathBuf,
+    expected_total_states: usize,
+) -> Option<(u32, usize, usize, u32, Vec<u32>, Vec<i8>)> {
+    let cp_path = checkpoint_dir.join(format!("{}.checkpoint.bin", name));
+    if !cp_path.exists() {
+        return None;
+    }
+
+    println!("Loading checkpoint from {:?}...", cp_path);
+    let t0 = Instant::now();
+    let mut file = match File::open(&cp_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to open checkpoint {:?}: {}", cp_path, e);
+            return None;
+        }
+    };
+
+    let mut header = [0u8; 64];
+    if let Err(e) = file.read_exact(&mut header) {
+        eprintln!("Failed to read checkpoint header: {}", e);
+        return None;
+    }
+
+    if &header[0..4] != CHECKPOINT_MAGIC {
+        eprintln!("Invalid checkpoint magic bytes: {:?}", &header[0..4]);
+        return None;
+    }
+
+    let version = u32::from_le_bytes(header[4..8].try_into().unwrap());
+    if version != CHECKPOINT_VERSION {
+        eprintln!("Unsupported checkpoint version: {}", version);
+        return None;
+    }
+
+    let iteration = u32::from_le_bytes(header[8..12].try_into().unwrap());
+    let total_wins = u64::from_le_bytes(header[12..20].try_into().unwrap()) as usize;
+    let total_losses = u64::from_le_bytes(header[20..28].try_into().unwrap()) as usize;
+    let total_valid = u64::from_le_bytes(header[28..36].try_into().unwrap()) as u32;
+    let num_unresolved = u64::from_le_bytes(header[36..44].try_into().unwrap()) as usize;
+
+    println!("Checkpoint header: iteration={}, wins={}, losses={}, valid={}, unresolved={}",
+        iteration, total_wins, total_losses, total_valid, num_unresolved);
+
+    let mut unresolved: Vec<u32> = vec![0u32; num_unresolved];
+    let unresolved_bytes: &mut [u8] = unsafe {
+        std::slice::from_raw_parts_mut(unresolved.as_mut_ptr() as *mut u8, num_unresolved * 4)
+    };
+    if let Err(e) = file.read_exact(unresolved_bytes) {
+        eprintln!("Failed to read unresolved states: {}", e);
+        return None;
+    }
+
+    let mut dtw: Vec<i8> = vec![0i8; expected_total_states];
+    let dtw_bytes: &mut [u8] = unsafe {
+        std::slice::from_raw_parts_mut(dtw.as_mut_ptr() as *mut u8, expected_total_states)
+    };
+    if let Err(e) = file.read_exact(dtw_bytes) {
+        eprintln!("Failed to read dtw buffer: {}", e);
+        return None;
+    }
+
+    println!("Checkpoint loaded in {:?}! Resuming from iteration {}...", t0.elapsed(), iteration + 1);
+    Some((iteration, total_wins, total_losses, total_valid, unresolved, dtw))
+}
+
+fn remove_checkpoint(name: &str, checkpoint_dir: &PathBuf) {
+    let cp_path = checkpoint_dir.join(format!("{}.checkpoint.bin", name));
+    if cp_path.exists() {
+        let _ = fs::remove_file(cp_path);
+    }
+}
+
+pub fn solve_three_vs_two(
+    name: &str,
+    w1_role: Role,
+    w2_role: Role,
+    b_role: Role,
+    max_hours: f64,
+    checkpoint_dir: PathBuf,
+    resume: bool,
+) {
     println!("==================================================");
     println!("Generating Atomic DTW Tablebase for {} (5-piece 3v2)...", name);
     let t0 = Instant::now();
@@ -953,206 +1106,229 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
         None
     };
 
-    println!("Allocating 5-piece direct-indexed array (2.14 GB)...");
-    let dtw: Vec<i8> = vec![ILLEGAL; TOTAL_STATES_5P];
-    let dtw_atomic: &[AtomicI8] = unsafe {
-        std::slice::from_raw_parts(dtw.as_ptr() as *const AtomicI8, TOTAL_STATES_5P)
-    };
+    let (iteration_start, mut total_wins, mut total_losses, total_valid_count, mut unresolved, dtw) =
+        if resume {
+            if let Some((iter, wins, losses, valid, unres, loaded_dtw)) =
+                load_checkpoint(name, &checkpoint_dir, TOTAL_STATES_5P)
+            {
+                (iter + 1, wins, losses, valid, unres, loaded_dtw)
+            } else {
+                (1, 0, 0, 0, Vec::new(), Vec::new())
+            }
+        } else {
+            (1, 0, 0, 0, Vec::new(), Vec::new())
+        };
 
-    println!("Pass 1: Enumerating legal states and identifying immediate wins (128 chunks)...");
-    let t_pass1 = Instant::now();
-    let total_valid = AtomicU32::new(0);
-    let total_imm_wins = AtomicU32::new(0);
-    let total_term_losses = AtomicU32::new(0);
-    let done_chunks = AtomicUsize::new(0);
+    let (dtw, total_valid_count) = if unresolved.is_empty() && iteration_start == 1 {
+        println!("Allocating 5-piece direct-indexed array (2.14 GB)...");
+        let dtw: Vec<i8> = vec![ILLEGAL; TOTAL_STATES_5P];
+        let dtw_atomic: &[AtomicI8] = unsafe {
+            std::slice::from_raw_parts(dtw.as_ptr() as *const AtomicI8, TOTAL_STATES_5P)
+        };
 
-    let chunk_unresolved_lists: Vec<Vec<u32>> = (0..NUM_CHUNKS_5P)
-        .into_par_iter()
-        .map(|chunk_id| {
-            let turn = if chunk_id < 64 { Color::White } else { Color::Black };
-            let wk_idx = chunk_id % 64;
-            let wk = Square::new(wk_idx as u32);
+        println!("Pass 1: Enumerating legal states and identifying immediate wins (128 chunks)...");
+        let t_pass1 = Instant::now();
+        let total_valid = AtomicU32::new(0);
+        let total_imm_wins = AtomicU32::new(0);
+        let total_term_losses = AtomicU32::new(0);
+        let done_chunks = AtomicUsize::new(0);
 
-            let mut chunk_valid = 0u32;
-            let mut chunk_wins = 0u32;
-            let mut chunk_losses = 0u32;
-            let mut chunk_unresolved = Vec::new();
+        let chunk_unresolved_lists: Vec<Vec<u32>> = (0..NUM_CHUNKS_5P)
+            .into_par_iter()
+            .map(|chunk_id| {
+                let turn = if chunk_id < 64 { Color::White } else { Color::Black };
+                let wk_idx = chunk_id % 64;
+                let wk = Square::new(wk_idx as u32);
 
-            for bk_idx in 0..64 {
-                if wk_idx == bk_idx { continue; }
-                let bk = Square::new(bk_idx as u32);
+                let mut chunk_valid = 0u32;
+                let mut chunk_wins = 0u32;
+                let mut chunk_losses = 0u32;
+                let mut chunk_unresolved = Vec::new();
 
-                for w1_idx in 0..64 {
-                    if w1_idx == wk_idx || w1_idx == bk_idx { continue; }
-                    let w1 = Square::new(w1_idx as u32);
+                for bk_idx in 0..64 {
+                    if wk_idx == bk_idx { continue; }
+                    let bk = Square::new(bk_idx as u32);
 
-                    for w2_idx in 0..64 {
-                        if w2_idx == wk_idx || w2_idx == bk_idx || w2_idx == w1_idx { continue; }
-                        if identical_w_roles && w1_idx > w2_idx { continue; }
-                        let w2 = Square::new(w2_idx as u32);
+                    for w1_idx in 0..64 {
+                        if w1_idx == wk_idx || w1_idx == bk_idx { continue; }
+                        let w1 = Square::new(w1_idx as u32);
 
-                        for b1_idx in 0..64 {
-                            if b1_idx == wk_idx || b1_idx == bk_idx || b1_idx == w1_idx || b1_idx == w2_idx { continue; }
-                            let b1 = Square::new(b1_idx as u32);
+                        for w2_idx in 0..64 {
+                            if w2_idx == wk_idx || w2_idx == bk_idx || w2_idx == w1_idx { continue; }
+                            if identical_w_roles && w1_idx > w2_idx { continue; }
+                            let w2 = Square::new(w2_idx as u32);
 
-                            if w1_role == Role::Pawn && (w1.rank() == Rank::First || w1.rank() == Rank::Eighth) { continue; }
-                            if w2_role == Role::Pawn && (w2.rank() == Rank::First || w2.rank() == Rank::Eighth) { continue; }
-                            if b_role == Role::Pawn && (b1.rank() == Rank::First || b1.rank() == Rank::Eighth) { continue; }
+                            for b1_idx in 0..64 {
+                                if b1_idx == wk_idx || b1_idx == bk_idx || b1_idx == w1_idx || b1_idx == w2_idx { continue; }
+                                let b1 = Square::new(b1_idx as u32);
 
-                            let mut board = Board::empty();
-                            board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
-                            board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
-                            board.set_piece_at(w1, Piece { color: Color::White, role: w1_role });
-                            board.set_piece_at(w2, Piece { color: Color::White, role: w2_role });
-                            board.set_piece_at(b1, Piece { color: Color::Black, role: b_role });
+                                if w1_role == Role::Pawn && (w1.rank() == Rank::First || w1.rank() == Rank::Eighth) { continue; }
+                                if w2_role == Role::Pawn && (w2.rank() == Rank::First || w2.rank() == Rank::Eighth) { continue; }
+                                if b_role == Role::Pawn && (b1.rank() == Rank::First || b1.rank() == Rank::Eighth) { continue; }
 
-                            let mut setup = Setup::empty();
-                            setup.board = board;
-                            setup.turn = turn;
+                                let mut board = Board::empty();
+                                board.set_piece_at(wk, Piece { color: Color::White, role: Role::King });
+                                board.set_piece_at(bk, Piece { color: Color::Black, role: Role::King });
+                                board.set_piece_at(w1, Piece { color: Color::White, role: w1_role });
+                                board.set_piece_at(w2, Piece { color: Color::White, role: w2_role });
+                                board.set_piece_at(b1, Piece { color: Color::Black, role: b_role });
 
-                            let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
-                                Ok(p) => p,
-                                Err(_) => continue,
-                            };
+                                let mut setup = Setup::empty();
+                                setup.board = board;
+                                setup.turn = turn;
 
-                            let local_idx = (bk_idx << 18) | (w1_idx << 12) | (w2_idx << 6) | b1_idx;
-                            let global_idx = (chunk_id << 24) | local_idx;
+                                let pos = match Atomic::from_setup(setup, CastlingMode::Standard) {
+                                    Ok(p) => p,
+                                    Err(_) => continue,
+                                };
 
-                            let mirror_global_idx = if identical_w_roles {
-                                let mir_local = (bk_idx << 18) | (w2_idx << 12) | (w1_idx << 6) | b1_idx;
-                                Some((chunk_id << 24) | mir_local)
-                            } else {
-                                None
-                            };
+                                let local_idx = (bk_idx << 18) | (w1_idx << 12) | (w2_idx << 6) | b1_idx;
+                                let global_idx = (chunk_id << 24) | local_idx;
 
-                            let multiplier = if identical_w_roles && w1_idx != w2_idx { 2 } else { 1 };
-                            chunk_valid += multiplier;
+                                let mirror_global_idx = if identical_w_roles {
+                                    let mir_local = (bk_idx << 18) | (w2_idx << 12) | (w1_idx << 6) | b1_idx;
+                                    Some((chunk_id << 24) | mir_local)
+                                } else {
+                                    None
+                                };
 
-                            if pos.is_game_over() {
-                                if let Some(outcome) = pos.outcome() {
-                                    match outcome.winner() {
-                                        Some(winner) => {
-                                            if winner == turn {
-                                                dtw_atomic[global_idx].store(1, Ordering::Relaxed);
-                                                if let Some(mir) = mirror_global_idx {
-                                                    dtw_atomic[mir].store(1, Ordering::Relaxed);
+                                let multiplier = if identical_w_roles && w1_idx != w2_idx { 2 } else { 1 };
+                                chunk_valid += multiplier;
+
+                                if pos.is_game_over() {
+                                    if let Some(outcome) = pos.outcome() {
+                                        match outcome.winner() {
+                                            Some(winner) => {
+                                                if winner == turn {
+                                                    dtw_atomic[global_idx].store(1, Ordering::Relaxed);
+                                                    if let Some(mir) = mirror_global_idx {
+                                                        dtw_atomic[mir].store(1, Ordering::Relaxed);
+                                                    }
+                                                    chunk_wins += multiplier;
+                                                } else {
+                                                    dtw_atomic[global_idx].store(-1, Ordering::Relaxed);
+                                                    if let Some(mir) = mirror_global_idx {
+                                                        dtw_atomic[mir].store(-1, Ordering::Relaxed);
+                                                    }
+                                                    chunk_losses += multiplier;
                                                 }
-                                                chunk_wins += multiplier;
-                                            } else {
-                                                dtw_atomic[global_idx].store(-1, Ordering::Relaxed);
-                                                if let Some(mir) = mirror_global_idx {
-                                                    dtw_atomic[mir].store(-1, Ordering::Relaxed);
-                                                }
-                                                chunk_losses += multiplier;
                                             }
-                                        }
-                                        None => {
-                                            dtw_atomic[global_idx].store(DRAW, Ordering::Relaxed);
-                                            if let Some(mir) = mirror_global_idx {
-                                                dtw_atomic[mir].store(DRAW, Ordering::Relaxed);
+                                            None => {
+                                                dtw_atomic[global_idx].store(DRAW, Ordering::Relaxed);
+                                                if let Some(mir) = mirror_global_idx {
+                                                    dtw_atomic[mir].store(DRAW, Ordering::Relaxed);
+                                                }
                                             }
                                         }
                                     }
+                                    continue;
                                 }
-                                continue;
-                            }
 
-                            let legal_moves = pos.legal_moves();
-                            let opp_king = if turn == Color::White { bk } else { wk };
-                            let own_king = if turn == Color::White { wk } else { bk };
-                            let mut has_imm_win = false;
+                                let legal_moves = pos.legal_moves();
+                                let opp_king = if turn == Color::White { bk } else { wk };
+                                let own_king = if turn == Color::White { wk } else { bk };
+                                let mut has_imm_win = false;
 
-                            for m in &legal_moves {
-                                let to = m.to();
-                                if m.is_capture() {
-                                    if to.distance(opp_king) <= 1 && to.distance(own_king) > 1 {
-                                        has_imm_win = true;
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if !has_imm_win && own_king.distance(opp_king) > 1 {
                                 for m in &legal_moves {
-                                    if !m.is_capture() {
-                                        let to = m.to();
-                                        let df = (to.file() as i8 - opp_king.file() as i8).abs();
-                                        let dr = (to.rank() as i8 - opp_king.rank() as i8).abs();
-                                        let can_give_check = match m.role() {
-                                            Role::Rook => to.rank() == opp_king.rank() || to.file() == opp_king.file(),
-                                            Role::Bishop => df == dr,
-                                            Role::Queen => to.rank() == opp_king.rank() || to.file() == opp_king.file() || df == dr,
-                                            Role::Knight => (df == 1 && dr == 2) || (df == 2 && dr == 1),
-                                            Role::King => true, // Discovered check candidate
-                                            _ => false,
-                                        };
-                                        if can_give_check {
-                                            let mut next = pos.clone();
-                                            next.play_unchecked(m);
-                                            if next.is_game_over() && next.outcome().unwrap().winner() == Some(turn) {
-                                                has_imm_win = true;
-                                                break;
+                                    let to = m.to();
+                                    if m.is_capture() {
+                                        if to.distance(opp_king) <= 1 && to.distance(own_king) > 1 {
+                                            has_imm_win = true;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if !has_imm_win && own_king.distance(opp_king) > 1 {
+                                    for m in &legal_moves {
+                                        if !m.is_capture() {
+                                            let to = m.to();
+                                            let df = (to.file() as i8 - opp_king.file() as i8).abs();
+                                            let dr = (to.rank() as i8 - opp_king.rank() as i8).abs();
+                                            let can_give_check = match m.role() {
+                                                Role::Rook => to.rank() == opp_king.rank() || to.file() == opp_king.file(),
+                                                Role::Bishop => df == dr,
+                                                Role::Queen => to.rank() == opp_king.rank() || to.file() == opp_king.file() || df == dr,
+                                                Role::Knight => (df == 1 && dr == 2) || (df == 2 && dr == 1),
+                                                Role::King => true, // Discovered check candidate
+                                                _ => false,
+                                            };
+                                            if can_give_check {
+                                                let mut next = pos.clone();
+                                                next.play_unchecked(m);
+                                                if next.is_game_over() && next.outcome().unwrap().winner() == Some(turn) {
+                                                    has_imm_win = true;
+                                                    break;
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
 
-                            if has_imm_win {
-                                dtw_atomic[global_idx].store(1, Ordering::Relaxed);
-                                if let Some(mir) = mirror_global_idx {
-                                    dtw_atomic[mir].store(1, Ordering::Relaxed);
+                                if has_imm_win {
+                                    dtw_atomic[global_idx].store(1, Ordering::Relaxed);
+                                    if let Some(mir) = mirror_global_idx {
+                                        dtw_atomic[mir].store(1, Ordering::Relaxed);
+                                    }
+                                    chunk_wins += multiplier;
+                                } else {
+                                    dtw_atomic[global_idx].store(DRAW, Ordering::Relaxed);
+                                    if let Some(mir) = mirror_global_idx {
+                                        dtw_atomic[mir].store(DRAW, Ordering::Relaxed);
+                                    }
+                                    chunk_unresolved.push(global_idx as u32);
                                 }
-                                chunk_wins += multiplier;
-                            } else {
-                                dtw_atomic[global_idx].store(DRAW, Ordering::Relaxed);
-                                if let Some(mir) = mirror_global_idx {
-                                    dtw_atomic[mir].store(DRAW, Ordering::Relaxed);
-                                }
-                                chunk_unresolved.push(global_idx as u32);
                             }
                         }
                     }
                 }
-            }
 
-            total_valid.fetch_add(chunk_valid, Ordering::Relaxed);
-            total_imm_wins.fetch_add(chunk_wins, Ordering::Relaxed);
-            total_term_losses.fetch_add(chunk_losses, Ordering::Relaxed);
+                total_valid.fetch_add(chunk_valid, Ordering::Relaxed);
+                total_imm_wins.fetch_add(chunk_wins, Ordering::Relaxed);
+                total_term_losses.fetch_add(chunk_losses, Ordering::Relaxed);
 
-            let done = done_chunks.fetch_add(1, Ordering::Relaxed) + 1;
-            if done % 16 == 0 || done == NUM_CHUNKS_5P {
-                println!("  Pass 1 progress: {}/{} chunks completed in {:?}", done, NUM_CHUNKS_5P, t_pass1.elapsed());
-                std::io::stdout().flush().unwrap();
-            }
+                let done = done_chunks.fetch_add(1, Ordering::Relaxed) + 1;
+                if done % 16 == 0 || done == NUM_CHUNKS_5P {
+                    println!("  Pass 1 progress: {}/{} chunks completed in {:?}", done, NUM_CHUNKS_5P, t_pass1.elapsed());
+                    std::io::stdout().flush().unwrap();
+                }
 
-            chunk_unresolved
-        })
-        .collect();
+                chunk_unresolved
+            })
+            .collect();
 
-    let mut unresolved: Vec<u32> = chunk_unresolved_lists.into_par_iter().flatten().collect();
+        unresolved = chunk_unresolved_lists.into_par_iter().flatten().collect();
+        total_wins = total_imm_wins.load(Ordering::Relaxed) as usize;
+        total_losses = total_term_losses.load(Ordering::Relaxed) as usize;
+        let valid_count = total_valid.load(Ordering::Relaxed);
 
-    println!(
-        "Pass 1 finished in {:?}: {} legal states ({} imm wins, {} term losses, {} active unresolved states ({:.1} MB))",
-        t_pass1.elapsed(),
-        total_valid.load(Ordering::Relaxed),
-        total_imm_wins.load(Ordering::Relaxed),
-        total_term_losses.load(Ordering::Relaxed),
-        unresolved.len(),
-        (unresolved.len() * 4) as f64 / (1024.0 * 1024.0)
-    );
-    std::io::stdout().flush().unwrap();
+        println!(
+            "Pass 1 finished in {:?}: {} legal states ({} imm wins, {} term losses, {} active unresolved states ({:.1} MB))",
+            t_pass1.elapsed(),
+            valid_count,
+            total_wins,
+            total_losses,
+            unresolved.len(),
+            (unresolved.len() * 4) as f64 / (1024.0 * 1024.0)
+        );
+        std::io::stdout().flush().unwrap();
+        (dtw, valid_count)
+    } else {
+        (dtw, total_valid_count)
+    };
+
+    let dtw_atomic: &[AtomicI8] = unsafe {
+        std::slice::from_raw_parts(dtw.as_ptr() as *const AtomicI8, TOTAL_STATES_5P)
+    };
 
     println!("Pass 2: Level-by-level retrograde propagation...");
     std::io::stdout().flush().unwrap();
     let t_pass2 = Instant::now();
-    let mut total_wins = total_imm_wins.load(Ordering::Relaxed) as usize;
-    let mut total_losses = total_term_losses.load(Ordering::Relaxed) as usize;
     let mut max_dtw = 1u8;
     let parent_3p_ref = &parent_3p_tables;
     let parent_5p_ref = &parent_5p;
 
-    for iteration in 1..=120 {
+    for iteration in iteration_start..=120 {
         let t_iter = Instant::now();
         let iter_wins = AtomicU32::new(0);
         let iter_losses = AtomicU32::new(0);
@@ -1361,6 +1537,7 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
         if new_w == 0 && new_l == 0 {
             println!("Retrograde propagation converged in {} iterations!", iteration);
             std::io::stdout().flush().unwrap();
+            remove_checkpoint(name, &checkpoint_dir);
             break;
         }
 
@@ -1371,6 +1548,26 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
             iteration, new_w, new_l, unresolved.len(), t_iter.elapsed()
         );
         std::io::stdout().flush().unwrap();
+
+        // Check if max runtime exceeded
+        if max_hours > 0.0 && t0.elapsed().as_secs_f64() >= max_hours * 3600.0 {
+            println!(
+                "Reached maximum runtime limit ({:.2} hours). Saving checkpoint at iteration {}...",
+                max_hours, iteration
+            );
+            save_checkpoint(
+                name,
+                iteration,
+                total_wins,
+                total_losses,
+                total_valid_count,
+                &unresolved,
+                dtw_atomic,
+                &checkpoint_dir,
+            );
+            println!("Checkpoint saved. Exiting with status 10 for workflow continuation.");
+            std::process::exit(10);
+        }
     }
 
     println!("Retrograde propagation completed in {:?}", t_pass2.elapsed());
@@ -1388,9 +1585,9 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
     let elapsed = t0.elapsed();
     println!("--------------------------------------------------");
     println!("Finished {} in {:?}", name, elapsed);
-    println!("  Wins:   {} ({:.1}%)", total_wins, (total_wins as f64 / total_valid.load(Ordering::Relaxed) as f64) * 100.0);
-    println!("  Losses: {} ({:.1}%)", total_losses, (total_losses as f64 / total_valid.load(Ordering::Relaxed) as f64) * 100.0);
-    println!("  Draws:  {} ({:.1}%)", draw_count, (draw_count as f64 / total_valid.load(Ordering::Relaxed) as f64) * 100.0);
+    println!("  Wins:   {} ({:.1}%)", total_wins, (total_wins as f64 / total_valid_count as f64) * 100.0);
+    println!("  Losses: {} ({:.1}%)", total_losses, (total_losses as f64 / total_valid_count as f64) * 100.0);
+    println!("  Draws:  {} ({:.1}%)", draw_count, (draw_count as f64 / total_valid_count as f64) * 100.0);
     println!("  Max DTW: {} plies ({} full moves)", max_dtw, (max_dtw + 1) / 2);
 
     let out_dir = get_out_dir();
@@ -1409,6 +1606,8 @@ pub fn solve_three_vs_two(name: &str, w1_role: Role, w2_role: Role, b_role: Role
     };
     file.write_all(byte_slice).expect("write dtw bytes");
     println!("Saved {} ({} bytes)", out_path.display(), header.len() + dtw.len());
+
+    remove_checkpoint(name, &checkpoint_dir);
 }
 
 fn main() {
@@ -1429,7 +1628,37 @@ fn main() {
         return;
     }
 
-    let target = args.get(1).map(|s| s.as_str()).unwrap_or("KRRvKR");
+    let mut target = "KRRvKR".to_string();
+    let mut max_hours = 0.0f64;
+    let mut checkpoint_dir = get_out_dir();
+    let mut resume = false;
 
-    solve_table(target);
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--max-hours" => {
+                if i + 1 < args.len() {
+                    max_hours = args[i + 1].parse().unwrap_or(0.0);
+                    i += 1;
+                }
+            }
+            "--checkpoint-dir" => {
+                if i + 1 < args.len() {
+                    checkpoint_dir = PathBuf::from(&args[i + 1]);
+                    i += 1;
+                }
+            }
+            "--resume" => {
+                resume = true;
+            }
+            other => {
+                if !other.starts_with("--") {
+                    target = other.to_string();
+                }
+            }
+        }
+        i += 1;
+    }
+
+    solve_table(&target, max_hours, checkpoint_dir, resume);
 }

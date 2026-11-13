@@ -23,6 +23,8 @@ jobs:
 
       - name: Configure rclone
         env:
+          GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
           GDRIVE_RCLONE_TOKEN_B64: ${{ secrets.GDRIVE_RCLONE_TOKEN_B64 }}
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
@@ -33,6 +35,8 @@ jobs:
           [gdrive]
           type = drive
           scope = drive
+          client_id = $GDRIVE_CLIENT_ID
+          client_secret = $GDRIVE_CLIENT_SECRET
           token = $CLEAN_TOKEN
           root_folder_id = $GDRIVE_FOLDER_ID
           EOF
@@ -68,7 +72,7 @@ jobs:
             
             if [ -n "$TB_FILE" ]; then
               FILE_NAME=$(basename "$TB_FILE")
-              echo "Uploading $FILE_NAME to Google Drive via User OAuth..."
+              echo "Uploading $FILE_NAME to Google Drive via Custom Project OAuth..."
               # Copy with progress and skip existing
               rclone copy "$TB_FILE" gdrive: --update --verbose
               echo "Uploaded $FILE_NAME successfully!"

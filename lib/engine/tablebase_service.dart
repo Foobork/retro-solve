@@ -435,7 +435,7 @@ class TablebaseService {
       }
 
       final evals = <EngineEvaluation>[];
-      final maxMoves = rawMoves.length > 5 ? 5 : rawMoves.length;
+      final maxMoves = rawMoves.length;
 
       for (var i = 0; i < maxMoves; i++) {
         final moveData = rawMoves[i] as Map<String, dynamic>;

@@ -27,19 +27,21 @@ jobs:
           GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           mkdir -p ~/.config/rclone
+          # Write rclone config safely with single-line token
+          CLEAN_TOKEN=$(echo "$GDRIVE_RCLONE_TOKEN" | tr -d '\r\n')
           cat <<EOF > ~/.config/rclone/rclone.conf
           [gdrive]
           type = drive
           scope = drive
-          token = $GDRIVE_RCLONE_TOKEN
+          token = $CLEAN_TOKEN
           root_folder_id = $GDRIVE_FOLDER_ID
           EOF
 
       - name: Verify Google Drive Connection
         run: |
           echo "Verifying Google Drive access and listing files:"
-          rclone lsd gdrive: || true
-          rclone ls gdrive: || true
+          rclone lsd gdrive:
+          rclone ls gdrive:
 
       - name: Fetch Artifact List and Stream to Google Drive
         env:

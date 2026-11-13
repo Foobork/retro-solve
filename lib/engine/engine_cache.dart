@@ -207,15 +207,15 @@ class EngineCache {
       final existingBest = existing.first;
       final existingDepth = existingBest.depth ?? 0;
 
-      // DTW overrides engine eval:
-      // If existing evaluation has DTW, do not allow an evaluation without DTW to replace it.
-      if (existingBest.dtw != null && best.dtw == null) {
+      // Tablebase (depth == 100 or DTW present) overrides engine eval:
+      final existingIsTb = existingBest.depth == 100 || existingBest.dtw != null;
+      final bestIsTb = best.depth == 100 || best.dtw != null;
+      if (existingIsTb && !bestIsTb) {
         return;
       }
 
-      // If incoming evaluation has DTW and existing lacks DTW, allow it to override immediately.
-      if (best.dtw != null && existingBest.dtw == null) {
-        // Allow replacement
+      if (bestIsTb && !existingIsTb) {
+        // Tablebase evaluation always overrides standard engine search
       } else {
         // Do not replace mate or pseudomate with non-decisive
         final existingIsDecisive = existingBest.mate != null || existingBest.isPseudoMate;

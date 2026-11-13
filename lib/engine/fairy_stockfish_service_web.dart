@@ -253,7 +253,7 @@ class FairyStockfishService implements EngineService {
     }
 
     final cached = cache.get(_variant, fen, minDepth: 16);
-    if (cached != null && cached.isNotEmpty && cached.first.dtw != null) {
+    if (cached != null && cached.isNotEmpty && (cached.first.dtw != null || cached.first.mate != null || cached.first.depth == 100)) {
       if (_isStarted && _worker != null && _isSearching) {
         _waitingForReadyOk = true;
         _isSearching = false;
@@ -348,7 +348,7 @@ class FairyStockfishService implements EngineService {
   @override
   Future<EngineEvaluation?> evaluatePositionSync(String fen, {int depth = 16}) async {
     final cached = cache.get(_variant, fen, minDepth: depth);
-    if (cached != null && cached.isNotEmpty && cached.first.dtw != null) {
+    if (cached != null && cached.isNotEmpty && (cached.first.dtw != null || cached.first.mate != null || cached.first.depth == 100)) {
       return cached.first.copyWithFen(fen);
     }
 

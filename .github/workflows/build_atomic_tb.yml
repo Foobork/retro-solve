@@ -170,12 +170,75 @@ jobs:
             exit $EXIT_CODE
           fi
 
+      - name: Upload Tablebase Artifact (.atbd)
+        if: steps.solve.outputs.exit_code == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: atomic-tb-${{ matrix.table }}
+          path: data/tablebases/atomic/${{ matrix.table }}.atbd
+          retention-days: 90
+
+      - name: Handle Completed Tablebase Sync to Google Drive
+        if: steps.solve.outputs.exit_code == '0'
+        env:
+          CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          echo "Solver completed successfully! Syncing to Google Drive..."
+          # Re-mint fresh OAuth token to avoid 1-hour expiration
+          if [ -n "$REFRESH_TOKEN" ] && [ -n "$CLIENT_ID" ]; then
+            RESPONSE=$(curl -s -X POST https://oauth2.googleapis.com/token \
+              -d "client_id=${CLIENT_ID}" \
+              -d "client_secret=${CLIENT_SECRET}" \
+              -d "refresh_token=${REFRESH_TOKEN}" \
+              -d "grant_type=refresh_token")
+            ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+            if [ -n "$ACCESS_TOKEN" ] && [ "$ACCESS_TOKEN" != "null" ]; then
+              TOKEN_JSON=$(jq -c -n \
+                --arg at "$ACCESS_TOKEN" \
+                --arg rt "$REFRESH_TOKEN" \
+                '{access_token: $at, token_type: "Bearer", refresh_token: $rt, expiry: "2030-01-01T00:00:00Z"}')
+              printf "[gdrive]\ntype = drive\nscope = drive\nclient_id = %s\nclient_secret = %s\ntoken = %s\nroot_folder_id = %s\n" \
+                "$CLIENT_ID" "$CLIENT_SECRET" "$TOKEN_JSON" "$FOLDER_ID" > ~/.config/rclone/rclone.conf
+            fi
+          fi
+          if [ -f ~/.config/rclone/rclone.conf ]; then
+            if [ -f "data/tablebases/atomic/${{ matrix.table }}.atbd" ]; then
+              rclone copy "data/tablebases/atomic/${{ matrix.table }}.atbd" gdrive: --verbose
+              # Clean up any leftover checkpoint on Google Drive
+              rclone delete "gdrive:${{ matrix.table }}.checkpoint.zst" || true
+            fi
+          fi
+
       - name: Handle Checkpoint (Exit Code 10)
         if: steps.solve.outputs.exit_code == '10'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
+          FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
         run: |
           echo "Solver exited with status 10 (checkpoint saved). Compressing and saving..."
+          # Re-mint fresh OAuth token to avoid 1-hour expiration
+          if [ -n "$REFRESH_TOKEN" ] && [ -n "$CLIENT_ID" ]; then
+            RESPONSE=$(curl -s -X POST https://oauth2.googleapis.com/token \
+              -d "client_id=${CLIENT_ID}" \
+              -d "client_secret=${CLIENT_SECRET}" \
+              -d "refresh_token=${REFRESH_TOKEN}" \
+              -d "grant_type=refresh_token")
+            ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+            if [ -n "$ACCESS_TOKEN" ] && [ "$ACCESS_TOKEN" != "null" ]; then
+              TOKEN_JSON=$(jq -c -n \
+                --arg at "$ACCESS_TOKEN" \
+                --arg rt "$REFRESH_TOKEN" \
+                '{access_token: $at, token_type: "Bearer", refresh_token: $rt, expiry: "2030-01-01T00:00:00Z"}')
+              printf "[gdrive]\ntype = drive\nscope = drive\nclient_id = %s\nclient_secret = %s\ntoken = %s\nroot_folder_id = %s\n" \
+                "$CLIENT_ID" "$CLIENT_SECRET" "$TOKEN_JSON" "$FOLDER_ID" > ~/.config/rclone/rclone.conf
+            fi
+          fi
           if [ -f "data/tablebases/atomic/${{ matrix.table }}.checkpoint.bin" ]; then
             zstd -1 -T0 "data/tablebases/atomic/${{ matrix.table }}.checkpoint.bin" -o "data/tablebases/atomic/${{ matrix.table }}.checkpoint.zst"
             rm -f "data/tablebases/atomic/${{ matrix.table }}.checkpoint.bin"
@@ -186,23 +249,3 @@ jobs:
           fi
           echo "Triggering next workflow run to resume ${{ matrix.table }}..."
           gh workflow run build_atomic_tb.yml -f table="${{ matrix.table }}"
-
-      - name: Handle Completed Tablebase (Exit Code 0)
-        if: steps.solve.outputs.exit_code == '0'
-        run: |
-          echo "Solver completed successfully! Syncing to Google Drive..."
-          if [ -f ~/.config/rclone/rclone.conf ]; then
-            if [ -f "data/tablebases/atomic/${{ matrix.table }}.atbd" ]; then
-              rclone copy "data/tablebases/atomic/${{ matrix.table }}.atbd" gdrive: --verbose
-              # Clean up any leftover checkpoint on Google Drive
-              rclone delete "gdrive:${{ matrix.table }}.checkpoint.zst" || true
-            fi
-          fi
-
-      - name: Upload Tablebase Artifact (.atbd)
-        if: steps.solve.outputs.exit_code == '0'
-        uses: actions/upload-artifact@v4
-        with:
-          name: atomic-tb-${{ matrix.table }}
-          path: data/tablebases/atomic/${{ matrix.table }}.atbd
-          retention-days: 90

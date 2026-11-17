@@ -24,7 +24,7 @@ import time
 import urllib.parse
 import uuid
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 
 import chess
 import chess.variant
@@ -94,21 +94,30 @@ class AtomicAtbdProber:
 
         self.tablebase_dirs = dirs
         self._files: Dict[str, Any] = {}
+        self._file_paths: Dict[str, str] = {}
         for d in dirs:
             if os.path.exists(d):
-                for fname in os.listdir(d):
-                    if fname.endswith(".atbd") and fname not in self._files:
-                        fpath = os.path.join(d, fname)
-                        try:
-                            self._files[fname] = open(fpath, "rb")
-                        except Exception as e:
-                            logger.warning("Could not open tablebase file %s: %s", fpath, e)
-        logger.info("AtomicAtbdProber loaded %d .atbd files from %s", len(self._files), dirs)
+                try:
+                    for fname in os.listdir(d):
+                        if fname.endswith(".atbd") and fname not in self._file_paths:
+                            self._file_paths[fname] = os.path.join(d, fname)
+                except Exception as e:
+                    logger.warning("Could not list tablebase dir %s: %s", d, e)
+        logger.info("AtomicAtbdProber indexed %d .atbd files across %s", len(self._file_paths), dirs)
 
     def _get_file(self, fname: str):
         f = self._files.get(fname)
         if f is not None:
             return f
+        known_path = self._file_paths.get(fname)
+        if known_path and os.path.exists(known_path):
+            try:
+                f_opened = open(known_path, "rb")
+                self._files[fname] = f_opened
+                logger.info("Opened tablebase %s from %s", fname, known_path)
+                return f_opened
+            except Exception as e:
+                logger.warning("Could not open tablebase file %s: %s", known_path, e)
         for d in self.tablebase_dirs:
             if os.path.exists(d):
                 fpath = os.path.join(d, fname)
@@ -116,6 +125,7 @@ class AtomicAtbdProber:
                     try:
                         f_opened = open(fpath, "rb")
                         self._files[fname] = f_opened
+                        self._file_paths[fname] = fpath
                         logger.info("Dynamically loaded new tablebase %s from %s", fname, fpath)
                         return f_opened
                     except Exception as e:
@@ -123,7 +133,7 @@ class AtomicAtbdProber:
         return None
 
     def is_available(self) -> bool:
-        return len(self._files) > 0
+        return len(self._files) > 0 or len(self._file_paths) > 0
 
     def close(self):
         for f in self._files.values():

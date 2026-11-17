@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       table:
-        description: 'Table to solve (e.g. KRPvKQ), or "ALL_5P_1P" (all 26), "5P_1P_BATCH1", "5P_1P_BATCH2", "5P_1P_BLACK", "ALL_5P_QUEEN", "ALL_5P_0P", "ALL_4P"'
+        description: 'Table to solve (e.g. KRPvKP, KQPvKP, KRPvKQ), or "5P_2P_INITIAL", "5P_1P_WHITE", "5P_1P_BATCH1", "5P_1P_BATCH2", "5P_1P_BLACK", "ALL_5P_1P", "ALL_5P_QUEEN", "ALL_5P_0P", "ALL_4P"'
         required: true
-        default: 'ALL_5P_1P'
+        default: '5P_2P_INITIAL'
 
 concurrency:
   group: "build-atomic-tb-${{ github.event.inputs.table }}-${{ github.ref }}"
@@ -22,7 +22,11 @@ jobs:
       - id: set-matrix
         run: |
           INPUT="${{ github.event.inputs.table }}"
-          if [ "$INPUT" = "ALL_5P_1P" ]; then
+          if [ "$INPUT" = "5P_2P_INITIAL" ] || [ "$INPUT" = "5P_2P_BATCH1" ]; then
+            echo 'matrix=["KRPvKP","KQPvKP"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "5P_1P_WHITE" ]; then
+            echo 'matrix=["KQPvKQ","KQPvKR","KQPvKB","KQPvKN","KRPvKQ","KRPvKR","KRPvKB","KRPvKN","KBPvKQ","KBPvKR","KBPvKB","KBPvKN","KNPvKQ","KNPvKR","KNPvKB","KNPvKN"]' >> $GITHUB_OUTPUT
+          elif [ "$INPUT" = "ALL_5P_1P" ]; then
             echo 'matrix=["KQPvKQ","KQPvKR","KQPvKB","KQPvKN","KRPvKQ","KRPvKR","KRPvKB","KRPvKN","KBPvKQ","KBPvKR","KBPvKB","KBPvKN","KNPvKQ","KNPvKR","KNPvKB","KNPvKN","KQQvKP","KQRvKP","KQBvKP","KQNvKP","KRRvKP","KRBvKP","KRNvKP","KBBvKP","KBNvKP","KNNvKP"]' >> $GITHUB_OUTPUT
           elif [ "$INPUT" = "5P_1P_BATCH1" ]; then
             echo 'matrix=["KQPvKQ","KQPvKR","KQPvKB","KQPvKN","KRPvKQ","KRPvKR","KRPvKB","KRPvKN"]' >> $GITHUB_OUTPUT
@@ -64,6 +68,12 @@ jobs:
         table: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     steps:
+      - name: Free Runner Disk Space for Multi-Parent 5-Piece Tables
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -124,22 +134,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data/tablebases/atomic/temp
-          PARENT=$(./tool/atomic_tb_gen/target/release/atomic_tb_gen --parent-table "${{ matrix.table }}" || true)
-          if [ -n "$PARENT" ]; then
-            echo "Table ${{ matrix.table }} requires 5-piece parent table: $PARENT"
-            # First try downloading from Google Drive via rclone if configured
-            if [ -f ~/.config/rclone/rclone.conf ]; then
-              echo "Checking Google Drive for $PARENT.atbd..."
-              rclone copy "gdrive:$PARENT.atbd" data/tablebases/atomic/ || true
-            fi
-            if [ ! -f "data/tablebases/atomic/$PARENT.atbd" ]; then
-              echo "Downloading atomic-tb-$PARENT from 5-piece Queen run 42814860481..."
-              gh run download 42814860481 -n "atomic-tb-$PARENT" -D data/tablebases/atomic/temp || true
-            fi
+          PARENTS=$(./tool/atomic_tb_gen/target/release/atomic_tb_gen --parent-table "${{ matrix.table }}" || true)
+          if [ -n "$PARENTS" ]; then
+            echo "Table ${{ matrix.table }} requires 5-piece parent tables: $PARENTS"
+            for PARENT in $PARENTS; do
+              if [ -f ~/.config/rclone/rclone.conf ]; then
+                echo "Downloading $PARENT.atbd from Google Drive..."
+                rclone copy "gdrive:$PARENT.atbd" data/tablebases/atomic/ || true
+              fi
+              if [ ! -f "data/tablebases/atomic/$PARENT.atbd" ]; then
+                echo "Downloading atomic-tb-$PARENT from 5-piece Queen run 42814860481..."
+                gh run download 42814860481 -n "atomic-tb-$PARENT" -D data/tablebases/atomic/temp || true
+              fi
+            done
           fi
-          # Download 3-piece and 4-piece base tables if needed
-          gh run download 42484601569 -D data/tablebases/atomic/temp || true
-          gh run download 42481717145 -D data/tablebases/atomic/temp || true
           find data/tablebases/atomic/temp -name "*.atbd" -exec mv {} data/tablebases/atomic/ \; || true
           rm -rf data/tablebases/atomic/temp
           echo "Available tablebases on runner:"
@@ -207,6 +215,7 @@ jobs:
           if [ -f ~/.config/rclone/rclone.conf ]; then
             if [ -f "data/tablebases/atomic/${{ matrix.table }}.atbd" ]; then
               rclone copy "data/tablebases/atomic/${{ matrix.table }}.atbd" gdrive: --verbose
+              rclone dedupe --dedupe-mode newest gdrive: --include "${{ matrix.table }}.atbd" || true
               # Clean up any leftover checkpoint on Google Drive
               rclone delete "gdrive:${{ matrix.table }}.checkpoint.zst" || true
             fi

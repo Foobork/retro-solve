@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../config.dart';
@@ -72,7 +73,8 @@ class TablebaseService {
 
   /// Whether local tablebase probing is enabled.
   bool get isLocalEnabled =>
-      _localEnabled ?? (_isCustomClient ? false : Config.enableLocalTablebase);
+      _localEnabled ??
+      ((kIsWeb || _isCustomClient) ? false : Config.enableLocalTablebase);
 
   /// Whether either local or remote tablebase probing is enabled.
   bool get isAnyEnabled => isLocalEnabled || isEnabled;
@@ -284,12 +286,12 @@ class TablebaseService {
   Future<List<EngineEvaluation>?> probeLocal(
     DatasetVariant variant,
     String fen, {
-    Duration timeout = const Duration(milliseconds: 2000),
+    Duration timeout = const Duration(milliseconds: 5000),
   }) async {
     if (!isLocalEnabled || !isSupported(variant, fen)) return null;
 
     if (!_isRegistered && isAutoLaunchEnabled) {
-      unawaited(ensureServerRunning());
+      await ensureServerRunning(timeout: const Duration(seconds: 5));
     }
 
     final endpoint = endpointForVariant(variant);
@@ -350,7 +352,7 @@ class TablebaseService {
     DatasetVariant variant,
     String fen, {
     Duration timeout = const Duration(seconds: 3),
-    Duration localTimeout = const Duration(milliseconds: 2000),
+    Duration localTimeout = const Duration(milliseconds: 5000),
   }) async {
     if (!isSupported(variant, fen)) return null;
     if (_enabled == false && _localEnabled != true) return null;

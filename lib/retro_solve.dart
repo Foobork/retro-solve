@@ -120,6 +120,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   int get mateSolverNodesCount => _mateSolverNodesCount;
 
   @visibleForTesting
+  int get mateSolverCyclesBacktracked => _mateSolverCyclesBacktracked;
+
+  @visibleForTesting
   Map<int, MateSolverPlyProgress> get mateSolverPlyProgress =>
       Map.unmodifiable(_mateSolverPlyProgress);
 
@@ -561,6 +564,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   String _mateSolverTitle = "";
   String _mateSolverStatus = "";
   int _mateSolverNodesCount = 0;
+  int _mateSolverCyclesBacktracked = 0;
   final Map<int, MateSolverPlyProgress> _mateSolverPlyProgress = {};
   MateSolverResult? _mateSolverResult;
   int _evalProgress = 0;
@@ -829,7 +833,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Nodes explored: ${result.nodes} • Time: ${_formatDuration(result.elapsed)}',
+                  'Nodes explored: ${result.nodes} • Time: ${_formatDuration(result.elapsed)}${result.cyclesBacktracked > 0 ? ' • Cycles backtracked: ${result.cyclesBacktracked}' : ''}',
                   style: TextStyle(
                     fontSize: 12,
                     color: primaryColor.withValues(alpha: 0.85),
@@ -2432,6 +2436,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _mateSolverTitle = startDesc;
       _mateSolverStatus = 'Starting search...';
       _mateSolverNodesCount = 0;
+      _mateSolverCyclesBacktracked = 0;
       _mateSolverPlyProgress.clear();
     });
     WakelockPlus.enable();
@@ -2460,17 +2465,18 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     }
 
     try {
-      proven = await _proveMateRecursive(
+      final searchResult = await _proveMateRecursive(
         ply: 0,
         maxDepth: maxDepth,
         attackingColor: attackingColor,
         pathBfens: pathBfens,
         onLeafFailure: onLeafFailure,
       );
+      proven = searchResult.proven;
       if (proven) {
         print('[mate-solver] Successfully proven mate from $rootBfen!');
       } else {
-        print('[mate-solver] Failed to prove mate within cutoff.');
+        print('[mate-solver] Failed to prove mate within cutoff (${searchResult.reason}).');
       }
     } catch (e, st) {
       print('[mate-solver] Error during mate search: $e\n$st');
@@ -2514,6 +2520,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             failureFen: failureFen,
             failureMoves: failureMoves,
             failureReason: failureReason,
+            cyclesBacktracked: _mateSolverCyclesBacktracked,
           );
           _update();
           _requestEngineEval();
@@ -2524,7 +2531,23 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     return proven;
   }
 
-  Future<bool> _proveMateRecursive({
+  bool _isMoveIrreversible(Move m) {
+    if (m.piece == PieceType.pawn) return true;
+    if (m.captured != null) return true;
+    if ((m.flags &
+            (Chess.bitsCapture |
+                Chess.bitsEpCapture |
+                Chess.bitsPromotion |
+                Chess.bitsKsideCastle |
+                Chess.bitsQsideCastle |
+                Chess.bitsDrop)) !=
+        0) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<({bool proven, String reason})> _proveMateRecursive({
     required int ply,
     required int maxDepth,
     required PlayerColor attackingColor,
@@ -2533,7 +2556,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }) async {
     if (!_isMateSolving || !mounted) {
       onLeafFailure('Search stopped');
-      return false;
+      return (proven: false, reason: 'stopped');
     }
 
     _mateSolverNodesCount++;
@@ -2547,7 +2570,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (pathBfens.contains(bfen)) {
       print('[mate-solver] Cycle detected at $bfen (ply $ply)');
       onLeafFailure('Repetition / cycle detected at ply $ply');
-      return false;
+      return (proven: false, reason: 'cycle');
     }
 
     // 2. Terminal Game Over check:
@@ -2569,11 +2592,11 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
               }
             }
           }
-          return true;
+          return (proven: true, reason: 'terminal_win');
         }
       }
       onLeafFailure('Game over (non-mate) at ply $ply');
-      return false; // Draw, stalemate, or defender checkmate
+      return (proven: false, reason: 'terminal_non_win'); // Draw, stalemate, or defender checkmate
     }
 
     // 3. Transposition check in graph:
@@ -2583,14 +2606,14 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           ? existingEval.result == GameResult.whiteWins
           : existingEval.result == GameResult.blackWins;
       if (isAttackerWin) {
-        return true;
+        return (proven: true, reason: 'transposition_win');
       }
       if (existingEval.result == GameResult.draw ||
           (attackingColor == white
               ? existingEval.result == GameResult.blackWins
               : existingEval.result == GameResult.whiteWins)) {
         onLeafFailure('Transposition already proven non-mate at ply $ply');
-        return false;
+        return (proven: false, reason: 'transposition_non_win');
       }
     }
 
@@ -2598,7 +2621,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     await _waitForEngineStabilization();
     if (!_isMateSolving || !mounted) {
       onLeafFailure('Search stopped');
-      return false;
+      return (proven: false, reason: 'stopped');
     }
 
     // 5. Check if FSF confirms mate for the attacker:
@@ -2631,13 +2654,13 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
               }
             }
             print('[mate-solver] FSF confirmed mate at $bfen (mate ${bestEval.mate})');
-            return true;
+            return (proven: true, reason: 'fsf_mate');
           }
         } else {
           // Defender has forced mate
           print('[mate-solver] Defender has forced mate at $bfen (mate ${bestEval.mate})');
           onLeafFailure('Defender forced mate (M${bestEval.mate!.abs()}) at ply $ply');
-          return false;
+          return (proven: false, reason: 'defender_mate');
         }
       }
     }
@@ -2646,92 +2669,218 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (ply >= maxDepth) {
       print('[mate-solver] Depth cutoff ($maxDepth) reached at $bfen without confirmed mate');
       onLeafFailure('Depth cutoff ($maxDepth plies) reached');
-      return false;
+      return (proven: false, reason: 'depth_cutoff');
     }
 
-    // 7. Branching (Attacker = OR node / Defender = AND node):
+    // 7. Branching (Attacker = OR node backtracking on cycles / Defender = AND node):
     pathBfens.add(bfen);
     try {
       if (isAttackerToMove) {
-        // ATTACKER (White): Probe ONLY the single top move. If it fails, it fails.
-        if (currentEvals.isEmpty) {
-          onLeafFailure('No candidate moves evaluated at ply $ply');
-          return false;
-        }
-        final bestEval = currentEvals.first;
-        final san = _uciToSan(bestEval.candidateMove);
-        if (san == '—') {
-          onLeafFailure('No candidate move available at ply $ply');
-          return false;
-        }
-
-        // Ensure link in graph
         final moves = _controller.game.generateMoves();
-        final matchedMove = moves.firstWhere(
-          (m) =>
-              _controller.game.moveToSan(m) == san ||
-              _controller.game.normalizeMoveString(_controller.game.moveToSan(m)) ==
-                  _controller.game.normalizeMoveString(san),
-          orElse: () => moves.first,
-        );
-
-        final tempGame = _controller.game.copy();
-        tempGame.makeMove(matchedMove);
-        final childBfen = tempGame.bfen;
-        graph.addLink(bfen, childBfen);
-
-        if (graph is CachedGraph) {
-          await (graph as CachedGraph).prefetchPositions([childBfen]);
+        if (moves.isEmpty) {
+          onLeafFailure('No legal moves at ply $ply');
+          return (proven: false, reason: 'no_legal_moves');
         }
 
-        if (mounted) {
-          setState(() {
-            _mateSolverStatus = 'Ply $ply: $san (nodes: $_mateSolverNodesCount)';
-          });
+        final moveMap = <String, Move>{};
+        for (final m in moves) {
+          final uci = '${m.fromAlgebraic}${m.toAlgebraic}${m.promotion?.name ?? ''}'.toLowerCase();
+          moveMap[uci] = m;
         }
 
-        final moveSuccess = _controller.makeMoveWithNormalNotation(san);
-        if (!moveSuccess) {
-          if (matchedMove.promotion != null) {
-            _controller.makeMoveWithPromotion(
-              from: matchedMove.fromAlgebraic,
-              to: matchedMove.toAlgebraic,
-              pieceToPromoteTo: matchedMove.promotion!.name.toUpperCase(),
-            );
-          } else {
-            _controller.makeMove(
-              from: matchedMove.fromAlgebraic,
-              to: matchedMove.toAlgebraic,
-            );
+        Move? findMove(String san, String? uci) {
+          if (uci != null && moveMap.containsKey(uci.toLowerCase())) {
+            return moveMap[uci.toLowerCase()];
           }
-        }
-
-        final success = await _proveMateRecursive(
-          ply: ply + 1,
-          maxDepth: maxDepth,
-          attackingColor: attackingColor,
-          pathBfens: pathBfens,
-          onLeafFailure: onLeafFailure,
-        );
-        _controller.undoMove();
-
-        if (success) {
-          if (_interactiveBacksolving) {
-            if (graph is CachedGraph) {
-              await (graph as CachedGraph).solveBfenAsync(bfen);
-            } else {
-              graph.solveBfen(bfen);
+          final normSan = _controller.game.normalizeMoveString(san);
+          for (final m in moves) {
+            final mSan = _controller.game.moveToSan(m);
+            if (mSan == san || _controller.game.normalizeMoveString(mSan) == normSan) {
+              return m;
             }
           }
-          return true;
+          return null;
         }
-        return false;
+
+        final candMap = <String, _AttackerCandidate>{};
+        for (final e in currentEvals) {
+          if (e.candidateMove == null) continue;
+          final san = _uciToSan(e.candidateMove);
+          if (san == '—') continue;
+          final m = findMove(san, e.candidateMove);
+          if (m == null) continue;
+          final uci = '${m.fromAlgebraic}${m.toAlgebraic}${m.promotion?.name ?? ''}'.toLowerCase();
+          final isIrrev = _isMoveIrreversible(m);
+          final int score;
+          if (e.mate != null) {
+            final isAttackerMate = attackingColor == white ? e.mate! > 0 : e.mate! < 0;
+            score = isAttackerMate ? (100000 - e.mate!.abs()) : (-100000 + e.mate!.abs());
+          } else if (e.centipawns != null) {
+            score = attackingColor == white ? e.centipawns! : -e.centipawns!;
+          } else {
+            score = 0;
+          }
+          candMap[uci] = _AttackerCandidate(
+            move: m,
+            san: san,
+            uci: uci,
+            score: score,
+            isIrreversible: isIrrev,
+          );
+        }
+
+        // Also check all legal moves for existing higher computed evaluations in graph
+        final targetWinResult = attackingColor == white ? GameResult.whiteWins : GameResult.blackWins;
+        final tempGame = _controller.game.copy();
+        for (final m in moves) {
+          final uci = '${m.fromAlgebraic}${m.toAlgebraic}${m.promotion?.name ?? ''}'.toLowerCase();
+          tempGame.makeMove(m);
+          final childBfen = tempGame.bfen;
+          tempGame.undo();
+          final childEval = graph.v[childBfen]?.effectiveEval;
+          if (childEval != null && childEval.result == targetWinResult) {
+            final dtwVal = childEval.dtw ?? 50;
+            final score = 200000 - dtwVal;
+            final san = _controller.game.moveToSan(m);
+            candMap[uci] = _AttackerCandidate(
+              move: m,
+              san: san,
+              uci: uci,
+              score: score,
+              isIrreversible: _isMoveIrreversible(m),
+            );
+          }
+        }
+
+        if (candMap.isEmpty) {
+          onLeafFailure('No candidate moves evaluated at ply $ply');
+          return (proven: false, reason: 'no_candidates');
+        }
+
+        // Sort by score descending, breaking ties in favor of irreversible moves
+        final sortedCands = candMap.values.toList()
+          ..sort((a, b) {
+            final cmp = b.score.compareTo(a.score);
+            if (cmp != 0) return cmp;
+            if (a.isIrreversible != b.isIrreversible) {
+              return a.isIrreversible ? -1 : 1;
+            }
+            return 0;
+          });
+
+        final candidates = <_AttackerCandidate>[];
+        for (int i = 0; i < sortedCands.length; i++) {
+          final c = sortedCands[i];
+          if (i == 0 || c.score >= 150) {
+            candidates.add(c);
+          }
+        }
+
+        int idx = 0;
+        bool sawCycle = false;
+        String lastReason = 'no_candidates';
+
+        while (idx < candidates.length) {
+          if (!_isMateSolving || !mounted) {
+            onLeafFailure('Search stopped');
+            return (proven: false, reason: 'stopped');
+          }
+
+          final c = candidates[idx];
+          final move = c.move;
+          final san = c.san;
+
+          final childTempGame = _controller.game.copy();
+          childTempGame.makeMove(move);
+          final childBfen = childTempGame.bfen;
+          graph.addLink(bfen, childBfen);
+
+          if (graph is CachedGraph) {
+            await (graph as CachedGraph).prefetchPositions([childBfen]);
+          }
+
+          if (mounted) {
+            setState(() {
+              _mateSolverStatus =
+                  'Ply $ply: $san${candidates.length > 1 ? ' (${idx + 1}/${candidates.length})' : ''} (nodes: $_mateSolverNodesCount)';
+            });
+          }
+
+          final moveSuccess = _controller.makeMoveWithNormalNotation(san);
+          if (!moveSuccess) {
+            if (move.promotion != null) {
+              _controller.makeMoveWithPromotion(
+                from: move.fromAlgebraic,
+                to: move.toAlgebraic,
+                pieceToPromoteTo: move.promotion!.name.toUpperCase(),
+              );
+            } else {
+              _controller.makeMove(
+                from: move.fromAlgebraic,
+                to: move.toAlgebraic,
+              );
+            }
+          }
+
+          final childResult = await _proveMateRecursive(
+            ply: ply + 1,
+            maxDepth: maxDepth,
+            attackingColor: attackingColor,
+            pathBfens: pathBfens,
+            onLeafFailure: onLeafFailure,
+          );
+          _controller.undoMove();
+
+          if (childResult.proven) {
+            if (_interactiveBacksolving) {
+              if (graph is CachedGraph) {
+                await (graph as CachedGraph).solveBfenAsync(bfen);
+              } else {
+                graph.solveBfen(bfen);
+              }
+            }
+            return (proven: true, reason: 'proven');
+          }
+
+          if (childResult.reason == 'stopped') {
+            return (proven: false, reason: 'stopped');
+          }
+
+          lastReason = childResult.reason;
+          if (childResult.reason == 'cycle') {
+            sawCycle = true;
+          }
+
+          // Backtrack on cycle:
+          // Re-order remaining candidates to prioritize irreversible moves first
+          if (childResult.reason == 'cycle' && idx + 1 < candidates.length) {
+            final remaining = candidates.sublist(idx + 1);
+            remaining.sort((a, b) {
+              if (a.isIrreversible != b.isIrreversible) {
+                return a.isIrreversible ? -1 : 1;
+              }
+              return b.score.compareTo(a.score);
+            });
+            candidates.replaceRange(idx + 1, candidates.length, remaining);
+
+            _mateSolverCyclesBacktracked++;
+            print(
+                '[mate-solver] [backtrack] Attacker move $san at ply $ply failed ($lastReason); trying #${idx + 2} candidate ${candidates[idx + 1].san} (score: ${candidates[idx + 1].score}, irrev: ${candidates[idx + 1].isIrreversible})');
+            idx++;
+            continue;
+          }
+
+          break;
+        }
+
+        final finalReason = sawCycle ? 'cycle' : lastReason;
+        return (proven: false, reason: finalReason);
       } else {
         // DEFENDER (Black): AND-node. Must refute ALL legal moves.
         final moves = _controller.game.generateMoves();
         if (moves.isEmpty) {
           onLeafFailure('No legal moves at ply $ply');
-          return false;
+          return (proven: false, reason: 'no_legal_moves');
         }
 
         final moveSans = moves.map((m) => _controller.game.moveToSan(m)).toList();
@@ -2773,7 +2922,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
           for (int i = 0; i < indices.length; i++) {
             if (!_isMateSolving || !mounted) {
               onLeafFailure('Search stopped');
-              return false;
+              return (proven: false, reason: 'stopped');
             }
 
             final idx = indices[i];
@@ -2789,7 +2938,8 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
             if (mounted) {
               setState(() {
-                _mateSolverStatus = 'Ply $ply: defend $san (${i + 1}/${indices.length}, nodes: $_mateSolverNodesCount)';
+                _mateSolverStatus =
+                    'Ply $ply: defend $san (${i + 1}/${indices.length}, nodes: $_mateSolverNodesCount)';
               });
             }
 
@@ -2809,7 +2959,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
               }
             }
 
-            final childSuccess = await _proveMateRecursive(
+            final childResult = await _proveMateRecursive(
               ply: ply + 1,
               maxDepth: maxDepth,
               attackingColor: attackingColor,
@@ -2818,9 +2968,9 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             );
             _controller.undoMove();
 
-            if (!childSuccess) {
-              print('[mate-solver] Defender move $san refutes line (did not lead to mate)');
-              return false;
+            if (!childResult.proven) {
+              print('[mate-solver] Defender move $san refutes line (${childResult.reason})');
+              return (proven: false, reason: childResult.reason);
             }
           }
         } finally {
@@ -2835,7 +2985,7 @@ class HomePageState extends State<HomePage> with WidgetsBindingObserver {
             graph.solveBfen(bfen);
           }
         }
-        return true;
+        return (proven: true, reason: 'proven');
       }
     } finally {
       pathBfens.remove(bfen);
@@ -3956,6 +4106,7 @@ class MateSolverResult {
   final String? failureFen;
   final List<Move>? failureMoves;
   final String? failureReason;
+  final int cyclesBacktracked;
 
   const MateSolverResult({
     required this.title,
@@ -3970,6 +4121,23 @@ class MateSolverResult {
     this.failureFen,
     this.failureMoves,
     this.failureReason,
+    this.cyclesBacktracked = 0,
+  });
+}
+
+class _AttackerCandidate {
+  final Move move;
+  final String san;
+  final String uci;
+  final int score;
+  final bool isIrreversible;
+
+  _AttackerCandidate({
+    required this.move,
+    required this.san,
+    required this.uci,
+    required this.score,
+    required this.isIrreversible,
   });
 }
 

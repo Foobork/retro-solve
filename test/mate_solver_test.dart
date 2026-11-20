@@ -428,5 +428,125 @@ void main() {
       state.evalController.text = '0.00';
       expect(state.determineAttackingColor(), equals(PlayerColor.white));
     });
+
+    testWidgets('Cycle causes attacker to backtrack to next candidate and prioritize irreversible moves', (WidgetTester tester) async {
+      const testFen = '5k2/5p2/5Q2/8/8/8/4P3/4K3 w - - 0 1';
+      final chess = Chess();
+      chess.load(testFen);
+      final rootBfen = chess.bfen;
+
+      // 1. Qh8+ (White)
+      chess.makeMove(chess.generateMoves().firstWhere((m) => '${m.fromAlgebraic}${m.toAlgebraic}' == 'f6h8'));
+      final posAfterQh8 = chess.fen;
+
+      // 1... Ke7 (Black)
+      chess.makeMove(chess.generateMoves().firstWhere((m) => '${m.fromAlgebraic}${m.toAlgebraic}' == 'f8e7'));
+      final posAfterKe7 = chess.fen;
+
+      // 2. Qf6+ (White)
+      chess.makeMove(chess.generateMoves().firstWhere((m) => '${m.fromAlgebraic}${m.toAlgebraic}' == 'h8f6'));
+      final posAfterQf6 = chess.fen;
+
+      // Alternative: 1. e4 (White)
+      final chess2 = Chess();
+      chess2.load(testFen);
+      chess2.makeMove(chess2.generateMoves().firstWhere((m) => '${m.fromAlgebraic}${m.toAlgebraic}' == 'e2e4'));
+      final posAfterE4 = chess2.fen;
+
+      final engineService = _MockMateEngineService(
+        responses: {
+          testFen: const [
+            // Top candidate is Qh8+ (reversible, +600 cp)
+            EngineEvaluation(
+              candidateMove: 'f6h8',
+              centipawns: 600,
+              depth: 16,
+              fen: testFen,
+            ),
+            // Second candidate is e4 (irreversible pawn move, +500 cp)
+            EngineEvaluation(
+              candidateMove: 'e2e4',
+              centipawns: 500,
+              depth: 16,
+              fen: testFen,
+            ),
+          ],
+          posAfterQh8: [
+            EngineEvaluation(
+              candidateMove: 'f8e7',
+              centipawns: -600,
+              depth: 16,
+              fen: posAfterQh8,
+            ),
+          ],
+          posAfterKe7: [
+            EngineEvaluation(
+              candidateMove: 'h8f6',
+              centipawns: 600,
+              depth: 16,
+              fen: posAfterKe7,
+            ),
+          ],
+          posAfterQf6: [
+            // Black plays 2... Kf8 leading back to root testFen!
+            EngineEvaluation(
+              candidateMove: 'e7f8',
+              centipawns: -600,
+              depth: 16,
+              fen: posAfterQf6,
+            ),
+          ],
+          posAfterE4: [
+            // Alternative candidate 1. e4 proves forced mate in 1
+            EngineEvaluation(
+              candidateMove: 'f8e8',
+              mate: -1,
+              depth: 16,
+              fen: posAfterE4,
+            ),
+          ],
+        },
+      );
+
+      await tester.pumpWidget(
+        RetroSolve(
+          initialVariant: DatasetVariant.standard,
+          engineService: engineService,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final state = tester.state<HomePageState>(find.byType(HomePage));
+      state.controller.load(testFen);
+      await tester.pumpAndSettle();
+
+      final solverFuture = state.startMateSolver(maxDepth: 10);
+      expect(state.isMateSolving, isTrue);
+
+      int pumps = 0;
+      while (state.isMateSolving && pumps < 80) {
+        await tester.pump(const Duration(milliseconds: 50));
+        pumps++;
+      }
+
+      final proven = await solverFuture;
+      await tester.pumpAndSettle();
+
+      expect(proven, isTrue);
+      expect(state.isMateSolving, isFalse);
+      expect(state.mateSolverCyclesBacktracked, greaterThanOrEqualTo(1));
+      expect(state.mateSolverResult?.cyclesBacktracked, greaterThanOrEqualTo(1));
+
+      expect(find.text('Mate Search Complete'), findsOneWidget);
+      expect(find.textContaining('Cycles backtracked:'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Dismiss'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mate Search Complete'), findsNothing);
+
+      // Root position should be restored and solved as White win
+      expect(state.controller.game.bfen, equals(rootBfen));
+      expect(graph.v[rootBfen]?.effectiveEval?.result, equals(GameResult.whiteWins));
+    });
   });
 }

@@ -8,6 +8,9 @@
   - Or before pushing to remote (`git push`).
 - For pure Dart changes tested interactively, Hot Reload (`r`) and Hot Restart (`R`) along with passing `flutter analyze` and `flutter test` are sufficient for local commits.
 
+## Architecture & Solving Strategy
+- **Proof-number search (e.g. df-pn / 1@df-pn) is deprecated in favor of best-first search.**
+
 ## Git & Deployment
 - **Git commits and pushes (`git commit`, `git push`) are permitted when changes are verified with passing tests and ready.**
 - **Git commit messages must be concise (single-line summary, avoid verbose multi-line descriptions).**
